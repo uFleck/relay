@@ -1,0 +1,180 @@
+name: Relay release steps
+description: Set the version from the tag, build and sign the NSIS installer, write latest.json and publish the GitHub release.
+
+runs:
+  using: composite
+  steps:
+    - name: Start timer
+      shell: pwsh
+      run: |
+        "RELEASE_TOTAL_START=$((Get-Date).ToUniversalTime().ToString('o'))" >> $env:GITHUB_ENV
+
+    - name: Check signing secret
+      shell: pwsh
+      run: |
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        try {
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_SIGNING_PRIVATE_KEY)) {
+            Write-Error "Secret TAURI_SIGNING_PRIVATE_KEY is empty or not set. Add it to the Production environment (and TAURI_SIGNING_PRIVATE_KEY_PASSWORD when the key has a password)."
+            exit 1
+          }
+        } finally {
+          Write-Host ("timing: check-signing-secret {0:N1}s" -f $sw.Elapsed.TotalSeconds)
+        }
+
+    - uses: pnpm/action-setup@v4
+      with:
+        version: 10
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version-file: .node-version
+
+    - uses: dtolnay/rust-toolchain@stable
+
+    - name: Set version from tag
+      shell: pwsh
+      run: |
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        try {
+          $ref = $env:GITHUB_REF_NAME
+          $version = $ref -replace '^v', ''
+          if ($version -notmatch '^\d+\.\d+\.\d+([-+].+)?$') {
+            Write-Error "Tag '$ref' is not a valid semver version (expected vX.Y.Z). Dispatch this workflow from the tag ref."
+            exit 1
+          }
+          "APP_VERSION=$version" >> $env:GITHUB_ENV
+          $env:APP_VERSION = $version
+
+          @'
+          const fs = require("fs");
+          const v = process.env.APP_VERSION;
+          for (const f of ["src-tauri/tauri.conf.json", "package.json"]) {
+            const j = JSON.parse(fs.readFileSync(f, "utf8"));
+            j.version = v;
+            fs.writeFileSync(f, JSON.stringify(j, null, 2) + "\n");
+          }
+          for (const cf of ["src-tauri/Cargo.toml", "crates/relay-core/Cargo.toml"]) {
+            const lines = fs.readFileSync(cf, "utf8").split(/\r?\n/);
+            let inPackage = false, done = false;
+            for (let i = 0; i < lines.length; i++) {
+              const t = lines[i].trim();
+              if (/^\[.*\]$/.test(t)) inPackage = t === "[package]";
+              else if (inPackage && !done && /^version\s*=/.test(t)) {
+                lines[i] = `version = "${v}"`;
+                done = true;
+              }
+            }
+            if (!done) { console.error("No version found in [package] of " + cf); process.exit(1); }
+            fs.writeFileSync(cf, lines.join("\n"));
+          }
+          console.log("Version set to " + v);
+        '@ | Set-Content -Path "$env:RUNNER_TEMP/set-version.cjs" -Encoding utf8
+
+          node "$env:RUNNER_TEMP/set-version.cjs"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        } finally {
+          Write-Host ("timing: set-version {0:N1}s" -f $sw.Elapsed.TotalSeconds)
+        }
+
+    - name: Prepare persistent caches
+      shell: pwsh
+      run: |
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        try {
+          New-Item -ItemType Directory -Force -Path $env:CARGO_TARGET_DIR | Out-Null
+          New-Item -ItemType Directory -Force -Path $env:PNPM_STORE_DIR | Out-Null
+          pnpm config set store-dir $env:PNPM_STORE_DIR --global
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Write-Host "target: $env:CARGO_TARGET_DIR"
+          Write-Host "pnpm store: $env:PNPM_STORE_DIR"
+        } finally {
+          Write-Host ("timing: prepare-caches {0:N1}s" -f $sw.Elapsed.TotalSeconds)
+        }
+
+    - name: Install frontend dependencies
+      shell: pwsh
+      run: |
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        try {
+          pnpm install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        } finally {
+          Write-Host ("timing: pnpm-install {0:N1}s" -f $sw.Elapsed.TotalSeconds)
+        }
+
+    - name: Build and sign (NSIS)
+      shell: pwsh
+      run: |
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        try {
+          pnpm tauri build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        } finally {
+          Write-Host ("timing: tauri-build {0:N1}s" -f $sw.Elapsed.TotalSeconds)
+        }
+
+    - name: Write latest.json
+      shell: pwsh
+      run: |
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        try {
+          $version = $env:APP_VERSION
+          $nsis = Join-Path $env:CARGO_TARGET_DIR "release\bundle\nsis"
+          if (-not (Test-Path -LiteralPath $nsis)) { throw "No NSIS bundle at $nsis" }
+
+          $candidates = Get-ChildItem -LiteralPath $nsis -Filter "*.exe" | Sort-Object LastWriteTime -Descending
+          $exe = $candidates | Where-Object { $_.Name -like "*$version*" } | Select-Object -First 1
+          if (-not $exe) { $exe = $candidates | Select-Object -First 1 }
+          if (-not $exe) { throw "No installer .exe in $nsis" }
+
+          $sig = "$($exe.FullName).sig"
+          if (-not (Test-Path -LiteralPath $sig)) { throw "Missing updater signature: $sig" }
+
+          $url = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$env:GITHUB_REF_NAME/$([uri]::EscapeDataString($exe.Name))"
+          $latest = [ordered]@{
+            version   = $version
+            pub_date  = [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
+            platforms = [ordered]@{
+              "windows-x86_64" = [ordered]@{
+                signature = (Get-Content -LiteralPath $sig -Raw).Trim()
+                url       = $url
+              }
+            }
+          }
+          $json = ($latest | ConvertTo-Json -Depth 6) + "`n"
+          [System.IO.File]::WriteAllText("latest.json", $json, [System.Text.UTF8Encoding]::new($false))
+
+          "EXE_PATH=$($exe.FullName)" >> $env:GITHUB_ENV
+          "SIG_PATH=$sig" >> $env:GITHUB_ENV
+          Write-Host "installer: $($exe.FullName)"
+          Write-Host "signature: $sig"
+          Write-Host "url: $url"
+        } finally {
+          Write-Host ("timing: latest-json {0:N1}s" -f $sw.Elapsed.TotalSeconds)
+        }
+
+    - name: Publish GitHub release
+      shell: pwsh
+      run: |
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        try {
+          gh release create $env:GITHUB_REF_NAME $env:EXE_PATH $env:SIG_PATH latest.json --title "Relay $env:GITHUB_REF_NAME" --generate-notes
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        } finally {
+          Write-Host ("timing: gh-release {0:N1}s" -f $sw.Elapsed.TotalSeconds)
+        }
+
+    - name: Total time
+      shell: pwsh
+      run: |
+        $start = [datetime]::Parse($env:RELEASE_TOTAL_START, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind)
+        $seconds = ([datetime]::UtcNow - $start.ToUniversalTime()).TotalSeconds
+        Write-Host ("timing: total {0:N1}s ({1})" -f $seconds, [TimeSpan]::FromSeconds($seconds).ToString("mm\:ss"))
+        if ($seconds -gt 300) {
+          Write-Warning "Release is over the 5:00 budget."
+        }
+        if ($env:RUNNER_ENVIRONMENT -eq "self-hosted" -and $seconds -gt 420) {
+          Write-Error "Release took $([math]::Round($seconds, 1))s on the self-hosted runner, over the 420s budget."
+          exit 1
+        }

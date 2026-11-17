@@ -1,0 +1,16 @@
+# Relay
+
+## Rules
+
+- **Windows first.** Test and ship on Windows before anything else.
+- **Local SQLite is the source of truth.** ClickUp and GitHub Issues are link-level projections, never a full mirror. Read `docs/PLAN.md` before adding a table or a tool.
+- **Two surfaces are planned:** the main window comes from `src-tauri/tauri.conf.json`; the hover window will be built hidden in Rust (Spawner's `companion.rs` pattern). This scaffold only has the main window and the tray. Do not implement hover/UI behavior in the scaffold.
+- **No native dialogs except the folder picker.** No `ask`, `message`, `confirm` or `alert` from `@tauri-apps/plugin-dialog` or the browser. Use an in-app dialog. `dialog:allow-open` is the only dialog permission granted.
+- **Secrets never reach the frontend and never go in git.** Slack/JEV/GitHub/ClickUp tokens belong in Windows Credential Manager later; the UI sees status and last 4 characters only. Updater keys live outside the repo.
+- **Policy lives in `relay-core` services, not in adapters.** `src-tauri` IPC commands and MCP tools stay thin. `relay-core` never depends on Tauri.
+- **Fast loop:** `cargo test -p relay-core` does not compile Tauri.
+- **Ids and time:** ULIDs as `String`, RFC 3339 UTC timestamps as `String`, `serde(rename_all = "camelCase")` on IPC/model structs; Rust stays `snake_case`.
+- **DB:** WAL for file databases, foreign keys ON, migrations only through `PRAGMA user_version` (`crates/relay-core/migrations/`). FTS5 indexes task title/notes.
+- **Use pnpm.** Node 24.4.1 (`.node-version`).
+- **Do not commit or push unasked.** The initial scaffold was created without a commit; the user owns the first commit.
+- **Updater/release:** `createUpdaterArtifacts` is on; `plugins.updater.pubkey` is still `REPLACE_WITH_TAURI_UPDATER_PUBKEY`. Do not run a full `pnpm tauri build` without a signing key. `scripts/release.ps1` is the local fast path; `.github/actions/release` holds the shared CI steps.

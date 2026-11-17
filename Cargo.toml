@@ -1,0 +1,16 @@
+[workspace]
+resolver = "3"
+members = ["crates/relay-core", "src-tauri"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["Bruno Koster"]
+license = "MIT"
+repository = "https://github.com/uFleck/relay"
+
+[profile.release]
+lto = "thin"
+codegen-units = 16
+opt-level = 2
+strip = true

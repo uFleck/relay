@@ -1,0 +1,57 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: "hosted is the fallback only; dispatch from the vX.Y.Z tag ref"
+        type: choice
+        options: [self-hosted, hosted]
+        default: self-hosted
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TARGET_DIR: C:\relay-cache\target
+  PNPM_STORE_DIR: C:\relay-cache\pnpm-store
+
+jobs:
+  release:
+    name: Release (self-hosted)
+    if: github.event_name == 'push' || inputs.runner != 'hosted'
+    runs-on: [self-hosted, Windows, X64, relay-release]
+    environment: Production
+    timeout-minutes: 30
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/release
+
+  release-hosted:
+    name: Release (hosted fallback)
+    if: github.event_name == 'workflow_dispatch' && inputs.runner == 'hosted'
+    runs-on: windows-latest
+    environment: Production
+    timeout-minutes: 60
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: ./.github/actions/release
