@@ -119,7 +119,7 @@ if ($DryRun) {
     }
     Write-Host "  pnpm tauri build"
     Write-Host "  write latest.json for $tag"
-    Write-Host "  gh release create $tag <installer>.exe <installer>.exe.sig latest.json --title `"Relay $tag`" --generate-notes"
+    Write-Host "  gh release create $tag <installer>.exe <installer>.exe.sig latest.json --verify-tag --title `"Relay $tag`" --generate-notes"
     $total.Stop()
     Write-Host ("Total: {0:N1}s" -f $total.Elapsed.TotalSeconds)
     return
@@ -193,7 +193,7 @@ Step "write latest.json" {
 }
 
 Step "gh release create $tag" {
-    gh release create $tag $script:installer.FullName $script:signature $latestPath --title "Relay $tag" --generate-notes
+    gh release create $tag $script:installer.FullName $script:signature $latestPath --verify-tag --title "Relay $tag" --generate-notes
     if ($LASTEXITCODE -ne 0) {
         throw "gh release create failed (exit $LASTEXITCODE)."
     }

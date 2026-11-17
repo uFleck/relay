@@ -13,4 +13,5 @@
 - **DB:** WAL for file databases, foreign keys ON, migrations only through `PRAGMA user_version` (`crates/relay-core/migrations/`). FTS5 indexes task title/notes.
 - **Use pnpm.** Node 24.4.1 (`.node-version`).
 - **Do not push unasked.** Commits stay local until the user asks to push.
+- **Review ledger:** every work package gets `docs/reviews/YYYY-MM-DD-<slug>.md` (agent/model, commit, files, commands/results, risks, checklist, empty "Opus verdict"); DeepSeek commits use a `[deepseek]` subject prefix.
 - **Updater/release:** `createUpdaterArtifacts` is on and `plugins.updater.pubkey` is set from the locally generated pair. Private key + password live outside the repo at `%USERPROFILE%\.relay\signing.key` and `.password`; never print or commit them. `scripts/release.ps1` is the local fast path (warm target, target < 5 min); `.github/actions/release` holds the shared CI steps. Add the two values to the `Production` GitHub environment before the first CI release.

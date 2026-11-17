@@ -61,7 +61,7 @@ scripts/release.ps1 0.1.0 -SkipInstall
 scripts/release.ps1 0.1.0 -DryRun
 ```
 
-`release.ps1` reads the private key from `TAURI_SIGNING_PRIVATE_KEY_PATH` or `%USERPROFILE%\.relay\signing.key`, writes `latest.json` (version, pub_date, `windows-x86_64` signature + URL), and uploads the installer, its `.sig` and `latest.json` with `gh release create`. It prints per-step stopwatch timings and fails if the total is over 420s. It never generates or prints a key.
+`release.ps1` reads the private key from `TAURI_SIGNING_PRIVATE_KEY_PATH` or `%USERPROFILE%\.relay\signing.key`, writes `latest.json` (version, pub_date, `windows-x86_64` signature + URL), and uploads the installer, its `.sig` and `latest.json` with `gh release create`. It prints per-step stopwatch timings and fails if the total is over 420s. It never generates or prints a key. The tag must already exist on the remote: `gh release create` runs with `--verify-tag`, so a local-only tag fails instead of creating a release at the default branch.
 
 If Windows blocks the scripts (`running scripts is disabled on this system`), use `pwsh -NoProfile -File scripts/release.ps1 0.1.0` or `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release.ps1 0.1.0`.
 

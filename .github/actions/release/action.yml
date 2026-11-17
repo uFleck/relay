@@ -159,7 +159,7 @@ runs:
       run: |
         $sw = [System.Diagnostics.Stopwatch]::StartNew()
         try {
-          gh release create $env:GITHUB_REF_NAME $env:EXE_PATH $env:SIG_PATH latest.json --title "Relay $env:GITHUB_REF_NAME" --generate-notes
+          gh release create $env:GITHUB_REF_NAME $env:EXE_PATH $env:SIG_PATH latest.json --verify-tag --title "Relay $env:GITHUB_REF_NAME" --generate-notes
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         } finally {
           Write-Host ("timing: gh-release {0:N1}s" -f $sw.Elapsed.TotalSeconds)
