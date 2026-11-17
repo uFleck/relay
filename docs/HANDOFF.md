@@ -28,6 +28,7 @@ Uncommitted: the partial main UI (`src/app/**`, `src/components/**`, `src/data/*
   - `...exe.sig` (432 bytes)
 - Runtime smoke test: the release exe starts, creates `%APPDATA%\dev.relay.app\relay.db` at `user_version 2`, seeds `Inbox` + 9 statuses.
 - Visual smoke test with 5 seeded tasks: status groups, T3/OpenCode claims, unacked change dot, links and the agent strip render. Demo rows were removed; the real DB has 0 tasks again.
+- After the 2026-11-17 destructive-reset incident, the recovered UI passes `pnpm typecheck`/`build` and the same seeded visual test renders the same Today view.
 
 ## Runtime commands (already implemented)
 

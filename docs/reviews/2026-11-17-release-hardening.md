@@ -369,8 +369,11 @@ While reconciling a concurrent commit, this package ran `git reset --hard
 `src/main.tsx` and `src/styles/base.css`; the untracked UI files were not
 removed. The three files were recovered from T3 Code's recorded file-change
 diffs (`%USERPROFILE%\.t3\userdata\statev2.sqlite`), line endings were
-restored to LF, and `pnpm typecheck` + `pnpm build` pass. The worktree again
-shows the same 3 modified + 8 untracked UI paths.
+restored to LF, and `pnpm typecheck` + `pnpm build` pass. A seeded 5-task
+visual test after recovery renders the same Today groups, claims, unacked
+change dot and links as before the reset; the demo rows were removed
+afterwards. The worktree again shows the same 3 modified + 8 untracked UI
+paths.
 
 History was repaired: the original index commit `ac21440` was replayed as
 `a819c07` with the same `docs/HANDOFF.md` / `docs/reviews/README.md` content;
