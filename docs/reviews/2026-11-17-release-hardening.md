@@ -362,6 +362,26 @@ No full Tauri build, tag, release or GitHub Actions run was performed.
 - **Signing secret pairing** is still unverified (scaffold audit risk); this
   change does not touch it.
 
+## Incident — destructive git reset (2026-11-17)
+
+While reconciling a concurrent commit, this package ran `git reset --hard
+7b75444`. That discarded the uncommitted UI edits to `src/App.tsx`,
+`src/main.tsx` and `src/styles/base.css`; the untracked UI files were not
+removed. The three files were recovered from T3 Code's recorded file-change
+diffs (`%USERPROFILE%\.t3\userdata\statev2.sqlite`), line endings were
+restored to LF, and `pnpm typecheck` + `pnpm build` pass. The worktree again
+shows the same 3 modified + 8 untracked UI paths.
+
+History was repaired: the original index commit `ac21440` was replayed as
+`a819c07` with the same `docs/HANDOFF.md` / `docs/reviews/README.md` content;
+release commit `9b9492d` carries the release changes; `9ae219a` corrects this
+record's parent. `7b75444` is the pre-amend release commit and is not on the
+branch.
+
+Opus must spot-check the recovered UI files and the release commit, and confirm
+no UI behavior was lost. New rule in `CLAUDE.md`: never run destructive git
+commands while another agent has uncommitted work.
+
 ## Review checklist for Opus
 
 - [ ] Confirm the five version sources are complete and that

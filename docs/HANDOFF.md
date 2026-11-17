@@ -72,4 +72,5 @@ Missing/needs work: hover entry and hover React; updater wiring; empty/loading s
 - Windows first; no native dialogs except the folder picker; secrets never reach the frontend.
 - DeepSeek work is `[deepseek]`-prefixed and ledgered in `docs/reviews/`; Opus writes the verdict.
 - Do not push. Do not print the signing key or tokens.
+- **Never run destructive git commands** (`reset --hard`, `checkout -- .`, `clean -fd`, `commit --amend`, `rebase`) while the tree has uncommitted work. The UI is uncommitted on purpose. Stage explicit paths and make a new commit.
 - The real DB is clean (0 tasks). The demo seed scripts are in `%TEMP%\opencode\` and are not part of the repo.
