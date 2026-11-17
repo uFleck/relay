@@ -53,7 +53,9 @@ fn hide_main(app: &AppHandle) {
 }
 
 fn toggle_main(app: &AppHandle) {
-    let Some(window) = app.get_webview_window(MAIN) else { return };
+    let Some(window) = app.get_webview_window(MAIN) else {
+        return;
+    };
     if window.is_visible().unwrap_or(false) && window.is_focused().unwrap_or(false) {
         let _ = window.hide();
     } else {
@@ -181,11 +183,13 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
 
 /// Registers the summon hotkey. When another app holds it, Relay still starts and the tray tooltip says so.
 fn register_hotkey(app: &AppHandle) {
-    let registered = app.global_shortcut().on_shortcut(HOTKEY, |app, _shortcut, event| {
-        if event.state == ShortcutState::Pressed {
-            toggle_main(app);
-        }
-    });
+    let registered = app
+        .global_shortcut()
+        .on_shortcut(HOTKEY, |app, _shortcut, event| {
+            if event.state == ShortcutState::Pressed {
+                toggle_main(app);
+            }
+        });
     if let Err(err) = registered {
         eprintln!("relay: could not register {HOTKEY}: {err}");
         if let Some(tray) = app.tray_by_id(TRAY) {
@@ -258,7 +262,9 @@ pub fn run() {
                 }
                 // Hiding the main window also blurs it, so this covers hide-to-tray as well.
                 WindowEvent::Focused(focused) => {
-                    window.state::<HoverState>().set_main_focused(window.app_handle(), *focused);
+                    window
+                        .state::<HoverState>()
+                        .set_main_focused(window.app_handle(), *focused);
                 }
                 _ => {}
             }

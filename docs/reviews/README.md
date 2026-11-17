@@ -69,7 +69,7 @@ Then state the commit reviewed and any follow-up package that should be opened.
 | 2026-11-17 | [Core store, claims, changes, proposals](2026-11-17-core-store.md) | `c4721f9` | DeepSeek implementation sub-agent | Complete; Opus review pending |
 | 2026-11-17 | [Snapshot + IPC adapter (main window)](2026-11-17-snapshot-ipc.md) | `91e4f0a` | DeepSeek implementation sub-agent | Complete; Opus review pending |
 | 2026-11-17 | Format hover.rs (mechanical; no behavior change) | `674c2b9` | DeepSeek implementation sub-agent | Mechanical; Opus may skip |
-| 2026-11-17 | [Review ledger + release audit](2026-11-17-scaffold.md#release-audit--2026-11-17) | this commit | DeepSeek implementation sub-agent | Audit complete; Opus review pending |
+| 2026-11-17 | [Review ledger + release audit](2026-11-17-scaffold.md#release-audit--2026-11-17) | `70f8eae` | DeepSeek implementation sub-agent | Audit complete; Opus review pending |
 
 The release audit is a section of the scaffold record because it audits the
 scaffold's release pipeline; it does not change the scaffold commit.
