@@ -1,4 +1,4 @@
-# Fast local release path: warm target/, pnpm tauri build, sign, publish.
+# Fast local release path: preflight, warm target/, pnpm tauri build, sign, publish.
 # The signing key is read from TAURI_SIGNING_PRIVATE_KEY_PATH or %USERPROFILE%\.relay\signing.key.
 # This script never generates or prints a key.
 [CmdletBinding()]
@@ -7,7 +7,8 @@ param(
     [string]$Version,
 
     [switch]$SkipInstall,
-    [switch]$DryRun
+    [switch]$DryRun,
+    [switch]$ForceOverBudget
 )
 
 $ErrorActionPreference = "Stop"
@@ -22,6 +23,12 @@ if ($v -notmatch '^\d+\.\d+\.\d+([-+][0-9A-Za-z.-]+)?$') {
     throw "Version '$Version' is not semver (expected X.Y.Z, optionally -pre or +build)."
 }
 $tag = "v$v"
+
+# A prerelease suffix (a '-' before any '+build') must not become GitHub's
+# "latest": the updater endpoint is /releases/latest, which excludes prereleases.
+$core = if ($v.Contains("+")) { $v.Substring(0, $v.IndexOf("+")) } else { $v }
+$isPrerelease = $core.Contains("-")
+$releaseTitle = if ($isPrerelease) { "Relay $tag (pre-release)" } else { "Relay $tag" }
 
 $total = [System.Diagnostics.Stopwatch]::StartNew()
 $timings = [System.Collections.Generic.List[object]]::new()
@@ -47,7 +54,61 @@ function Step {
     }
 }
 
+# Preflight failures stop a real run. -DryRun only reports them, so the planned
+# steps can still be inspected (and nothing is built, written or uploaded).
+function Fail([string]$Message) {
+    if ($DryRun) {
+        Write-Warning $Message
+    } else {
+        throw $Message
+    }
+}
+
+function Get-CargoTableVersion {
+    param(
+        [string]$Path,
+        [string]$Table
+    )
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return $null
+    }
+    $header = "[$Table]"
+    $inTable = $false
+    foreach ($line in [System.IO.File]::ReadAllLines($Path)) {
+        $trimmed = $line.Trim()
+        if ($trimmed -match '^\[.*\]$') {
+            $inTable = ($trimmed -eq $header)
+            continue
+        }
+        if ($inTable -and $trimmed -match '^version\s*=\s*"([^"]+)"') {
+            return $Matches[1]
+        }
+    }
+    return $null
+}
+
+function Resolve-GitHubRepo {
+    if ($env:GH_REPO) {
+        return $env:GH_REPO.Trim()
+    }
+    $url = git remote get-url origin 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $url) {
+        return $null
+    }
+    $url = $url.Trim()
+    if ($url -match 'github\.com[:/](?<owner>[^/]+)/(?<repo>[^/]+?)(\.git)?/?$') {
+        return "$($Matches['owner'])/$($Matches['repo'])"
+    }
+    if ($url -match '^(?<owner>[^/]+)/(?<repo>[^/]+?)(\.git)?$') {
+        return "$($Matches['owner'])/$($Matches['repo'])"
+    }
+    return $null
+}
+
 Write-Host "Relay release $tag"
+if ($isPrerelease) {
+    Write-Host "Prerelease: GitHub gets --prerelease; /releases/latest stays on the newest stable release."
+}
 if ($DryRun) {
     Write-Host "DRY RUN: nothing is built, written or uploaded."
 }
@@ -63,13 +124,35 @@ if ($status) {
     }
 }
 
-$packageVersion = (Get-Content -LiteralPath package.json -Raw | ConvertFrom-Json).version
-if ($packageVersion -ne $v) {
-    if ($DryRun) {
-        Write-Warning "package.json is $packageVersion, but the release argument is $v."
-    } else {
-        throw "package.json is $packageVersion, not $v. Run scripts/version.ps1 -Version $v -Tag first."
+# Every version field the build reads must equal the release argument. A partial
+# bump would build one version and publish latest.json for another.
+$versionChecks = @(
+    [pscustomobject]@{ Field = "package.json"; Optional = $false; Value = (Get-Content -LiteralPath "package.json" -Raw | ConvertFrom-Json).version },
+    [pscustomobject]@{ Field = "src-tauri/tauri.conf.json"; Optional = $false; Value = (Get-Content -LiteralPath "src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json).version },
+    [pscustomobject]@{ Field = "src-tauri/Cargo.toml [package]"; Optional = $false; Value = (Get-CargoTableVersion "src-tauri/Cargo.toml" "package") },
+    [pscustomobject]@{ Field = "crates/relay-core/Cargo.toml [package]"; Optional = $false; Value = (Get-CargoTableVersion "crates/relay-core/Cargo.toml" "package") },
+    [pscustomobject]@{ Field = "Cargo.toml [workspace.package]"; Optional = $true; Value = (Get-CargoTableVersion "Cargo.toml" "workspace.package") }
+)
+
+$mismatches = [System.Collections.Generic.List[string]]::new()
+$checkedFields = 0
+foreach ($check in $versionChecks) {
+    if ([string]::IsNullOrWhiteSpace($check.Value)) {
+        if ($check.Optional) {
+            continue
+        }
+        Fail "Cannot read a version from $($check.Field)."
+        continue
     }
+    $checkedFields++
+    if ($check.Value -ne $v) {
+        $mismatches.Add("$($check.Field) is $($check.Value), expected $v")
+    }
+}
+if ($mismatches.Count -gt 0) {
+    Fail ("Version mismatch for {0}: {1}. Run scripts/version.ps1 -Version {2}, commit the bump, then move the tag." -f $tag, ($mismatches -join "; "), $v)
+} else {
+    Write-Host "Version fields match $tag ($checkedFields checked)."
 }
 
 if (-not (git tag --list $tag)) {
@@ -77,6 +160,48 @@ if (-not (git tag --list $tag)) {
         Write-Warning "Tag $tag does not exist."
     } else {
         throw "Tag $tag does not exist. Run scripts/version.ps1 -Version $v -Tag first."
+    }
+}
+
+# gh is required: without it the existing-release probe cannot run, and the
+# publish would fail after a full build.
+$gh = Get-Command gh -ErrorAction SilentlyContinue
+if (-not $gh) {
+    if ($DryRun) {
+        Write-Warning "gh (GitHub CLI) is not on PATH; a real run would stop here."
+    } else {
+        throw "gh (GitHub CLI) is not on PATH. Install it, run 'gh auth login', then retry. The release was not built."
+    }
+} else {
+    $repo = Resolve-GitHubRepo
+    if (-not $repo) {
+        if ($DryRun) {
+            Write-Warning "Cannot resolve the GitHub repository: no 'origin' remote and GH_REPO is not set. A real run would stop here."
+        } else {
+            throw "Cannot resolve the GitHub repository: no 'origin' remote and GH_REPO is not set. Add origin (git remote add origin <url>) or set GH_REPO=owner/repo, then retry."
+        }
+    } else {
+        gh auth status 2>&1 | Out-Null
+        $authExit = $LASTEXITCODE
+        # Read-only probe. gh prints "release not found" when the tag has no release.
+        $releaseOutput = (gh release view $tag --repo $repo 2>&1 | Out-String).Trim()
+        $releaseExit = $LASTEXITCODE
+
+        if ($releaseExit -eq 0) {
+            Fail "Release $tag already exists on $repo. Refusing to clobber it: delete that release or release a new version."
+        } elseif ($releaseOutput -match '(?i)release not found') {
+            Write-Host "No existing release for $tag on $repo."
+            if ($authExit -ne 0) {
+                # Not fatal: the probe above proved the active account can reach the repo.
+                Write-Warning "gh auth status exits $authExit (often an invalid secondary account); the release probe worked, so the active account is usable. Run 'gh auth status' to inspect."
+            }
+        } else {
+            $message = "Could not confirm that release $tag is absent on $repo (gh release view exit $releaseExit):`n$releaseOutput"
+            if ($authExit -ne 0) {
+                $message += "`ngh auth status exits $authExit; run 'gh auth login'."
+            }
+            Fail $message
+        }
     }
 }
 
@@ -104,13 +229,6 @@ if (-not (Test-Path -LiteralPath $keyPath)) {
     }
 }
 
-if (-not $DryRun) {
-    $ghStatus = gh auth status 2>&1 | Out-String
-    if ($LASTEXITCODE -ne 0) {
-        throw "gh is not authenticated. Run 'gh auth login'. Output:`n$ghStatus"
-    }
-}
-
 if ($DryRun) {
     Write-Host ""
     Write-Host "Would run:"
@@ -118,8 +236,14 @@ if ($DryRun) {
         Write-Host "  pnpm install --frozen-lockfile"
     }
     Write-Host "  pnpm tauri build"
+    Write-Host "  check budget gate: warn above 300s, fail above 420s before upload unless -ForceOverBudget (upload excluded)"
+    Write-Host "  require <product>_${v}_<arch>-setup.exe and its .sig (no newest-.exe fallback)"
     Write-Host "  write latest.json for $tag"
-    Write-Host "  gh release create $tag <installer>.exe <installer>.exe.sig latest.json --verify-tag --title `"Relay $tag`" --generate-notes"
+    $plannedGh = "gh release create $tag <installer>.exe <installer>.exe.sig latest.json --verify-tag --title `"$releaseTitle`" --generate-notes"
+    if ($isPrerelease) {
+        $plannedGh += " --prerelease"
+    }
+    Write-Host "  $plannedGh"
     $total.Stop()
     Write-Host ("Total: {0:N1}s" -f $total.Elapsed.TotalSeconds)
     return
@@ -145,6 +269,23 @@ Step "pnpm tauri build" {
     }
 }
 
+# Budget gate: measured at the end of install + build, before anything is
+# published. Upload time is deliberately excluded, so a slow upload can no
+# longer turn a published release red.
+$buildSeconds = $total.Elapsed.TotalSeconds
+Write-Host ""
+Write-Host ("Budget gate: {0:N1}s at the end of the build (install + build; upload excluded)." -f $buildSeconds)
+if ($buildSeconds -gt 300) {
+    Write-Warning ("Build path is over the 5:00 target ({0:N1}s); the hard limit is 420s." -f $buildSeconds)
+}
+if ($buildSeconds -gt 420) {
+    if ($ForceOverBudget) {
+        Write-Warning ("Build path is over the 420s budget ({0:N1}s); continuing because -ForceOverBudget was passed." -f $buildSeconds)
+    } else {
+        throw ("Build path took {0:N1}s, over the 420s budget (upload excluded). Nothing was published. Re-run with -ForceOverBudget to publish anyway." -f $buildSeconds)
+    }
+}
+
 $script:installer = $null
 $script:signature = $null
 Step "find NSIS installer and signature" {
@@ -157,14 +298,22 @@ Step "find NSIS installer and signature" {
     if (-not (Test-Path -LiteralPath $nsisDir)) {
         throw "No NSIS bundle at $nsisDir"
     }
-    $candidates = Get-ChildItem -LiteralPath $nsisDir -Filter "*.exe" | Sort-Object LastWriteTime -Descending
-    $script:installer = $candidates | Where-Object { $_.Name -like "*$v*" } | Select-Object -First 1
-    if (-not $script:installer) {
-        $script:installer = $candidates | Select-Object -First 1
-    }
-    if (-not $script:installer) {
+    $candidates = @(Get-ChildItem -LiteralPath $nsisDir -Filter "*.exe")
+    if ($candidates.Count -eq 0) {
         throw "No installer .exe in $nsisDir"
     }
+    # Exact version required: a stale or partially built bundle for another
+    # version must not be uploaded under this tag.
+    $versioned = @($candidates | Where-Object { $_.Name -like "*_${v}_*-setup.exe" })
+    if ($versioned.Count -eq 0) {
+        $found = ($candidates | ForEach-Object { $_.Name }) -join ", "
+        throw "No NSIS installer for $v in $nsisDir (expected <product>_${v}_<arch>-setup.exe). Found: $found. Re-run pnpm tauri build."
+    }
+    if ($versioned.Count -gt 1) {
+        $found = ($versioned | ForEach-Object { $_.Name }) -join ", "
+        throw "More than one NSIS installer for $v in ${nsisDir}: $found. Remove the stale copies and rebuild."
+    }
+    $script:installer = $versioned[0]
     $script:signature = "$($script:installer.FullName).sig"
     if (-not (Test-Path -LiteralPath $script:signature)) {
         throw "Missing updater signature: $($script:signature)"
@@ -190,10 +339,25 @@ Step "write latest.json" {
     [System.IO.File]::WriteAllText($latestPath, $json, [System.Text.UTF8Encoding]::new($false))
     Write-Host "  $latestPath"
     Write-Host "  $url"
+    if ($isPrerelease) {
+        Write-Host "  prerelease: latest.json is still attached; the updater's /releases/latest stays on stable."
+    }
 }
 
 Step "gh release create $tag" {
-    gh release create $tag $script:installer.FullName $script:signature $latestPath --verify-tag --title "Relay $tag" --generate-notes
+    $ghArgs = @(
+        "release", "create", $tag,
+        $script:installer.FullName,
+        $script:signature,
+        $latestPath,
+        "--verify-tag",
+        "--title", $releaseTitle,
+        "--generate-notes"
+    )
+    if ($isPrerelease) {
+        $ghArgs += "--prerelease"
+    }
+    gh @ghArgs
     if ($LASTEXITCODE -ne 0) {
         throw "gh release create failed (exit $LASTEXITCODE)."
     }
@@ -206,8 +370,5 @@ foreach ($timing in $timings) {
     Write-Host ("  {0,-26} {1,7:N1}s" -f $timing.Name, $timing.Seconds)
 }
 $totalText = "{0:N1}s ({1})" -f $total.Elapsed.TotalSeconds, (Format-Elapsed $total.Elapsed)
-Write-Host "Total: $totalText"
-
-if ($total.Elapsed.TotalSeconds -gt 420) {
-    throw "Release took $totalText, over the 420s budget."
-}
+Write-Host "Total incl. upload: $totalText"
+Write-Host ("Budget gate measured {0:N1}s before upload; the upload time is excluded from the 420s gate." -f $buildSeconds)

@@ -1,5 +1,5 @@
 name: Relay release steps
-description: Set the version from the tag, build and sign the NSIS installer, write latest.json and publish the GitHub release.
+description: Check the version fields, set the version from the tag, build and sign the NSIS installer, write latest.json and publish the GitHub release (prereleases stay out of latest).
 
 runs:
   using: composite
@@ -32,6 +32,64 @@ runs:
 
     - uses: dtolnay/rust-toolchain@stable
 
+    - name: Verify version fields match tag
+      shell: pwsh
+      run: |
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        try {
+          $ref = $env:GITHUB_REF_NAME
+          $version = $ref -replace '^v', ''
+          if ($version -notmatch '^\d+\.\d+\.\d+([-+][0-9A-Za-z.-]+)?$') {
+            Write-Error "Tag '$ref' is not a valid semver version (expected vX.Y.Z). Dispatch this workflow from the tag ref."
+            exit 1
+          }
+
+          function Get-CargoTableVersion {
+            param([string]$Path, [string]$Table)
+            if (-not (Test-Path -LiteralPath $Path)) { return $null }
+            $header = "[$Table]"
+            $inTable = $false
+            foreach ($line in [System.IO.File]::ReadAllLines($Path)) {
+              $trimmed = $line.Trim()
+              if ($trimmed -match '^\[.*\]$') {
+                $inTable = ($trimmed -eq $header)
+                continue
+              }
+              if ($inTable -and $trimmed -match '^version\s*=\s*"([^"]+)"') { return $Matches[1] }
+            }
+            return $null
+          }
+
+          $checks = @(
+            [pscustomobject]@{ Field = "package.json"; Optional = $false; Value = (Get-Content -LiteralPath "package.json" -Raw | ConvertFrom-Json).version },
+            [pscustomobject]@{ Field = "src-tauri/tauri.conf.json"; Optional = $false; Value = (Get-Content -LiteralPath "src-tauri/tauri.conf.json" -Raw | ConvertFrom-Json).version },
+            [pscustomobject]@{ Field = "src-tauri/Cargo.toml [package]"; Optional = $false; Value = (Get-CargoTableVersion "src-tauri/Cargo.toml" "package") },
+            [pscustomobject]@{ Field = "crates/relay-core/Cargo.toml [package]"; Optional = $false; Value = (Get-CargoTableVersion "crates/relay-core/Cargo.toml" "package") },
+            [pscustomobject]@{ Field = "Cargo.toml [workspace.package]"; Optional = $true; Value = (Get-CargoTableVersion "Cargo.toml" "workspace.package") }
+          )
+
+          $mismatches = @()
+          $checked = 0
+          foreach ($check in $checks) {
+            if ([string]::IsNullOrWhiteSpace($check.Value)) {
+              if ($check.Optional) { continue }
+              $mismatches += "$($check.Field) has no readable version"
+              continue
+            }
+            $checked++
+            if ($check.Value -ne $version) {
+              $mismatches += "$($check.Field) is $($check.Value), expected $version"
+            }
+          }
+          if ($mismatches.Count -gt 0) {
+            Write-Error ("Version mismatch for {0}: {1}. Run scripts/version.ps1 -Version {2}, commit the bump and move the tag." -f $ref, ($mismatches -join "; "), $version)
+            exit 1
+          }
+          Write-Host "Version fields match $ref ($checked checked)."
+        } finally {
+          Write-Host ("timing: verify-versions {0:N1}s" -f $sw.Elapsed.TotalSeconds)
+        }
+
     - name: Set version from tag
       shell: pwsh
       run: |
@@ -43,8 +101,12 @@ runs:
             Write-Error "Tag '$ref' is not a valid semver version (expected vX.Y.Z). Dispatch this workflow from the tag ref."
             exit 1
           }
+          $core = if ($version.Contains("+")) { $version.Substring(0, $version.IndexOf("+")) } else { $version }
+          $isPrerelease = if ($core.Contains("-")) { "true" } else { "false" }
           "APP_VERSION=$version" >> $env:GITHUB_ENV
+          "IS_PRERELEASE=$isPrerelease" >> $env:GITHUB_ENV
           $env:APP_VERSION = $version
+          $env:IS_PRERELEASE = $isPrerelease
 
           @'
           const fs = require("fs");
@@ -68,7 +130,18 @@ runs:
             if (!done) { console.error("No version found in [package] of " + cf); process.exit(1); }
             fs.writeFileSync(cf, lines.join("\n"));
           }
-          console.log("Version set to " + v);
+          const rootToml = fs.readFileSync("Cargo.toml", "utf8").split(/\r?\n/);
+          let inWorkspace = false, workspaceDone = false;
+          for (let i = 0; i < rootToml.length; i++) {
+            const t = rootToml[i].trim();
+            if (/^\[.*\]$/.test(t)) inWorkspace = t === "[workspace.package]";
+            else if (inWorkspace && !workspaceDone && /^version\s*=/.test(t)) {
+              rootToml[i] = `version = "${v}"`;
+              workspaceDone = true;
+            }
+          }
+          if (workspaceDone) fs.writeFileSync("Cargo.toml", rootToml.join("\n"));
+          console.log("Version set to " + v + (process.env.IS_PRERELEASE === "true" ? " (prerelease)" : ""));
         '@ | Set-Content -Path "$env:RUNNER_TEMP/set-version.cjs" -Encoding utf8
 
           node "$env:RUNNER_TEMP/set-version.cjs"
@@ -114,6 +187,28 @@ runs:
           Write-Host ("timing: tauri-build {0:N1}s" -f $sw.Elapsed.TotalSeconds)
         }
 
+    - name: Budget gate (pre-upload)
+      shell: pwsh
+      run: |
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        try {
+          $start = [datetime]::Parse($env:RELEASE_TOTAL_START, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind)
+          $seconds = ([datetime]::UtcNow - $start.ToUniversalTime()).TotalSeconds
+          Write-Host ("budget: {0:N1}s at the end of the build (install + build; upload excluded)" -f $seconds)
+          if ($seconds -gt 300) {
+            Write-Warning "Release build path is over the 5:00 target."
+          }
+          if ($seconds -gt 420) {
+            if ($env:RUNNER_ENVIRONMENT -eq "self-hosted") {
+              Write-Error "Release build path took $([math]::Round($seconds, 1))s on the self-hosted runner, over the 420s budget. Nothing was published."
+              exit 1
+            }
+            Write-Warning "Over the 420s budget, but the hosted fallback is not held to it."
+          }
+        } finally {
+          Write-Host ("timing: budget-gate {0:N1}s" -f $sw.Elapsed.TotalSeconds)
+        }
+
     - name: Write latest.json
       shell: pwsh
       run: |
@@ -123,10 +218,18 @@ runs:
           $nsis = Join-Path $env:CARGO_TARGET_DIR "release\bundle\nsis"
           if (-not (Test-Path -LiteralPath $nsis)) { throw "No NSIS bundle at $nsis" }
 
-          $candidates = Get-ChildItem -LiteralPath $nsis -Filter "*.exe" | Sort-Object LastWriteTime -Descending
-          $exe = $candidates | Where-Object { $_.Name -like "*$version*" } | Select-Object -First 1
-          if (-not $exe) { $exe = $candidates | Select-Object -First 1 }
-          if (-not $exe) { throw "No installer .exe in $nsis" }
+          $candidates = @(Get-ChildItem -LiteralPath $nsis -Filter "*.exe")
+          if ($candidates.Count -eq 0) { throw "No installer .exe in $nsis" }
+          $versioned = @($candidates | Where-Object { $_.Name -like "*_${version}_*-setup.exe" })
+          if ($versioned.Count -eq 0) {
+            $found = ($candidates | ForEach-Object { $_.Name }) -join ", "
+            throw "No NSIS installer for $version in $nsis (expected <product>_${version}_<arch>-setup.exe). Found: $found"
+          }
+          if ($versioned.Count -gt 1) {
+            $found = ($versioned | ForEach-Object { $_.Name }) -join ", "
+            throw "More than one NSIS installer for $version in ${nsis}: $found"
+          }
+          $exe = $versioned[0]
 
           $sig = "$($exe.FullName).sig"
           if (-not (Test-Path -LiteralPath $sig)) { throw "Missing updater signature: $sig" }
@@ -150,6 +253,9 @@ runs:
           Write-Host "installer: $($exe.FullName)"
           Write-Host "signature: $sig"
           Write-Host "url: $url"
+          if ($env:IS_PRERELEASE -eq "true") {
+            Write-Host "prerelease: latest.json is still attached; /releases/latest stays on the newest stable release."
+          }
         } finally {
           Write-Host ("timing: latest-json {0:N1}s" -f $sw.Elapsed.TotalSeconds)
         }
@@ -159,7 +265,21 @@ runs:
       run: |
         $sw = [System.Diagnostics.Stopwatch]::StartNew()
         try {
-          gh release create $env:GITHUB_REF_NAME $env:EXE_PATH $env:SIG_PATH latest.json --verify-tag --title "Relay $env:GITHUB_REF_NAME" --generate-notes
+          $title = "Relay $($env:GITHUB_REF_NAME)"
+          if ($env:IS_PRERELEASE -eq "true") { $title += " (pre-release)" }
+          $ghArgs = @(
+            "release", "create", $env:GITHUB_REF_NAME,
+            $env:EXE_PATH,
+            $env:SIG_PATH,
+            "latest.json",
+            "--verify-tag",
+            "--title", $title,
+            "--generate-notes"
+          )
+          if ($env:IS_PRERELEASE -eq "true") {
+            $ghArgs += "--prerelease"
+          }
+          gh @ghArgs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         } finally {
           Write-Host ("timing: gh-release {0:N1}s" -f $sw.Elapsed.TotalSeconds)
@@ -170,11 +290,5 @@ runs:
       run: |
         $start = [datetime]::Parse($env:RELEASE_TOTAL_START, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind)
         $seconds = ([datetime]::UtcNow - $start.ToUniversalTime()).TotalSeconds
-        Write-Host ("timing: total {0:N1}s ({1})" -f $seconds, [TimeSpan]::FromSeconds($seconds).ToString("mm\:ss"))
-        if ($seconds -gt 300) {
-          Write-Warning "Release is over the 5:00 budget."
-        }
-        if ($env:RUNNER_ENVIRONMENT -eq "self-hosted" -and $seconds -gt 420) {
-          Write-Error "Release took $([math]::Round($seconds, 1))s on the self-hosted runner, over the 420s budget."
-          exit 1
-        }
+        Write-Host ("timing: total {0:N1}s ({1}) including upload" -f $seconds, [TimeSpan]::FromSeconds($seconds).ToString("mm\:ss"))
+        Write-Host "The 420s budget gate uses the pre-upload time; the upload is excluded."
