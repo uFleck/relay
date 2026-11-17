@@ -15,6 +15,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     sync::{Mutex, MutexGuard},
+    time::Duration,
 };
 
 use rusqlite::{
@@ -40,6 +41,10 @@ const MIGRATIONS: &[&str] = &[
 const CLAIM_LEASE_MINUTES: i64 = 30;
 const DEFAULT_TASK_LIMIT: usize = 100;
 const MAX_TASK_LIMIT: usize = 1000;
+/// How long a second connection waits for a writer before SQLite reports busy.
+/// The claim compare-and-set relies on this: a loser blocks on `BEGIN IMMEDIATE`,
+/// then reads the winner's claim instead of surfacing `SQLITE_BUSY`.
+const BUSY_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// The fixed P1 workflow (docs/PLAN.md section 2). `Deployed to RC` is `deploying`;
 /// `Done` is the only `done`.
@@ -146,6 +151,7 @@ impl Store {
             })?;
         }
         let conn = Connection::open(path)?;
+        conn.busy_timeout(BUSY_TIMEOUT)?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
         Self::from_connection(conn)
     }
@@ -611,7 +617,17 @@ impl Store {
     }
 
     /// FTS5 search over title and notes, for task search and JEV candidates.
+    ///
+    /// `text` is literal: every whitespace-separated token is quoted before it
+    /// reaches `MATCH`, so FTS operators (`OR`, `NOT`, `NEAR`, column filters)
+    /// and wildcards (`*`) in user input cannot change the query. An empty
+    /// search has no candidates.
     pub fn search_tasks(&self, text: &str, limit: usize) -> Result<Vec<Task>, StoreError> {
+        let text = text.trim();
+        if text.is_empty() || limit == 0 {
+            return Ok(Vec::new());
+        }
+        let query = fts_query(text);
         let conn = self.conn();
         let mut stmt = conn.prepare(
             "SELECT t.id, t.project_id, t.status_id, t.title, t.notes, t.priority, t.due_at,
@@ -622,7 +638,7 @@ impl Store {
              ORDER BY rank
              LIMIT ?2",
         )?;
-        let rows = stmt.query_map(params![text, limit as i64], task_from_row)?;
+        let rows = stmt.query_map(params![query, limit as i64], task_from_row)?;
         let mut tasks = Vec::new();
         for row in rows {
             tasks.push(row?);
@@ -2500,6 +2516,16 @@ fn none_if_blank(value: Option<String>) -> Option<String> {
     value.filter(|value| !value.trim().is_empty())
 }
 
+/// Turns arbitrary user text into literal FTS5 phrase terms. FTS5 allows a
+/// double quote inside a quoted string by doubling it; whitespace joins the
+/// phrases with the default AND.
+fn fts_query(text: &str) -> String {
+    text.split_whitespace()
+        .map(|token| format!("\"{}\"", token.replace('"', "\"\"")))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// Escapes LIKE wildcards so a user's `%` or `_` is literal.
 fn like_pattern(text: &str) -> String {
     let mut pattern = String::with_capacity(text.len() + 2);
@@ -2524,6 +2550,11 @@ fn conversion_error(column: &str, value: &str) -> rusqlite::Error {
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        sync::{Arc, Barrier},
+        thread,
+    };
+
     use super::*;
 
     fn store_with_project() -> (Store, Project, Vec<ProjectStatus>) {
@@ -2555,6 +2586,27 @@ mod tests {
                 params!["2000-01-01T00:00:00.000Z", claim_id],
             )
             .unwrap();
+    }
+
+    /// A unique file database under the temp directory, removed with its WAL files.
+    struct TempDatabase {
+        path: PathBuf,
+    }
+
+    impl TempDatabase {
+        fn new() -> Self {
+            Self {
+                path: std::env::temp_dir().join(format!("relay-test-{}.db", new_id())),
+            }
+        }
+    }
+
+    impl Drop for TempDatabase {
+        fn drop(&mut self) {
+            for suffix in ["", "-wal", "-shm"] {
+                let _ = fs::remove_file(format!("{}{suffix}", self.path.display()));
+            }
+        }
     }
 
     #[test]
@@ -3250,5 +3302,452 @@ mod tests {
         for suffix in ["", "-wal", "-shm"] {
             let _ = fs::remove_file(format!("{}{suffix}", path.display()));
         }
+    }
+
+    #[test]
+    fn fts_index_tracks_tasks() {
+        let (store, project, _statuses) = store_with_project();
+
+        let mut new_task = NewTask::new(&project.id, "Deploy the RC build");
+        new_task.notes = Some("Release notes and rollback steps".to_string());
+        let task = store.create_task(new_task).unwrap();
+
+        // Insert: title and notes are both indexed, case-insensitively.
+        assert_eq!(store.search_tasks("deploy", 10).unwrap()[0].id, task.id);
+        assert_eq!(store.search_tasks("DEPLOY", 10).unwrap()[0].id, task.id);
+        assert_eq!(store.search_tasks("rollback", 10).unwrap()[0].id, task.id);
+        assert!(store.search_tasks("   ", 10).unwrap().is_empty());
+        assert!(store.search_tasks("deploy", 0).unwrap().is_empty());
+
+        // Update: the trigger removes the old terms and indexes the new ones.
+        let updated = store
+            .update_task(
+                &task.id,
+                TaskPatch {
+                    title: Some("Ship the canary".to_string()),
+                    notes: Some("Smoke test the new build".to_string()),
+                    ..TaskPatch::default()
+                },
+                1,
+            )
+            .unwrap();
+        assert!(store.search_tasks("deploy", 10).unwrap().is_empty());
+        assert!(store.search_tasks("rollback", 10).unwrap().is_empty());
+        assert_eq!(store.search_tasks("canary", 10).unwrap()[0].id, task.id);
+        assert_eq!(store.search_tasks("smoke", 10).unwrap()[0].id, task.id);
+
+        // Archive: hidden, exactly like list_tasks' default filter.
+        let archived = store
+            .update_task(
+                &task.id,
+                TaskPatch {
+                    archived: Some(true),
+                    ..TaskPatch::default()
+                },
+                updated.rev,
+            )
+            .unwrap();
+        assert!(store.search_tasks("canary", 10).unwrap().is_empty());
+        assert!(
+            store
+                .list_tasks(TaskFilter {
+                    text: Some("canary".to_string()),
+                    ..TaskFilter::default()
+                })
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            store
+                .list_tasks(TaskFilter {
+                    text: Some("canary".to_string()),
+                    include_archived: true,
+                    ..TaskFilter::default()
+                })
+                .unwrap()
+                .len(),
+            1,
+            "the row is still listed when archived rows are requested"
+        );
+
+        // Unarchive: searchable again.
+        store
+            .update_task(
+                &task.id,
+                TaskPatch {
+                    archived: Some(false),
+                    ..TaskPatch::default()
+                },
+                archived.rev,
+            )
+            .unwrap();
+        assert_eq!(store.search_tasks("canary", 10).unwrap()[0].id, task.id);
+
+        // Delete: the FTS trigger removes the index row. There is no delete API.
+        store
+            .conn()
+            .execute("DELETE FROM tasks WHERE id = ?1", params![task.id])
+            .unwrap();
+        assert!(store.search_tasks("canary", 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn fts_search_escapes_operators_and_wildcards_and_honors_the_limit() {
+        let (store, project, _statuses) = store_with_project();
+
+        let deploy = create_task(&store, &project, "Deploy relay");
+        let deployment = create_task(&store, &project, "Deployment rollback");
+        let quoted = create_task(&store, &project, "Handle \"quoted\" input");
+        let percent = create_task(&store, &project, "Reach 100% coverage");
+
+        // `*` is literal, not a prefix operator; quotes are escaped, not syntax.
+        let literal = store.search_tasks("deploy*", 10).unwrap();
+        assert_eq!(
+            literal.len(),
+            1,
+            "a trailing * must not become a prefix query"
+        );
+        assert_eq!(literal[0].id, deploy.id);
+        assert_ne!(literal[0].id, deployment.id);
+
+        let unbalanced = store.search_tasks("\"deploy", 10).unwrap();
+        assert_eq!(unbalanced.len(), 1);
+        assert_eq!(unbalanced[0].id, deploy.id);
+
+        assert!(
+            store
+                .search_tasks("deploy\" OR \"missing", 10)
+                .unwrap()
+                .is_empty(),
+            "FTS operators in quotes stay literal terms"
+        );
+        assert!(
+            store
+                .search_tasks("deploy OR missing", 10)
+                .unwrap()
+                .is_empty(),
+            "OR is a term here, so all three terms must match"
+        );
+        assert!(
+            store.search_tasks("title:deploy", 10).unwrap().is_empty(),
+            "a column filter is not interpreted"
+        );
+        assert_eq!(
+            store.search_tasks("\"quoted\"", 10).unwrap()[0].id,
+            quoted.id
+        );
+        assert_eq!(store.search_tasks("100%", 10).unwrap()[0].id, percent.id);
+
+        // Limit: exact, capped by the candidate count, and 0 is empty.
+        for index in 0..3 {
+            create_task(&store, &project, &format!("Release batch {index}"));
+        }
+        assert_eq!(store.search_tasks("release", 2).unwrap().len(), 2);
+        assert_eq!(store.search_tasks("release", 10).unwrap().len(), 3);
+        assert!(store.search_tasks("release", 0).unwrap().is_empty());
+    }
+
+    #[test]
+    fn upgrade_from_0001_keeps_rows_and_allows_acks() {
+        let db = TempDatabase::new();
+
+        let project_id = new_id();
+        let status_id = new_id();
+        let task_id = new_id();
+        let claim_id = new_id();
+        let change_id = new_id();
+        let at = now();
+        let lease_expires_at = now_plus_minutes(10);
+
+        // Build a v1 database by hand: only 0001, then user_version = 1.
+        {
+            let conn = Connection::open(&db.path).unwrap();
+            conn.execute_batch(MIGRATIONS[0]).unwrap();
+            conn.pragma_update(None, "user_version", 1).unwrap();
+            conn.execute(
+                "INSERT INTO projects (id, name, slug, created_at, updated_at)
+                 VALUES (?1, 'Relay', 'relay', ?2, ?2)",
+                params![project_id, at],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO project_statuses (id, project_id, name, category, position)
+                 VALUES (?1, ?2, 'Todo', 'todo', 0)",
+                params![status_id, project_id],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO tasks (id, project_id, status_id, title, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, 'Upgrade me', ?4, ?4)",
+                params![task_id, project_id, status_id, at],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO claims
+                     (id, task_id, holder_kind, holder_name, lease_expires_at, created_at)
+                 VALUES (?1, ?2, 'agent', 'T3 Code', ?3, ?4)",
+                params![claim_id, task_id, lease_expires_at, at],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO task_changes
+                     (id, task_id, claim_id, kind, body, source_kind, created_at)
+                 VALUES (?1, ?2, ?3, 'requirement', 'Survive the upgrade', 'slack', ?4)",
+                params![change_id, task_id, claim_id, at],
+            )
+            .unwrap();
+        }
+
+        let store = Store::open(&db.path).unwrap();
+        let version: i64 = store
+            .conn()
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 2);
+
+        let change_acks_table: i64 = store
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'table' AND name = 'change_acks'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(change_acks_table, 1, "0002 created change_acks");
+
+        assert_eq!(store.get_task(&task_id).unwrap().title, "Upgrade me");
+        assert_eq!(store.get_claim(&claim_id).unwrap().holder_name, "T3 Code");
+        let changes = store.list_changes(&task_id).unwrap();
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].id, change_id);
+        assert!(changes[0].acked_at.is_none());
+
+        // The new ack path works on the migrated rows.
+        let acked = store.ack_change(Some(&claim_id), &change_id).unwrap();
+        assert!(acked.change.acked);
+        assert!(acked.unacked_changes.is_empty());
+        let changes = store.list_changes(&task_id).unwrap();
+        assert!(changes[0].acked_at.is_some());
+
+        // Reopening skips 0002 instead of trying to create the table again.
+        drop(store);
+        let reopened = Store::open(&db.path).unwrap();
+        let version: i64 = reopened
+            .conn()
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 2);
+        let ack_rows: i64 = reopened
+            .conn()
+            .query_row("SELECT COUNT(*) FROM change_acks", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(ack_rows, 1);
+    }
+
+    #[test]
+    fn two_connections_race_for_the_same_claim() {
+        let db = TempDatabase::new();
+        let setup = Store::open(&db.path).unwrap();
+        let created = setup
+            .create_project_with_default_workflow(NewProject::new("Relay", "relay", None))
+            .unwrap();
+        let task = setup
+            .create_task(NewTask::new(&created.project.id, "Race me"))
+            .unwrap();
+        drop(setup);
+
+        let barrier = Arc::new(Barrier::new(2));
+        let spawn = |holder: &'static str| {
+            let store = Store::open(&db.path).unwrap();
+            let barrier = Arc::clone(&barrier);
+            let task_id = task.id.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                store.claim_task(NewClaim::new(&task_id, "agent", holder))
+            })
+        };
+        let results: Vec<_> = [spawn("T3 Code"), spawn("OpenCode")]
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .collect();
+
+        let mut winners = results.iter().filter_map(|result| result.as_ref().ok());
+        let winner = winners
+            .next()
+            .unwrap_or_else(|| panic!("no claimant won: {results:?}"));
+        assert!(winners.next().is_none(), "exactly one claimant wins");
+        let error = results
+            .iter()
+            .find_map(|result| result.as_ref().err())
+            .unwrap_or_else(|| panic!("expected one loser: {results:?}"));
+        match error {
+            StoreError::ClaimConflict { task_id, holder } => {
+                assert_eq!(task_id, &task.id);
+                assert_eq!(holder.id, winner.claim.id, "the loser sees the winner");
+                assert_eq!(holder.holder_name, winner.claim.holder_name);
+            }
+            other => panic!("expected a typed claim conflict, got {other:?}"),
+        }
+
+        // One claim row, and it is the winner's.
+        let verify = Store::open(&db.path).unwrap();
+        let claims: i64 = verify
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM claims WHERE task_id = ?1",
+                params![task.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(claims, 1);
+        assert_eq!(
+            verify
+                .get_task_detail(&task.id, None)
+                .unwrap()
+                .active_claim
+                .unwrap()
+                .id,
+            winner.claim.id
+        );
+    }
+
+    #[test]
+    fn concurrent_updates_with_the_same_expected_rev_advance_once() {
+        let db = TempDatabase::new();
+        let setup = Store::open(&db.path).unwrap();
+        let created = setup
+            .create_project_with_default_workflow(NewProject::new("Relay", "relay", None))
+            .unwrap();
+        let task = setup
+            .create_task(NewTask::new(&created.project.id, "Update me"))
+            .unwrap();
+        drop(setup);
+
+        let barrier = Arc::new(Barrier::new(2));
+        let spawn = |title: &'static str| {
+            let store = Store::open(&db.path).unwrap();
+            let barrier = Arc::clone(&barrier);
+            let task_id = task.id.clone();
+            thread::spawn(move || {
+                barrier.wait();
+                store.update_task(
+                    &task_id,
+                    TaskPatch {
+                        title: Some(title.to_string()),
+                        ..TaskPatch::default()
+                    },
+                    1,
+                )
+            })
+        };
+        let results: Vec<_> = [spawn("First patch"), spawn("Second patch")]
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .collect();
+
+        assert_eq!(
+            results.iter().filter(|result| result.is_ok()).count(),
+            1,
+            "exactly one update wins: {results:?}"
+        );
+        let error = results
+            .iter()
+            .find_map(|result| result.as_ref().err())
+            .unwrap_or_else(|| panic!("expected one stale writer: {results:?}"));
+        assert!(
+            matches!(
+                error,
+                StoreError::StaleRevision {
+                    expected: 1,
+                    actual: 2,
+                    ..
+                }
+            ),
+            "the loser sees the committed rev, got {error:?}"
+        );
+
+        let verify = Store::open(&db.path).unwrap();
+        let stored = verify.get_task(&task.id).unwrap();
+        assert_eq!(stored.rev, 2, "rev advances exactly once");
+        assert!(
+            stored.title == "First patch" || stored.title == "Second patch",
+            "the winning patch landed: {}",
+            stored.title
+        );
+        let updates = verify
+            .list_events(&task.id)
+            .unwrap()
+            .into_iter()
+            .filter(|event| event.kind == "updated")
+            .count();
+        assert_eq!(updates, 1, "the losing transaction wrote no event");
+    }
+
+    #[test]
+    fn human_ack_does_not_clear_an_agent_queue_and_stamps_acked_at() {
+        let (store, project, _statuses) = store_with_project();
+        let task = create_task(&store, &project, "Two ack scopes");
+        let claim = store
+            .claim_task(NewClaim::new(&task.id, "agent", "T3 Code"))
+            .unwrap();
+        let change = store
+            .add_change(NewChange::requirement(
+                &task.id,
+                "Keep the API stable",
+                "slack",
+            ))
+            .unwrap();
+
+        // Current, intentional semantics: a human ack is `claim_id = NULL`.
+        let human = store.ack_change(None, &change.id).unwrap();
+        assert!(human.change.acked);
+        assert_eq!(human.change.claim_id, None);
+        assert!(
+            human.unacked_changes.is_empty(),
+            "the human queue is cleared"
+        );
+
+        let changes = store.list_changes(&task.id).unwrap();
+        assert_eq!(changes.len(), 1);
+        let first_ack = changes[0]
+            .acked_at
+            .clone()
+            .expect("the first ack stamps task_changes.acked_at");
+
+        // The agent's queue is a separate scope: still one unacked change.
+        let agent_queue = store.unacked_changes(&claim.claim.id).unwrap();
+        assert_eq!(
+            agent_queue.len(),
+            1,
+            "a human ack must not clear an agent's queue"
+        );
+        assert!(agent_queue[0].acked_elsewhere);
+        assert!(!agent_queue[0].acked);
+        assert_eq!(
+            store
+                .get_task_detail(&task.id, Some(&claim.claim.id))
+                .unwrap()
+                .unacked_changes
+                .len(),
+            1
+        );
+
+        // The claim's own ack drains it and leaves the first-ack timeline value alone.
+        let agent = store.ack_change(Some(&claim.claim.id), &change.id).unwrap();
+        assert!(agent.unacked_changes.is_empty());
+        assert!(store.unacked_changes(&claim.claim.id).unwrap().is_empty());
+        assert!(
+            store
+                .get_task_detail(&task.id, None)
+                .unwrap()
+                .unacked_changes
+                .is_empty()
+        );
+        assert_eq!(
+            store.list_changes(&task.id).unwrap()[0].acked_at.as_deref(),
+            Some(first_ack.as_str()),
+            "the first ack time is not overwritten"
+        );
     }
 }
