@@ -12,10 +12,15 @@ not edited, so this package is not in its index yet.
 
 - **Agent / model:** DeepSeek V4.1 Flash (`opencode-go/deepseek-v4.1-flash`),
   implementation sub-agent for the release-hardening task.
-- **Commit:** `7b75444` — "[deepseek] Harden release version and prerelease
-  checks", parent `9900a1b`. That commit was amended only to add this hash
-  line; the amend is the commit under review (message and parent unchanged,
-  the trees differ only in this paragraph).
+- **Commit:** `9b9492d` — "[deepseek] Harden release version and prerelease
+  checks", parent `70be4a4`. The record was first committed as `7b75444`;
+  it was amended once to add this hash line, so the commit under review is
+  `9b9492d` (same message and parent, trees differ only in this paragraph).
+  Other agents committed core/docs work while this task ran, which is why the
+  parent is `70be4a4` and not the `9900a1b` seen at the start; one concurrent
+  maintenance commit landed between the two and was replayed after `9b9492d`
+  with its content unchanged. This parent hash was corrected in a follow-up
+  commit.
 - **Files:**
   - `scripts/release.ps1` — preflight, prerelease flag, pre-upload budget
     gate, exact installer match
