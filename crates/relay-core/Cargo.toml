@@ -15,3 +15,15 @@ ulid = "3"
 rusqlite = { version = "0.43", features = ["bundled"] }
 time = { version = "0.3", features = ["formatting", "parsing", "macros"] }
 tokio = { version = "1", features = ["rt", "sync", "time"] }
+reqwest = { version = "0.13", default-features = false, features = [
+    "rustls-no-provider",
+    "json",
+    "gzip",
+] }
+# The ring provider is the one the rest of the workspace already builds (the
+# updater). The `rustls` reqwest feature would add aws-lc-rs, which needs NASM.
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+
+[dev-dependencies]
+axum = "0.8"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net"] }
