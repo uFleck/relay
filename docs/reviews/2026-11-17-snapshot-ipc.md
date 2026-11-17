@@ -2,7 +2,10 @@
 
 **Status:** complete, awaiting review.
 **Agent / model:** DeepSeek implementation sub-agent (DeepSeek V4.1 Flash via T3 Code / OpenCode).
-**Commits:** TBD — ships in the `[deepseek] Add UI snapshot and IPC commands` commit. Latest local before it: `c4721f9`.
+**Commits:** `91e4f0a985b7d368eebdbdc03162608ca27fa09d` — "[deepseek] Add UI
+snapshot and IPC commands" (2026-11-17 20:00:36 -03:00). Parent: `c4721f9`
+(core store). Followed by `674c2b9`, a mechanical `cargo fmt` of
+`src-tauri/src/hover.rs`.
 **Files:**
 
 - `crates/relay-core/src/view.rs` (new): the UI view model and every mapping rule.
@@ -12,7 +15,9 @@
 - `src-tauri/src/lib.rs`: registers the three commands and seeds `Inbox` on an empty database.
 - `docs/reviews/2026-11-17-snapshot-ipc.md`: this record.
 
-It does **not** touch `src/`, `design/`, the hover window or the window commands. `docs/reviews/README.md` already existed (another package) and was not edited.
+It does **not** touch `src/`, `design/`, the hover window or the window commands.
+`docs/reviews/README.md` already existed (another package) and was not edited by
+`91e4f0a`; this ledger's index is updated by the review-record commit.
 
 ## What changed
 
@@ -42,10 +47,20 @@ It does **not** touch `src/`, `design/`, the hover window or the window commands
 
 | Command | Result |
 | --- | --- |
-| `cargo test -p relay-core` | Pass — 23 tests, 0 failed (4 new view tests). |
-| `cargo clippy -p relay-core --all-targets -- -D warnings` | Pass — no warnings. |
-| `cargo check` (Tauri workspace) | Pass — clean. First run warned about an unused `Manager` import in `commands.rs`; removed, re-run clean. |
-| `pnpm typecheck` / `pnpm build` | Not run, per the package brief (the paused UI has a known unused-import error). |
+| `cargo test -p relay-core` at `91e4f0a` | Pass — 23 tests, 0 failed, 0 ignored, finished in 0.08s (4 new view tests). Re-run from a `git archive` export of the commit after `cargo clean -p relay-core`, so no artifact from another tree could be reused. |
+| `cargo clippy -p relay-core --all-targets -- -D warnings` at `91e4f0a` | Pass — exit 0, no warnings (`Finished dev profile in 3.11s`). |
+| `cargo check` (Tauri workspace) at HEAD | Pass — exit 0, `Finished dev profile in 1.34s`. HEAD at check time (`674c2b9`) was `91e4f0a` plus the mechanical hover.rs format; this package's code is unchanged between the two. The first run during the package warned about an unused `Manager` import in `commands.rs`; it was removed and the re-run was clean. |
+| `pnpm typecheck` at HEAD | Pass — `tsc --noEmit`, exit 0. |
+| `pnpm build` at HEAD | Pass — `tsc` + Vite 8.3.8, 37 modules transformed, `dist/assets/index-C6_6kFP3.js` 259.43 kB (gzip 81.26 kB), built in 229ms. |
+| `pnpm typecheck` / `pnpm build` at `91e4f0a` alone | Not applicable — this commit does not contain `src/`. |
+
+The two `pnpm` results are for the **current working tree**, not for `91e4f0a`.
+They pass now only after a one-line fix that removes an unused import in
+`src/components/bits.tsx`. That fix is **uncommitted** and belongs to the paused
+UI package; it is not in `91e4f0a` and is not part of this record's commit. The
+UI files are still untracked/modified in the working tree
+(`?? src/app/`, `?? src/components/`, `?? src/data/`, `?? src/ipc.ts`, and
+modified `src/App.tsx`, `src/main.tsx`, `src/styles/base.css`).
 
 The new tests cover: the default workflow and canonical ids (`Waiting for deploy` -> `waiting`, short `Deploy`), `.ref` format, `due.hasTime` for a timed and a date-only due, OpenCode claim mapping with progress, requirement ack (`ackedBy: "you"`), field-change mapping, link kinds/labels, newest-first change order, `inboxCount = 1`, and empty proposals/sync. Three focused unit tests cover cross-project canonicalization (reuse + synthetic id), color fallback, and the serialized wire names (`inboxCount`, `lastProposalHandledAt`, `checkedAt`, `kind: "requirement"`, `"Claude Code"`).
 
@@ -60,7 +75,13 @@ The new tests cover: the default workflow and canonical ids (`Waiting for deploy
 - **Confidence default.** A requirement stored without `confidence` shows `0.00`; nothing invents a score.
 - **Ack attribution.** `ackedBy` is the earliest ack (claim id or "you"). A later human ack after an agent ack still displays the agent claim id.
 - **Due parse fallback.** A malformed `due_at` cannot come through the store, but if a row is edited outside it, the UI sees the string with `hasTime: true`.
-- **Working tree note.** `cargo fmt --all` also normalised whitespace in `src-tauri/src/hover.rs`, which had uncommitted edits from the hover package. No hover behaviour or command signature changed, and `hover.rs` is not part of this commit.
+- **Working tree note.** `cargo fmt --all` also normalised whitespace in
+  `src-tauri/src/hover.rs`, which had uncommitted edits from the hover package.
+  No hover behaviour or command signature changed, and `hover.rs` is not part of
+  this commit; the formatting was committed separately as `674c2b9`. At HEAD,
+  `cargo fmt --all -- --check` still fails on 3 hunks in
+  `src-tauri/src/lib.rs` (hover-window code, outside this package), while
+  `cargo fmt -p relay-core -- --check` is clean.
 
 ## Review checklist
 
@@ -75,4 +96,5 @@ The new tests cover: the default workflow and canonical ids (`Waiting for deploy
 
 ## Opus verdict
 
-_Pending._
+<!-- Opus: fill this in after reviewing 91e4f0a. -->
+
