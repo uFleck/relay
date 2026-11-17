@@ -34,7 +34,13 @@ impl Flags {
     }
 
     fn snapshot(&self) -> Snapshot {
-        Snapshot { pinned: self.pinned, dnd: self.dnd, paused: self.paused, ready: self.ready, visible: self.shown }
+        Snapshot {
+            pinned: self.pinned,
+            dnd: self.dnd,
+            paused: self.paused,
+            ready: self.ready,
+            visible: self.shown,
+        }
     }
 }
 
@@ -182,12 +188,14 @@ fn set_visible(window: &WebviewWindow, show: bool) {
 #[cfg(windows)]
 fn set_tool_style(window: &WebviewWindow) {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        GWL_EXSTYLE, GetWindowLongPtrW, SetWindowLongPtrW, WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+        GWL_EXSTYLE, GetWindowLongPtrW, SetWindowLongPtrW, WS_EX_APPWINDOW, WS_EX_NOACTIVATE,
+        WS_EX_TOOLWINDOW,
     };
     if let Ok(hwnd) = window.hwnd() {
         unsafe {
             let style = GetWindowLongPtrW(hwnd.0, GWL_EXSTYLE);
-            let style = (style | WS_EX_TOOLWINDOW as isize | WS_EX_NOACTIVATE as isize) & !(WS_EX_APPWINDOW as isize);
+            let style = (style | WS_EX_TOOLWINDOW as isize | WS_EX_NOACTIVATE as isize)
+                & !(WS_EX_APPWINDOW as isize);
             SetWindowLongPtrW(hwnd.0, GWL_EXSTYLE, style);
         }
     }
@@ -203,7 +211,11 @@ pub fn hover_ready(app: AppHandle, state: tauri::State<'_, HoverState>) -> Snaps
 }
 
 #[tauri::command]
-pub fn hover_set_pinned(app: AppHandle, state: tauri::State<'_, HoverState>, pinned: bool) -> Snapshot {
+pub fn hover_set_pinned(
+    app: AppHandle,
+    state: tauri::State<'_, HoverState>,
+    pinned: bool,
+) -> Snapshot {
     state.set_pinned(&app, pinned)
 }
 
@@ -216,13 +228,17 @@ pub fn hover_state(state: tauri::State<'_, HoverState>) -> Snapshot {
 /// the content shifted while the tab grows into the panel.
 #[tauri::command]
 pub fn hover_place(app: AppHandle, x: i32, y: i32, width: u32, height: u32) {
-    let Some(window) = app.get_webview_window(LABEL) else { return };
+    let Some(window) = app.get_webview_window(LABEL) else {
+        return;
+    };
     place(&window, x, y, width, height);
 }
 
 #[cfg(windows)]
 fn place(window: &WebviewWindow, x: i32, y: i32, width: u32, height: u32) {
-    use windows_sys::Win32::UI::WindowsAndMessaging::{SWP_NOACTIVATE, SWP_NOOWNERZORDER, SWP_NOZORDER, SetWindowPos};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SWP_NOACTIVATE, SWP_NOOWNERZORDER, SWP_NOZORDER, SetWindowPos,
+    };
     if let Ok(hwnd) = window.hwnd() {
         // NOZORDER keeps the topmost band the window already has; NOACTIVATE keeps focus where it is.
         unsafe {
@@ -265,7 +281,9 @@ pub async fn hover_drag(app: AppHandle) {
 fn drag(window: &WebviewWindow) {
     use windows_sys::Win32::Foundation::POINT;
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::ReleaseCapture;
-    use windows_sys::Win32::UI::WindowsAndMessaging::{GetCursorPos, HTCAPTION, SendMessageW, WM_NCLBUTTONDOWN};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetCursorPos, HTCAPTION, SendMessageW, WM_NCLBUTTONDOWN,
+    };
     if let Ok(hwnd) = window.hwnd() {
         let mut at = POINT { x: 0, y: 0 };
         unsafe {
@@ -296,7 +314,9 @@ pub fn hover_pointer(app: AppHandle) -> Option<(i32, i32)> {
 #[cfg(windows)]
 fn pointer(window: &WebviewWindow) -> Option<(i32, i32)> {
     use windows_sys::Win32::Foundation::{POINT, RECT};
-    use windows_sys::Win32::UI::WindowsAndMessaging::{GA_ROOT, GetAncestor, GetCursorPos, GetWindowRect, WindowFromPoint};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GA_ROOT, GetAncestor, GetCursorPos, GetWindowRect, WindowFromPoint,
+    };
     let hwnd = window.hwnd().ok()?.0;
     unsafe {
         let mut at = POINT { x: 0, y: 0 };
@@ -309,7 +329,12 @@ fn pointer(window: &WebviewWindow) -> Option<(i32, i32)> {
         if hit.is_null() || GetAncestor(hit, GA_ROOT) != hwnd {
             return None;
         }
-        let mut rect = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+        let mut rect = RECT {
+            left: 0,
+            top: 0,
+            right: 0,
+            bottom: 0,
+        };
         if GetWindowRect(hwnd, &mut rect) == 0 {
             return None;
         }
@@ -322,7 +347,10 @@ fn pointer(window: &WebviewWindow) -> Option<(i32, i32)> {
     let cursor = window.cursor_position().ok()?;
     let at = window.outer_position().ok()?;
     let size = window.outer_size().ok()?;
-    let (x, y) = ((cursor.x - at.x as f64) as i32, (cursor.y - at.y as f64) as i32);
+    let (x, y) = (
+        (cursor.x - at.x as f64) as i32,
+        (cursor.y - at.y as f64) as i32,
+    );
     (x >= 0 && y >= 0 && x < size.width as i32 && y < size.height as i32).then_some((x, y))
 }
 
@@ -334,7 +362,9 @@ static PREVIOUS: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize
 /// focus, and it gives focus back to the window that had it when done.
 #[tauri::command]
 pub fn hover_focus(app: AppHandle, focus: bool) {
-    let Some(window) = app.get_webview_window(LABEL) else { return };
+    let Some(window) = app.get_webview_window(LABEL) else {
+        return;
+    };
     set_focus(&window, focus);
 }
 
@@ -342,7 +372,8 @@ pub fn hover_focus(app: AppHandle, focus: bool) {
 fn set_focus(window: &WebviewWindow, focus: bool) {
     use std::sync::atomic::Ordering;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        GWL_EXSTYLE, GetForegroundWindow, GetWindowLongPtrW, IsWindow, SetForegroundWindow, SetWindowLongPtrW, WS_EX_NOACTIVATE,
+        GWL_EXSTYLE, GetForegroundWindow, GetWindowLongPtrW, IsWindow, SetForegroundWindow,
+        SetWindowLongPtrW, WS_EX_NOACTIVATE,
     };
     let Ok(hwnd) = window.hwnd() else { return };
     let ours = hwnd.0 as isize;
@@ -362,7 +393,10 @@ fn set_focus(window: &WebviewWindow, focus: bool) {
         unsafe { SetWindowLongPtrW(hwnd.0, GWL_EXSTYLE, style | WS_EX_NOACTIVATE as isize) };
         let previous = PREVIOUS.swap(0, Ordering::Relaxed);
         // Only hand focus back when it is still ours; the user may have clicked somewhere else already.
-        if previous != 0 && unsafe { GetForegroundWindow() } as isize == ours && unsafe { IsWindow(previous as _) } != 0 {
+        if previous != 0
+            && unsafe { GetForegroundWindow() } as isize == ours
+            && unsafe { IsWindow(previous as _) } != 0
+        {
             unsafe { SetForegroundWindow(previous as _) };
         }
     }
@@ -381,23 +415,57 @@ mod tests {
     use super::*;
 
     fn flags() -> Flags {
-        Flags { enabled: true, main_focused: false, pinned: false, ready: true, dnd: false, paused: false, shown: false }
+        Flags {
+            enabled: true,
+            main_focused: false,
+            pinned: false,
+            ready: true,
+            dnd: false,
+            paused: false,
+            shown: false,
+        }
     }
 
     #[test]
     fn hidden_until_the_page_is_ready() {
-        assert!(!Flags { ready: false, ..flags() }.want_shown());
+        assert!(
+            !Flags {
+                ready: false,
+                ..flags()
+            }
+            .want_shown()
+        );
         assert!(flags().want_shown());
     }
 
     #[test]
     fn main_focus_hides_it_unless_pinned() {
-        assert!(!Flags { main_focused: true, ..flags() }.want_shown());
-        assert!(Flags { main_focused: true, pinned: true, ..flags() }.want_shown());
+        assert!(
+            !Flags {
+                main_focused: true,
+                ..flags()
+            }
+            .want_shown()
+        );
+        assert!(
+            Flags {
+                main_focused: true,
+                pinned: true,
+                ..flags()
+            }
+            .want_shown()
+        );
     }
 
     #[test]
     fn do_not_disturb_and_pause_keep_the_tab() {
-        assert!(Flags { dnd: true, paused: true, ..flags() }.want_shown());
+        assert!(
+            Flags {
+                dnd: true,
+                paused: true,
+                ..flags()
+            }
+            .want_shown()
+        );
     }
 }
