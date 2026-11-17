@@ -11,13 +11,15 @@ State as of 2026-11-17 20:20 (-03:00). Read this before resuming the UI or start
 | `c4721f9` | DeepSeek | Core store, claims, changes, proposals (19 tests then; 23 now) |
 | `70f8eae` | DeepSeek | Review ledger + release audit (fixed missing `--verify-tag`) |
 | `91e4f0a` | DeepSeek | UI snapshot + IPC commands (`relay_snapshot`, `ack_change`, `decide_proposal`) |
+| `6b2bad9` | DeepSeek | JEV System One client + routing thresholds (16 tests) |
+| `70be4a4` | DeepSeek | Core regression tests + FTS escaping + claim `busy_timeout` |
 | `674c2b9` | DeepSeek | `cargo fmt` on `hover.rs` (no behavior change) |
 
 Uncommitted: the partial main UI (`src/app/**`, `src/components/**`, `src/data/**`, `src/ipc.ts`, `src/model.ts`, `src/types.ts`, `src/styles/app.css`, `src/styles/layout-tokens.css`, modified `src/App.tsx`, `src/main.tsx`, `src/styles/base.css`) and one unused-import fix in `src/components/bits.tsx`. `hover.html` and `src/hover/**` do not exist yet.
 
 ## Verified
 
-- `cargo test -p relay-core`: 23 passed, 0 failed.
+- `cargo test -p relay-core`: 45 passed, 0 failed.
 - `cargo clippy -p relay-core --all-targets -- -D warnings`: clean.
 - `cargo check`: clean.
 - `pnpm typecheck` and `pnpm build`: pass (after removing the unused `Icon` import).
