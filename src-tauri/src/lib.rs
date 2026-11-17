@@ -1,9 +1,11 @@
 //! Relay's Tauri shell: the main window, the hover window, tray, global hotkey, single instance, autostart and the
 //! local DB. The UI in both windows is owned by the frontend; this file only routes events to it.
 
+mod commands;
 mod hover;
 
 use hover::HoverState;
+use relay_core::model::NewProject;
 use relay_core::store::Store;
 use std::path::PathBuf;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
@@ -233,6 +235,9 @@ pub fn run() {
             set_paused,
             set_dnd,
             check_for_updates,
+            commands::relay_snapshot,
+            commands::ack_change,
+            commands::decide_proposal,
             hover::hover_place,
             hover::hover_drag,
             hover::hover_pointer,
@@ -265,7 +270,15 @@ pub fn run() {
 
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
-            app.manage(Store::open(dir.join("relay.db"))?);
+            let store = Store::open(dir.join("relay.db"))?;
+            // The first project is the canonical workflow every other project's status
+            // names map onto (view.rs). Seed it so a fresh install has a real Today list.
+            if store.list_projects()?.is_empty() {
+                store.create_project_with_default_workflow(NewProject::new(
+                    "Inbox", "inbox", None,
+                ))?;
+            }
+            app.manage(store);
 
             build_tray(app.handle())?;
             register_hotkey(app.handle());

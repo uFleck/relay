@@ -29,6 +29,7 @@ use crate::model::{
     SyncCursor, Task, TaskChange, TaskDetail, TaskEvent, TaskFilter, TaskLink, TaskPatch, new_id,
     now, now_plus_minutes,
 };
+use crate::view;
 
 const MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/0001_init.sql"),
@@ -290,6 +291,131 @@ impl Store {
         let conn = self.conn();
         project_by_id(&conn, project_id)?;
         statuses_by_project(&conn, project_id)
+    }
+
+    // -----------------------------------------------------------------------
+    // UI snapshot
+    // -----------------------------------------------------------------------
+
+    /// One read of everything the main window needs, already in UI vocabulary.
+    ///
+    /// The mapping lives in [`crate::view`]; this method only selects rows. It reads under
+    /// a single connection so a refresh cannot see half of a claim/ack batch. Tasks are
+    /// capped at the same 1000 rows as `list_tasks`.
+    pub fn ui_snapshot(
+        &self,
+        version: &str,
+        sync: Vec<view::SyncSource>,
+    ) -> Result<view::Snapshot, StoreError> {
+        let conn = self.conn();
+
+        let projects = {
+            let mut stmt = conn.prepare(&format!(
+                "SELECT {PROJECT_COLUMNS} FROM projects ORDER BY name COLLATE NOCASE, id"
+            ))?;
+            let rows = stmt.query_map([], project_from_row)?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+
+        let mut statuses = Vec::new();
+        for project in &projects {
+            statuses.extend(statuses_by_project(&conn, &project.id)?);
+        }
+
+        let tasks = {
+            let mut stmt = conn.prepare(&format!(
+                "SELECT {TASK_COLUMNS} FROM tasks WHERE archived = 0
+                 ORDER BY position, created_at, rowid LIMIT ?1"
+            ))?;
+            let rows = stmt.query_map(params![MAX_TASK_LIMIT as i64], task_from_row)?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+
+        // An active claim is unreleased and still inside its lease. Expired claims are
+        // closed lazily by the store, so the filter here is what the UI should show.
+        let claims = {
+            let mut stmt = conn.prepare(&format!(
+                "SELECT {CLAIM_COLUMNS} FROM claims
+                 WHERE released_at IS NULL AND lease_expires_at > ?1
+                 ORDER BY created_at DESC, rowid DESC"
+            ))?;
+            let rows = stmt.query_map(params![now()], claim_from_row)?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+
+        // The newest `progress` event per task; that is the claim's last progress line.
+        let progress = {
+            let mut stmt = conn.prepare(&format!(
+                "SELECT {EVENT_COLUMNS} FROM task_events e
+                 WHERE e.kind = 'progress'
+                   AND e.task_id IN (SELECT id FROM tasks WHERE archived = 0)
+                   AND e.rowid = (
+                       SELECT newest.rowid FROM task_events newest
+                       WHERE newest.task_id = e.task_id AND newest.kind = 'progress'
+                       ORDER BY newest.created_at DESC, newest.rowid DESC LIMIT 1)
+                 ORDER BY e.task_id"
+            ))?;
+            let rows = stmt.query_map([], event_from_row)?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+
+        let changes = {
+            let mut stmt = conn.prepare(&format!(
+                "SELECT {CHANGE_COLUMNS} FROM task_changes
+                 WHERE state = 'active'
+                   AND task_id IN (SELECT id FROM tasks WHERE archived = 0)
+                 ORDER BY created_at, rowid"
+            ))?;
+            let rows = stmt.query_map([], change_from_row)?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+
+        // First ack wins, matching `task_changes.acked_at` (the timeline's "acked at").
+        let acks = {
+            let mut stmt = conn
+                .prepare("SELECT change_id, claim_id FROM change_acks ORDER BY acked_at, rowid")?;
+            let rows = stmt.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+            })?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+
+        let links = {
+            let mut stmt = conn.prepare(&format!(
+                "SELECT {LINK_COLUMNS} FROM task_links
+                 WHERE task_id IN (SELECT id FROM tasks WHERE archived = 0)
+                 ORDER BY kind, rowid"
+            ))?;
+            let rows = stmt.query_map([], link_from_row)?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+
+        let pending_proposals: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM proposals WHERE state = 'pending'",
+            [],
+            |row| row.get(0),
+        )?;
+        let last_proposal_handled_at: Option<String> =
+            conn.query_row("SELECT MAX(decided_at) FROM proposals", [], |row| {
+                row.get(0)
+            })?;
+
+        Ok(view::build_snapshot(
+            view::SnapshotData {
+                projects,
+                statuses,
+                tasks,
+                claims,
+                progress,
+                changes,
+                acks,
+                links,
+                pending_proposals: pending_proposals.max(0) as usize,
+                last_proposal_handled_at,
+            },
+            version,
+            sync,
+        ))
     }
 
     // -----------------------------------------------------------------------
@@ -1438,6 +1564,11 @@ impl Store {
         }
         tx.commit()?;
         Ok(proposal_view(proposal))
+    }
+
+    pub fn get_proposal(&self, id: &str) -> Result<Proposal, StoreError> {
+        let conn = self.conn();
+        proposal_by_id(&conn, id)
     }
 
     /// `state` is one of `pending`, `approved` or `rejected`; `None` lists all.
