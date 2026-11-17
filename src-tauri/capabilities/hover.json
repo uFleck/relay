@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "hover",
+  "description": "Capability for the always-on-top hover window: events and read-only window info. It moves, drags and shows itself through Relay's own hover_* commands, and opens nothing outside the app.",
+  "windows": ["hover"],
+  "permissions": ["core:default"]
+}

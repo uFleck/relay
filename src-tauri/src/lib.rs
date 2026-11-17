@@ -1,19 +1,36 @@
-//! Relay's Tauri shell. The hover window and the real UI are owned by other agents;
-//! this scaffold has the main window, tray, single instance, autostart and the local DB.
+//! Relay's Tauri shell: the main window, the hover window, tray, global hotkey, single instance, autostart and the
+//! local DB. The UI in both windows is owned by the frontend; this file only routes events to it.
 
+mod hover;
+
+use hover::HoverState;
 use relay_core::store::Store;
 use std::path::PathBuf;
-use tauri::menu::{Menu, MenuItem};
+use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager, RunEvent, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, RunEvent, WindowEvent, Wry};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 /// Passed by the login entry so Relay starts hidden in the tray.
 const AUTOSTART_ARG: &str = "--autostart";
 /// Written once the first-run default has been applied, so turning it off later sticks.
 const AUTOSTART_MARKER: &str = "autostart-initialized";
-/// The main window is the only window in the scaffold.
 const MAIN: &str = "main";
+const TRAY: &str = "main";
+/// Summons the main window from anywhere. A taken hotkey must never stop Relay starting: the tray still works.
+const HOTKEY: &str = "ctrl+alt+r";
+
+/// Sent to the main window with a route (`/review`, `/settings`, `/today?task=<id>&focus=changes`) to navigate to.
+const OPEN_EVENT: &str = "relay://open";
+/// Sent to the main window to run a manual update check (`src/updater.ts`).
+const UPDATE_CHECK_EVENT: &str = "update://check";
+
+/// The tray's check items, kept so a change made from a page shows in the menu too.
+struct TrayChecks {
+    paused: CheckMenuItem<Wry>,
+    dnd: CheckMenuItem<Wry>,
+}
 
 fn data_file(app: &AppHandle, name: &str) -> tauri::Result<PathBuf> {
     Ok(app.path().app_data_dir()?.join(name))
@@ -33,25 +50,112 @@ fn hide_main(app: &AppHandle) {
     }
 }
 
-/// The future hover window summons the main window through this command.
+fn toggle_main(app: &AppHandle) {
+    let Some(window) = app.get_webview_window(MAIN) else { return };
+    if window.is_visible().unwrap_or(false) && window.is_focused().unwrap_or(false) {
+        let _ = window.hide();
+    } else {
+        show_main(app);
+    }
+}
+
+fn open_route(app: &AppHandle, route: &str) {
+    show_main(app);
+    let _ = app.emit_to(MAIN, OPEN_EVENT, route);
+}
+
+fn request_update_check(app: &AppHandle) {
+    let _ = app.emit_to(MAIN, UPDATE_CHECK_EVENT, ());
+}
+
+fn set_paused_flag(app: &AppHandle, paused: bool) -> hover::Snapshot {
+    if let Some(checks) = app.try_state::<TrayChecks>() {
+        let _ = checks.paused.set_checked(paused);
+    }
+    // Managed on the builder, so it is always there.
+    app.state::<HoverState>().set_paused(app, paused)
+}
+
+fn set_dnd_flag(app: &AppHandle, dnd: bool) -> hover::Snapshot {
+    if let Some(checks) = app.try_state::<TrayChecks>() {
+        let _ = checks.dnd.set_checked(dnd);
+    }
+    app.state::<HoverState>().set_dnd(app, dnd)
+}
+
 #[tauri::command]
 fn show_main_window(app: AppHandle) {
     show_main(&app);
 }
 
-fn build_tray(app: &AppHandle) -> tauri::Result<()> {
-    let show = MenuItem::with_id(app, "show", "Show", true, None::<&str>)?;
-    let hide = MenuItem::with_id(app, "hide", "Hide", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show, &hide, &quit])?;
+/// Shows and focuses the main window on `route`. The hover uses it for every click that leads somewhere.
+#[tauri::command]
+fn open_main(app: AppHandle, route: String) {
+    open_route(&app, &route);
+}
 
-    let mut tray = TrayIconBuilder::with_id("main")
+#[tauri::command]
+fn set_paused(app: AppHandle, paused: bool) -> hover::Snapshot {
+    set_paused_flag(&app, paused)
+}
+
+#[tauri::command]
+fn set_dnd(app: AppHandle, dnd: bool) -> hover::Snapshot {
+    set_dnd_flag(&app, dnd)
+}
+
+/// For the hover's update row: the main window owns the updater, so the check runs there.
+#[tauri::command]
+fn check_for_updates(app: AppHandle) {
+    request_update_check(&app);
+}
+
+fn build_tray(app: &AppHandle) -> tauri::Result<()> {
+    let toggle = MenuItem::with_id(app, "toggle", "Show / Hide", true, None::<&str>)?;
+    let paused = CheckMenuItem::with_id(app, "pause", "Pause capture", true, false, None::<&str>)?;
+    let dnd = CheckMenuItem::with_id(app, "dnd", "Do not disturb", true, false, None::<&str>)?;
+    let review = MenuItem::with_id(app, "review", "Review queue", true, None::<&str>)?;
+    let settings = MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
+    let updates = MenuItem::with_id(app, "updates", "Check for updates", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+    let menu = Menu::with_items(
+        app,
+        &[
+            &toggle,
+            &PredefinedMenuItem::separator(app)?,
+            &paused,
+            &dnd,
+            &PredefinedMenuItem::separator(app)?,
+            &review,
+            &settings,
+            &updates,
+            &PredefinedMenuItem::separator(app)?,
+            &quit,
+        ],
+    )?;
+    app.manage(TrayChecks { paused, dnd });
+
+    let mut tray = TrayIconBuilder::with_id(TRAY)
         .tooltip("Relay")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
-            "show" => show_main(app),
-            "hide" => hide_main(app),
+            "toggle" => toggle_main(app),
+            // The menu flips a check item's mark on its own; the stored flag is the truth, so it is set from that.
+            "pause" => {
+                let paused = app.state::<HoverState>().snapshot().paused;
+                set_paused_flag(app, !paused);
+            }
+            "dnd" => {
+                let dnd = app.state::<HoverState>().snapshot().dnd;
+                set_dnd_flag(app, !dnd);
+            }
+            "review" => open_route(app, "/review"),
+            "settings" => open_route(app, "/settings"),
+            "updates" => {
+                show_main(app);
+                request_update_check(app);
+            }
             "quit" => app.exit(0),
             _ => {}
         })
@@ -71,6 +175,21 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     }
     tray.build(app)?;
     Ok(())
+}
+
+/// Registers the summon hotkey. When another app holds it, Relay still starts and the tray tooltip says so.
+fn register_hotkey(app: &AppHandle) {
+    let registered = app.global_shortcut().on_shortcut(HOTKEY, |app, _shortcut, event| {
+        if event.state == ShortcutState::Pressed {
+            toggle_main(app);
+        }
+    });
+    if let Err(err) = registered {
+        eprintln!("relay: could not register {HOTKEY}: {err}");
+        if let Some(tray) = app.tray_by_id(TRAY) {
+            let _ = tray.set_tooltip(Some("Relay (Ctrl+Alt+R is taken; use the tray)"));
+        }
+    }
 }
 
 /// Turns on start-on-login the first time a release build runs; the tray/OS owns it afterwards.
@@ -107,14 +226,36 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
-        .invoke_handler(tauri::generate_handler![show_main_window])
+        .manage(HoverState::default())
+        .invoke_handler(tauri::generate_handler![
+            show_main_window,
+            open_main,
+            set_paused,
+            set_dnd,
+            check_for_updates,
+            hover::hover_place,
+            hover::hover_drag,
+            hover::hover_pointer,
+            hover::hover_focus,
+            hover::hover_ready,
+            hover::hover_set_pinned,
+            hover::hover_state,
+        ])
         .on_window_event(|window, event| {
-            if window.label() == MAIN
-                && let WindowEvent::CloseRequested { api, .. } = event
-            {
+            if window.label() != MAIN {
+                return;
+            }
+            match event {
                 // The tray is the app's home; closing the main window hides it.
-                api.prevent_close();
-                let _ = window.hide();
+                WindowEvent::CloseRequested { api, .. } => {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+                // Hiding the main window also blurs it, so this covers hide-to-tray as well.
+                WindowEvent::Focused(focused) => {
+                    window.state::<HoverState>().set_main_focused(window.app_handle(), *focused);
+                }
+                _ => {}
             }
         })
         .setup(|app| {
@@ -127,7 +268,13 @@ pub fn run() {
             app.manage(Store::open(dir.join("relay.db"))?);
 
             build_tray(app.handle())?;
+            register_hotkey(app.handle());
             enable_autostart_once(app.handle());
+
+            // A hover that fails to build must not stop Relay; the main window and tray still work.
+            if let Err(err) = hover::build(app.handle()) {
+                eprintln!("relay: could not build the hover window: {err}");
+            }
 
             if std::env::args().any(|arg| arg == AUTOSTART_ARG) {
                 hide_main(app.handle());

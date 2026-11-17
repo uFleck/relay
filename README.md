@@ -43,7 +43,7 @@ The app opens `%APPDATA%\dev.relay.app\relay.db` at startup, enables WAL and for
 
 ## Releases
 
-The updater plugin and endpoint (`https://github.com/uFleck/relay/releases/latest/download/latest.json`) are configured; the in-app update state/UI is not built yet. The configured `plugins.updater.pubkey` is the placeholder `REPLACE_WITH_TAURI_UPDATER_PUBKEY` until the real public key is added.
+The updater plugin and endpoint (`https://github.com/uFleck/relay/releases/latest/download/latest.json`) are configured. A local key pair was generated on 2026-11-17 and its public key is already in `plugins.updater.pubkey`; the in-app update state/UI is still being built.
 
 ```powershell
 # 1. Bump all four version fields
@@ -66,8 +66,10 @@ scripts/release.ps1 0.1.0 -DryRun
 If Windows blocks the scripts (`running scripts is disabled on this system`), use `pwsh -NoProfile -File scripts/release.ps1 0.1.0` or `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/release.ps1 0.1.0`.
 
 ```powershell
-# Once: generate the key pair. Prints ONLY the public key (base64).
-scripts/generate-signing-key.ps1
+# Already generated locally on 2026-11-17. Re-run only to rotate the pair.
+# It prints ONLY the public key (base64); installed apps stop accepting updates
+# signed by the old key, so rotate deliberately.
+scripts/generate-signing-key.ps1 -Force
 ```
 
 - Private key: `%USERPROFILE%\.relay\signing.key` (outside the repo; `*.key` is gitignored).

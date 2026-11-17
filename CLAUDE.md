@@ -12,5 +12,5 @@
 - **Ids and time:** ULIDs as `String`, RFC 3339 UTC timestamps as `String`, `serde(rename_all = "camelCase")` on IPC/model structs; Rust stays `snake_case`.
 - **DB:** WAL for file databases, foreign keys ON, migrations only through `PRAGMA user_version` (`crates/relay-core/migrations/`). FTS5 indexes task title/notes.
 - **Use pnpm.** Node 24.4.1 (`.node-version`).
-- **Do not commit or push unasked.** The initial scaffold was created without a commit; the user owns the first commit.
-- **Updater/release:** `createUpdaterArtifacts` is on; `plugins.updater.pubkey` is still `REPLACE_WITH_TAURI_UPDATER_PUBKEY`. Do not run a full `pnpm tauri build` without a signing key. `scripts/release.ps1` is the local fast path; `.github/actions/release` holds the shared CI steps.
+- **Do not push unasked.** Commits stay local until the user asks to push.
+- **Updater/release:** `createUpdaterArtifacts` is on and `plugins.updater.pubkey` is set from the locally generated pair. Private key + password live outside the repo at `%USERPROFILE%\.relay\signing.key` and `.password`; never print or commit them. `scripts/release.ps1` is the local fast path (warm target, target < 5 min); `.github/actions/release` holds the shared CI steps. Add the two values to the `Production` GitHub environment before the first CI release.
