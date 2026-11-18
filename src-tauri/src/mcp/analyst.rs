@@ -1,13 +1,12 @@
-//! The reviewer's tools behind `POST /mcp/analyst`. This is the boundary from PLAN.md 3.3: a separate token,
-//! a fixed allowlist, and every job-scoped call checked against the job's candidate tasks before the store is
-//! touched. No status/due/priority/complete/claim/delete tools exist here.
+//! The reviewer's tools behind `POST /mcp/analyst`. This is the boundary from PLAN.md 3.3: a separate
+//! token, a fixed allowlist, and every job-scoped call checked against the job's candidate tasks
+//! before the store is touched. No status/due/priority/complete/claim/delete tools exist here.
 //!
-//! The job store and runner arrive in P3. Until then [`job_candidates`] finds no job, so `jobs_get`,
-//! `jobs_complete`, `tasks_get` and every write are refused with `job_store_unavailable`; only the read-only
-//! `projects_list` and `tasks_search` answer.
+//! Every write takes `<jobId>:<opIndex>` and is recorded in `job_ops`: a timed-out run that retries
+//! gets the first result back instead of creating a second task or appending a requirement twice.
 
-use relay_core::model::{NewChange, NewProposal, NewTask};
-use relay_core::store::Store;
+use relay_core::model::{AnalysisJob, NewChange, NewProposal, NewTask};
+use relay_core::store::{Store, StoreError};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -113,6 +112,7 @@ pub fn definitions() -> Vec<Value> {
             schema(
                 json!({
                     "jobId": job_id(),
+                    "idempotencyKey": idempotency_key(),
                     "taskId": s("Candidate task id"),
                     "kind": s("change_status, change_deadline or change_priority"),
                     "baseRev": int("The task rev the patch is based on"),
@@ -120,7 +120,7 @@ pub fn definitions() -> Vec<Value> {
                     "rationale": s("Why, citing message timestamps"),
                     "confidence": num("0..1"),
                 }),
-                &["jobId", "taskId", "kind", "patch"],
+                &["jobId", "idempotencyKey", "taskId", "kind", "patch"],
             ),
         ),
     ]
@@ -140,7 +140,6 @@ struct JobArgs {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct CompleteArgs {
     job_id: String,
-    #[allow(dead_code)]
     summary: Option<String>,
 }
 
@@ -155,7 +154,6 @@ struct GetArgs {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct CreateArgs {
     job_id: String,
-    #[allow(dead_code)]
     idempotency_key: String,
     project_id: String,
     title: String,
@@ -166,7 +164,6 @@ struct CreateArgs {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct RequirementArgs {
     job_id: String,
-    #[allow(dead_code)]
     idempotency_key: String,
     task_id: String,
     body: String,
@@ -180,6 +177,7 @@ struct RequirementArgs {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ProposalArgs {
     job_id: String,
+    idempotency_key: String,
     task_id: String,
     kind: String,
     base_rev: Option<i64>,
@@ -188,51 +186,92 @@ struct ProposalArgs {
     confidence: Option<f64>,
 }
 
-/// The job's candidate task ids. P3 reads them from `analysis_jobs` and routes writes through `job_ops` for
-/// idempotency; until then there is no job store, so every job-scoped call stops here.
-fn job_candidates(_store: &Store, job_id: &str) -> Result<Vec<String>, ToolError> {
-    Err(ToolError::new(
-        "job_store_unavailable",
-        format!(
-            "job store not implemented yet (P3): job {job_id} cannot be loaded, so job-scoped reads and writes are refused"
-        ),
-    ))
+fn load_job(store: &Store, job_id: &str) -> Result<AnalysisJob, ToolError> {
+    store.get_job(job_id).map_err(|error| match error {
+        StoreError::NotFound(_) => {
+            ToolError::new("job_not_found", format!("no analysis job {job_id}"))
+        }
+        other => other.into(),
+    })
 }
 
-fn require_candidate(store: &Store, job_id: &str, task_id: &str) -> Result<(), ToolError> {
-    if job_candidates(store, job_id)?.iter().any(|c| c == task_id) {
+fn require_candidate(job: &AnalysisJob, task_id: &str) -> Result<(), ToolError> {
+    if job.candidates.iter().any(|candidate| candidate == task_id) {
         Ok(())
     } else {
         Err(ToolError::new(
             "forbidden",
-            format!("task {task_id} is not a candidate of job {job_id}"),
+            format!("task {task_id} is not a candidate of job {}", job.id),
         ))
     }
 }
 
+/// The op slot for this key, plus the stored result when the write already happened.
+fn op_slot(store: &Store, job_id: &str, key: &str) -> Result<(i64, Option<Value>), ToolError> {
+    let (prefix, index) = key.rsplit_once(':').ok_or_else(|| {
+        ToolError::new("invalid_args", "idempotencyKey must be <jobId>:<opIndex>")
+    })?;
+    if prefix != job_id {
+        return Err(ToolError::new(
+            "forbidden",
+            format!("idempotencyKey belongs to job {prefix}, not {job_id}"),
+        ));
+    }
+    let index: i64 = index.parse().map_err(|_| {
+        ToolError::new(
+            "invalid_args",
+            "the op index in idempotencyKey must be an integer",
+        )
+    })?;
+    let existing = store
+        .job_op(job_id, index)?
+        .and_then(|op| serde_json::from_str::<Value>(&op.result_json).ok());
+    Ok((index, existing))
+}
+
 fn tasks_create(store: &Store, args: CreateArgs) -> ToolResult {
-    job_candidates(store, &args.job_id)?;
+    let job = load_job(store, &args.job_id)?;
+    let (index, existing) = op_slot(store, &job.id, &args.idempotency_key)?;
+    if let Some(result) = existing {
+        return Ok(result);
+    }
     let mut new = NewTask::new(&args.project_id, &args.title);
     new.notes = args.notes;
     new.source = Some("analyst".into());
-    ok(store.create_task(new)?)
+    let task = store.create_task(new)?;
+    let result = json!({ "task": task });
+    store.record_job_op(&job.id, index, "tasks_create", &result.to_string())?;
+    Ok(result)
 }
 
 fn tasks_add_requirement(store: &Store, args: RequirementArgs) -> ToolResult {
-    require_candidate(store, &args.job_id, &args.task_id)?;
+    let job = load_job(store, &args.job_id)?;
+    require_candidate(&job, &args.task_id)?;
+    let (index, existing) = op_slot(store, &job.id, &args.idempotency_key)?;
+    if let Some(result) = existing {
+        return Ok(result);
+    }
     let mut new = NewChange::requirement(&args.task_id, &args.body, "slack");
     new.source_id = args.source_id;
     new.excerpt = args.excerpt;
     new.permalink = args.permalink;
     new.confidence = args.confidence;
-    ok(store.add_change(new)?)
+    let change = store.add_change(new)?;
+    let result = json!({ "change": change });
+    store.record_job_op(&job.id, index, "tasks_add_requirement", &result.to_string())?;
+    Ok(result)
 }
 
 fn proposals_submit(store: &Store, args: ProposalArgs) -> ToolResult {
-    require_candidate(store, &args.job_id, &args.task_id)?;
+    let job = load_job(store, &args.job_id)?;
+    require_candidate(&job, &args.task_id)?;
+    let (index, existing) = op_slot(store, &job.id, &args.idempotency_key)?;
+    if let Some(result) = existing {
+        return Ok(result);
+    }
     let project_id = store.get_task(&args.task_id)?.project_id;
-    ok(store.create_proposal(NewProposal {
-        job_id: Some(args.job_id),
+    let proposal = store.create_proposal(NewProposal {
+        job_id: Some(job.id.clone()),
         project_id,
         task_id: Some(args.task_id),
         kind: args.kind,
@@ -241,7 +280,10 @@ fn proposals_submit(store: &Store, args: ProposalArgs) -> ToolResult {
         rationale: args.rationale,
         jev_json: None,
         confidence: args.confidence,
-    })?)
+    })?;
+    let result = json!({ "proposal": proposal.proposal, "patch": proposal.patch });
+    store.record_job_op(&job.id, index, "proposals_submit", &result.to_string())?;
+    Ok(result)
 }
 
 /// Only [`ALLOWED`] names reach this; the server refuses the rest before calling.
@@ -249,14 +291,31 @@ pub fn call(store: &Store, name: &str, args: Value) -> Option<ToolResult> {
     Some(match name {
         "projects_list" => parse::<Empty>(args).and_then(|_| tools::projects_list(store)),
         "tasks_search" => parse::<SearchArgs>(args).and_then(|a| tools::tasks_search(store, a)),
-        "jobs_get" => {
-            parse::<JobArgs>(args).and_then(|a| job_candidates(store, &a.job_id).and_then(ok))
-        }
-        "jobs_complete" => {
-            parse::<CompleteArgs>(args).and_then(|a| job_candidates(store, &a.job_id).and_then(ok))
-        }
+        "jobs_get" => parse::<JobArgs>(args).and_then(|a| {
+            let job = load_job(store, &a.job_id)?;
+            let episode = store.get_slack_episode(&job.conversation_id)?;
+            let mut candidates = Vec::new();
+            for id in &job.candidates {
+                if let Ok(detail) = store.get_task_detail(id, None) {
+                    candidates.push(json!({
+                        "task": detail.task,
+                        "status": detail.status,
+                        "activeClaim": detail.active_claim,
+                        "changes": detail.changes,
+                        "links": detail.links,
+                    }));
+                }
+            }
+            ok(json!({ "job": job, "episode": episode, "candidates": candidates }))
+        }),
+        "jobs_complete" => parse::<CompleteArgs>(args).and_then(|a| {
+            let job = load_job(store, &a.job_id)?;
+            let done = store.set_job_status(&job.id, "done", a.summary.as_deref(), None)?;
+            ok(done)
+        }),
         "tasks_get" => parse::<GetArgs>(args).and_then(|a| {
-            require_candidate(store, &a.job_id, &a.id)?;
+            let job = load_job(store, &a.job_id)?;
+            require_candidate(&job, &a.id)?;
             ok(store.get_task_detail(&a.id, None)?)
         }),
         "tasks_create" => parse(args).and_then(|a| tasks_create(store, a)),

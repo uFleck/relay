@@ -4,6 +4,7 @@
 mod commands;
 mod hover;
 mod mcp;
+mod slack;
 
 use hover::HoverState;
 use relay_core::model::NewProject;
@@ -246,6 +247,18 @@ pub fn run() {
             commands::ack_change,
             commands::decide_proposal,
             mcp::mcp_status,
+            slack::slack_status,
+            slack::slack_connect,
+            slack::slack_disconnect,
+            slack::slack_peers,
+            slack::slack_set_peer_excluded,
+            slack::episodes_list,
+            slack::episode_get,
+            slack::episode_analyze,
+            slack::jobs_list,
+            slack::jev_status,
+            slack::jev_set_key,
+            slack::jev_clear_key,
             hover::hover_place,
             hover::hover_drag,
             hover::hover_pointer,
@@ -290,7 +303,8 @@ pub fn run() {
             }
             let store = Arc::new(store);
             app.manage(store.clone());
-            mcp::start(app.handle().clone(), store, &dir);
+            mcp::start(app.handle().clone(), store.clone(), &dir);
+            slack::start(app.handle().clone(), store);
 
             build_tray(app.handle())?;
             register_hotkey(app.handle());

@@ -137,12 +137,152 @@ export interface ChangeEvent {
   proposalId?: string;
 }
 
+/* -- Slack capture and JEV -- */
+
+export interface SlackStatus {
+  configured: boolean;
+  connected: boolean;
+  team: string | null;
+  user: string | null;
+  error: string | null;
+  lastEventAt: string | null;
+  capturePaused: boolean;
+  peers: number;
+  openEpisodes: number;
+}
+
+export interface SlackPeer {
+  id: string;
+  userId: string;
+  name: string | null;
+  isBot: boolean;
+  excluded: boolean;
+  createdAt: string;
+}
+
+export interface SlackMessage {
+  id: string;
+  episodeId: string;
+  peerId: string;
+  channelId: string;
+  ts: string;
+  threadTs: string | null;
+  direction: "in" | "out";
+  userId: string | null;
+  text: string;
+  permalink: string | null;
+  editedAt: string | null;
+  deleted: boolean;
+  historical: boolean;
+  createdAt: string;
+}
+
+export interface SlackEpisode {
+  id: string;
+  channelId: string;
+  peerId: string;
+  state: "open" | "waiting" | "closed" | "analyzed" | "needs_review";
+  startedAt: string;
+  lastMessageAt: string;
+  closedAt: string | null;
+  summary: string | null;
+  jevJson: string | null;
+  createdAt: string;
+}
+
+export interface EpisodeSummary {
+  episode: SlackEpisode;
+  peerName: string | null;
+  peerUserId: string;
+  messageCount: number;
+  preview: string | null;
+}
+
+export interface EpisodeDetail {
+  episode: SlackEpisode;
+  peer: SlackPeer;
+  messages: SlackMessage[];
+}
+
+export type AnalysisJobState = "pending" | "running" | "pending_agent" | "done" | "failed" | "superseded" | "shadow";
+
+export interface AnalysisJob {
+  id: string;
+  conversationId: string;
+  projectId: string | null;
+  watermark: string;
+  kind: "screen" | "classify";
+  state: AnalysisJobState;
+  attempts: number;
+  route: "ignore" | "rescreen" | "review" | "change" | "new_task" | null;
+  jevJson: string | null;
+  candidates: string[];
+  summary: string | null;
+  error: string | null;
+  supersededBy: string | null;
+  agentSession: string | null;
+  createdAt: string;
+  updatedAt: string | null;
+  startedAt: string | null;
+  finishedAt: string | null;
+}
+
+export interface JevStatus {
+  configured: boolean;
+  model: string | null;
+  error: string | null;
+}
+
+const browserSlackStatus: SlackStatus = {
+  configured: false,
+  connected: false,
+  team: null,
+  user: null,
+  error: null,
+  lastEventAt: null,
+  capturePaused: false,
+  peers: 0,
+  openEpisodes: 0,
+};
+
+export const slackStatus = () => call<SlackStatus>("slack_status", undefined, () => browserSlackStatus);
+
+export const slackConnect = (args: { userToken: string; appToken: string }) =>
+  call<SlackStatus>("slack_connect", args, () => browserSlackStatus);
+
+export const slackDisconnect = () =>
+  call<SlackStatus>("slack_disconnect", undefined, () => browserSlackStatus);
+
+export const slackPeers = () => call<SlackPeer[]>("slack_peers", undefined, () => []);
+
+export const slackSetPeerExcluded = (args: { peerId: string; excluded: boolean }) =>
+  call<SlackPeer | null>("slack_set_peer_excluded", args, () => null);
+
+export const episodesList = (args: { stateFilter?: string; limit?: number } = {}) =>
+  call<EpisodeSummary[]>("episodes_list", args, () => []);
+
+export const episodeGet = (id: string) => call<EpisodeDetail | null>("episode_get", { id }, () => null);
+
+export const episodeAnalyze = (id: string) =>
+  call<AnalysisJob | null>("episode_analyze", { id }, () => null);
+
+export const jobsList = (args: { stateFilter?: string; limit?: number } = {}) =>
+  call<AnalysisJob[]>("jobs_list", args, () => []);
+
+export const jevStatus = () => call<JevStatus>("jev_status", undefined, () => ({ configured: false, model: null, error: null }));
+
+export const jevSetKey = (key: string) =>
+  call<JevStatus>("jev_set_key", { key }, () => ({ configured: false, model: null, error: null }));
+
+export const jevClearKey = () => call<JevStatus>("jev_clear_key", undefined, () => ({ configured: false, model: null, error: null }));
+
 interface Events {
   /** A route string for the main window. */
   "relay://open": string;
   "relay://change": ChangeEvent;
   "relay://state": HoverFlags;
   "mcp://status": McpStatus;
+  "slack://status": SlackStatus;
 }
 
 /** Subscribes to an app event. Returns an unsubscribe; a no-op in the browser. */

@@ -241,32 +241,173 @@ async fn analyst_token_cannot_call_agent_only_tools() {
 }
 
 #[tokio::test]
-async fn analyst_job_scoped_calls_are_refused_without_a_job_store() {
+async fn analyst_jobs_are_scoped_idempotent_and_complete() {
     let h = H::new();
-    let task_id = h.task("Candidate").await;
-    let before = h.store.list_tasks(Default::default()).unwrap().len();
-    let job = "job_1";
-    for (name, args) in [
-        ("jobs_get", json!({"jobId": job})),
-        ("jobs_complete", json!({"jobId": job})),
-        ("tasks_get", json!({"jobId": job, "id": task_id})),
-        (
-            "tasks_create",
-            json!({"jobId": job, "idempotencyKey": "job_1:0", "projectId": h.project_id, "title": "From Slack"}),
-        ),
-        (
+    let candidate = h.task("Candidate").await;
+    let other = h.task("Not a candidate").await;
+    let before_tasks = h.store.list_tasks(Default::default()).unwrap().len();
+
+    // An unknown job is a typed refusal, not a panic.
+    let (err, v) = h
+        .tool(ANALYST, "jobs_get", json!({"jobId": "job_missing"}))
+        .await;
+    assert!(err);
+    assert_eq!(v["kind"], "job_not_found");
+
+    // A real episode and job, with one candidate.
+    let message = relay_core::model::RawSlackMessage {
+        channel_id: "D1".into(),
+        ts: "1700000000.000100".into(),
+        thread_ts: None,
+        user_id: Some("U1".into()),
+        text: "please also run the RC build".into(),
+        permalink: Some("https://slack.test/archives/D1/p1".into()),
+        edited_at: None,
+        deleted: false,
+        historical: false,
+    };
+    let episode = h
+        .store
+        .capture_slack_message("U1", Some("Alice"), &message, 90)
+        .unwrap()
+        .unwrap()
+        .episode_id;
+    let job = h
+        .store
+        .create_job(relay_core::model::NewJob {
+            conversation_id: episode.clone(),
+            watermark: message.ts.clone(),
+            kind: "classify".into(),
+            project_id: Some(h.project_id.clone()),
+            route: Some("change".into()),
+            jev_json: Some(json!({"affects_existing": 0.9}).to_string()),
+            candidates: vec![candidate.clone()],
+        })
+        .unwrap();
+    let job_id = job.id.clone();
+
+    let (err, v) = h.tool(ANALYST, "jobs_get", json!({"jobId": job_id})).await;
+    assert!(!err, "{v}");
+    assert_eq!(v["job"]["id"], job_id.as_str());
+    assert_eq!(v["episode"]["episode"]["id"], episode.as_str());
+    assert_eq!(v["candidates"][0]["task"]["id"], candidate.as_str());
+
+    // A candidate write records its op; the replay returns the first result.
+    let key = format!("{job_id}:0");
+    let (err, v) = h
+        .tool(
+            ANALYST,
             "tasks_add_requirement",
-            json!({"jobId": job, "idempotencyKey": "job_1:1", "taskId": task_id, "body": "Works on RC"}),
-        ),
-        (
+            json!({
+                "jobId": job_id,
+                "idempotencyKey": key,
+                "taskId": candidate,
+                "body": "Also run the RC build",
+                "sourceId": message.ts,
+                "excerpt": message.text,
+            }),
+        )
+        .await;
+    assert!(!err, "{v}");
+    let change_id = v["change"]["id"].as_str().unwrap().to_string();
+    let (err, replay) = h
+        .tool(
+            ANALYST,
+            "tasks_add_requirement",
+            json!({
+                "jobId": job_id,
+                "idempotencyKey": key,
+                "taskId": candidate,
+                "body": "Also run the RC build",
+                "sourceId": message.ts,
+            }),
+        )
+        .await;
+    assert!(!err, "{replay}");
+    assert_eq!(replay["change"]["id"], change_id.as_str(), "no duplicate");
+    assert_eq!(h.store.list_changes(&candidate).unwrap().len(), 1);
+
+    // A task outside the candidate list is refused.
+    let (err, v) = h
+        .tool(
+            ANALYST,
+            "tasks_add_requirement",
+            json!({
+                "jobId": job_id,
+                "idempotencyKey": format!("{job_id}:9"),
+                "taskId": other,
+                "body": "should not land",
+            }),
+        )
+        .await;
+    assert!(err);
+    assert_eq!(v["kind"], "forbidden");
+    assert!(h.store.list_changes(&other).unwrap().is_empty());
+
+    // Creating a task is idempotent too.
+    let create = json!({
+        "jobId": job_id,
+        "idempotencyKey": format!("{job_id}:2"),
+        "projectId": h.project_id,
+        "title": "Run the RC build",
+    });
+    let (err, v) = h.tool(ANALYST, "tasks_create", create.clone()).await;
+    assert!(!err, "{v}");
+    let created_id = v["task"]["id"].as_str().unwrap().to_string();
+    let (err, replay) = h.tool(ANALYST, "tasks_create", create).await;
+    assert!(!err, "{replay}");
+    assert_eq!(replay["task"]["id"], created_id.as_str());
+    assert_eq!(
+        h.store.list_tasks(Default::default()).unwrap().len(),
+        before_tasks + 1
+    );
+
+    // A proposal is limited to status/due/priority for analyst jobs.
+    let (err, v) = h
+        .tool(
+            ANALYST,
             "proposals_submit",
-            json!({"jobId": job, "taskId": task_id, "kind": "change_priority", "patch": {"priority": 1}}),
-        ),
-    ] {
-        let (err, v) = h.tool(ANALYST, name, args).await;
-        assert!(err, "{name} must be refused: {v}");
-        assert_eq!(v["kind"], "job_store_unavailable", "{name}");
-    }
+            json!({
+                "jobId": job_id,
+                "idempotencyKey": format!("{job_id}:3"),
+                "taskId": candidate,
+                "kind": "change_priority",
+                "baseRev": 1,
+                "patch": {"priority": 1},
+                "rationale": "the DM called it urgent",
+            }),
+        )
+        .await;
+    assert!(!err, "{v}");
+    assert_eq!(v["proposal"]["state"], "pending");
+    let (err, _) = h
+        .tool(
+            ANALYST,
+            "proposals_submit",
+            json!({
+                "jobId": job_id,
+                "idempotencyKey": format!("{job_id}:4"),
+                "taskId": candidate,
+                "kind": "change_title",
+                "patch": {"title": "rewritten from a DM"},
+            }),
+        )
+        .await;
+    assert!(err, "an analyst proposal may not rewrite the title");
+    assert_eq!(h.store.list_proposals(None).unwrap().len(), 1);
+
+    // Completing closes the job.
+    let (err, v) = h
+        .tool(
+            ANALYST,
+            "jobs_complete",
+            json!({"jobId": job_id, "summary": "appended one requirement"}),
+        )
+        .await;
+    assert!(!err, "{v}");
+    assert_eq!(v["state"], "done");
+    assert_eq!(h.store.get_job(&job_id).unwrap().state, "done");
+
     // A write without a jobId does not even parse.
     let (err, v) = h
         .tool(
@@ -278,19 +419,12 @@ async fn analyst_job_scoped_calls_are_refused_without_a_job_store() {
     assert!(err);
     assert_eq!(v["kind"], "invalid_args");
 
-    assert_eq!(
-        h.store.list_tasks(Default::default()).unwrap().len(),
-        before
-    );
-    assert!(h.store.list_changes(&task_id).unwrap().is_empty());
-    assert!(h.store.list_proposals(None).unwrap().is_empty());
-
     // The read-only tools answer.
     let (err, v) = h
         .tool(ANALYST, "tasks_search", json!({"query": "Candidate"}))
         .await;
     assert!(!err, "{v}");
-    assert_eq!(v["tasks"][0]["id"], task_id.as_str());
+    assert_eq!(v["tasks"][0]["id"], candidate.as_str());
     let (err, _) = h.tool(ANALYST, "projects_list", json!({})).await;
     assert!(!err);
 }

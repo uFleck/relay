@@ -3,7 +3,9 @@
 //! The local SQLite task graph is the source of truth (docs/PLAN.md section 2).
 //! Adapters (Tauri IPC, MCP, Slack, JEV, GitHub, ClickUp) stay thin; policy lives here.
 
+pub mod analysis;
 pub mod jev;
 pub mod model;
+pub mod slack;
 pub mod store;
 pub mod view;
