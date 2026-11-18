@@ -323,7 +323,7 @@ async fn handle_event(app: AppHandle, client: SlackClient, payload: serde_json::
                 let app = app.clone();
                 tauri::async_runtime::spawn(async move {
                     let state = app.state::<SlackState>();
-                    match analyze(&state, &episode_id, false).await {
+                    match analyze(&app, &state, &episode_id, false).await {
                         Ok(_) => {
                             let status = state.update(|status| {
                                 status.last_event_at = Some(relay_core::model::now());
@@ -399,7 +399,7 @@ async fn catch_up(
             return;
         }
         let state = app.state::<SlackState>();
-        if let Err(error) = analyze(&state, &episode_id, historical).await {
+        if let Err(error) = analyze(&app, &state, &episode_id, historical).await {
             let status = state.set_error(Some(error));
             publish(&app, &status);
         }
@@ -464,6 +464,7 @@ fn paused(app: &AppHandle) -> bool {
 
 /// Runs JEV over one episode. `shadow` stores the answers but takes no action.
 async fn analyze(
+    app: &AppHandle,
     state: &SlackState,
     conversation_id: &str,
     shadow: bool,
@@ -613,6 +614,9 @@ async fn analyze(
         .store
         .set_job_status(&job.id, job_state, Some(&summary), None)
         .map_err(|error| error.to_string())?;
+    if job_state == "pending_agent" {
+        crate::analyst::spawn_job(app.clone(), job.id.clone());
+    }
 
     let episode_state = if shadow {
         "analyzed"
@@ -733,8 +737,30 @@ fn load_tokens() -> Option<(String, String)> {
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn slack_status(state: State<'_, SlackState>) -> SlackStatus {
-    state.status()
+pub fn slack_status(app: AppHandle, state: State<'_, SlackState>) -> SlackStatus {
+    let mut status = state.status();
+    status.capture_paused = paused(&app);
+    status.peers = state
+        .store
+        .list_slack_peers()
+        .map(|peers| peers.len())
+        .unwrap_or(0);
+    status.open_episodes = state
+        .store
+        .list_slack_episodes(None, 200)
+        .map(|episodes| {
+            episodes
+                .iter()
+                .filter(|summary| {
+                    matches!(
+                        summary.episode.state.as_str(),
+                        "open" | "waiting" | "needs_review"
+                    )
+                })
+                .count()
+        })
+        .unwrap_or(0);
+    status
 }
 
 #[tauri::command]
@@ -837,7 +863,7 @@ pub async fn episode_analyze(
     state: State<'_, SlackState>,
     id: String,
 ) -> Result<Option<AnalysisJob>, String> {
-    let job = analyze(&state, &id, false).await?;
+    let job = analyze(&app, &state, &id, false).await?;
     let _ = app.emit("relay://change", ());
     Ok(job)
 }
@@ -883,4 +909,45 @@ pub fn jev_clear_key(state: State<'_, SlackState>) -> JevStatus {
     delete_secret(JEV_KEY);
     *state.jev.lock().expect("jev state") = None;
     JevStatus::default()
+}
+
+/// Debug-only: inject a DM so the capture -> JEV -> reviewer loop can be tested without
+/// Slack credentials. A release build refuses it.
+#[tauri::command]
+pub async fn slack_simulate_message(
+    app: AppHandle,
+    state: State<'_, SlackState>,
+    peer: String,
+    text: String,
+) -> Result<Option<String>, String> {
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = (&app, &state, &peer, &text);
+        return Err("slack_simulate_message is only available in a debug build".into());
+    }
+    #[cfg(debug_assertions)]
+    {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_secs())
+            .unwrap_or(0);
+        let message = RawSlackMessage {
+            channel_id: format!("D-{peer}"),
+            ts: format!("{now}.000100"),
+            thread_ts: None,
+            user_id: Some(peer.clone()),
+            text,
+            permalink: None,
+            edited_at: None,
+            deleted: false,
+            historical: false,
+        };
+        let stored = state
+            .store
+            .capture_slack_message(&peer, Some("Test peer"), &message, 90)
+            .map_err(|error| error.to_string())?
+            .ok_or("the test peer is excluded")?;
+        let job = analyze(&app, &state, &stored.episode_id, false).await?;
+        Ok(job.map(|job| job.id))
+    }
 }

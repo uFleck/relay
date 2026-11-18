@@ -2,11 +2,12 @@ import { useState } from "react";
 import { Icon } from "../components/Icon";
 import { ProjectChip } from "../components/bits";
 import { ProposalCard } from "../components/ProposalCard";
-import type { HoverFlags, McpStatus } from "../ipc";
+import type { HoverFlags, McpStatus, SlackStatus } from "../ipc";
 import { claimState, clock, elapsed, liveClaims, plural, statusOf, useNow } from "../model";
 import type { Proposal, ProposalDecision, Snapshot, Task } from "../types";
 import { checkForUpdates, downloadUpdate, installUpdate, type UpdateState } from "../updater";
 import { McpSetup } from "./McpSetup";
+import { FromSlack, JevSettings, SlackSettings } from "./Slack";
 import { TaskGroups } from "./Today";
 
 /* The rail's views besides Today. Each reads the same snapshot; none invents data the snapshot lacks. */
@@ -28,29 +29,6 @@ function Blank({ title, children }: { title: string; children: React.ReactNode }
       <b>{title}</b>
       <p>{children}</p>
     </div>
-  );
-}
-
-export function InboxView({ snap }: { snap: Snapshot }) {
-  const n = snap.inboxCount;
-  return (
-    <section className="main">
-      <Head title="Inbox" sub={n ? `${plural(n, "episode")} waiting for routing` : "Slack episodes JEV has not routed yet"} />
-      <div className="scroll">
-        {n === 0 ? (
-          <Blank title="Inbox is empty">
-            {snap.sync.length === 0
-              ? "Slack capture is not connected yet, so no episode has arrived."
-              : "Every captured episode has been routed. Ones that match a task show up in Review."}
-          </Blank>
-        ) : (
-          <Blank title={`${plural(n, "episode")} captured`}>
-            Relay has captured them but has not matched them to a task. Episodes that JEV matches show up in Review; the episode list
-            itself is not part of the snapshot yet.
-          </Blank>
-        )}
-      </div>
-    </section>
   );
 }
 
@@ -193,14 +171,16 @@ interface ReviewProps {
   busy: ReadonlySet<string>;
   onDecide: (p: Proposal, decision: ProposalDecision) => void;
   onEdit: (p: Proposal) => void;
+  onOpenEpisode: (episodeId: string) => void;
 }
 
-export function ReviewView({ snap, current, routed, busy, onDecide, onEdit }: ReviewProps) {
+export function ReviewView({ snap, current, routed, busy, onDecide, onEdit, onOpenEpisode }: ReviewProps) {
   const total = snap.proposals.length;
   return (
     <section className="main">
       <Head title="Review" sub={total ? `${plural(total, "proposal")} waiting · A / E / R act on the highlighted one` : "Proposals JEV raises from Slack"} />
       <div className="scroll">
+        <FromSlack onOpen={onOpenEpisode} />
         {total === 0 && (
           <Blank title="Nothing to review">
             {snap.lastProposalHandledAt
@@ -236,9 +216,11 @@ interface SettingsProps {
   /** Null in the browser, where there is no MCP server. */
   mcp: McpStatus | null;
   onMcpRetry: () => void;
+  slack: SlackStatus | null;
+  onSlack: (status: SlackStatus) => void;
 }
 
-export function SettingsView({ snap, update, flags, onFlag, mcp, onMcpRetry }: SettingsProps) {
+export function SettingsView({ snap, update, flags, onFlag, mcp, onMcpRetry, slack, onSlack }: SettingsProps) {
   const [saving, setSaving] = useState<string | null>(null);
   const toggle = async (flag: "dnd" | "paused") => {
     if (!flags) return;
@@ -274,6 +256,12 @@ export function SettingsView({ snap, update, flags, onFlag, mcp, onMcpRetry }: S
             </label>
           </>
         )}
+
+        <h3 className="sub">Slack</h3>
+        <SlackSettings status={slack} onStatus={onSlack} />
+
+        <h3 className="sub">JEV</h3>
+        <JevSettings />
 
         <h3 className="sub">Agents &amp; MCP</h3>
         <McpSetup status={mcp} onRetry={onMcpRetry} />

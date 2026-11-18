@@ -1,6 +1,7 @@
 //! Relay's Tauri shell: the main window, the hover window, tray, global hotkey, single instance, autostart and the
 //! local DB. The UI in both windows is owned by the frontend; this file only routes events to it.
 
+mod analyst;
 mod commands;
 mod hover;
 mod mcp;
@@ -259,6 +260,7 @@ pub fn run() {
             slack::jev_status,
             slack::jev_set_key,
             slack::jev_clear_key,
+            slack::slack_simulate_message,
             hover::hover_place,
             hover::hover_drag,
             hover::hover_pointer,

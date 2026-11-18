@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatRoute, parseRoute, proposalRoute, taskRoute } from "./route";
+import { episodeRoute, formatRoute, parseRoute, proposalRoute, taskRoute } from "./route";
 
 describe("routes", () => {
   it("reads the routes Rust sends from the tray", () => {
@@ -8,7 +8,7 @@ describe("routes", () => {
   });
 
   it("reads a task route with its focus", () => {
-    expect(parseRoute("/today?task=01J&focus=changes")).toEqual({ view: "today", task: "01J", focus: "changes", proposal: null });
+    expect(parseRoute("/today?task=01J&focus=changes")).toEqual({ view: "today", task: "01J", focus: "changes", proposal: null, episode: null });
   });
 
   it("falls back to Today for an unknown path", () => {
@@ -19,6 +19,11 @@ describe("routes", () => {
   it("round-trips the hover's links", () => {
     expect(parseRoute(taskRoute("t1"))).toMatchObject({ view: "today", task: "t1", focus: "changes" });
     expect(parseRoute(proposalRoute("p1"))).toMatchObject({ view: "review", proposal: "p1" });
-    expect(formatRoute({ view: "agents", task: null, focus: null, proposal: null })).toBe("/agents");
+    expect(formatRoute({ view: "agents", task: null, focus: null, proposal: null, episode: null })).toBe("/agents");
+  });
+
+  it("reads an episode transcript route", () => {
+    expect(episodeRoute("e1")).toBe("/inbox?episode=e1");
+    expect(parseRoute("/inbox?episode=e1")).toMatchObject({ view: "inbox", episode: "e1", task: null });
   });
 });

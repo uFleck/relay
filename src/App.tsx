@@ -4,7 +4,8 @@ import { Rail } from "./app/Rail";
 import { TaskSheet } from "./app/TaskSheet";
 import { TitleBar } from "./app/TitleBar";
 import { AgentStrip, TaskGroups, TodayHeader } from "./app/Today";
-import { AgentsView, InboxView, ProjectsView, ReviewView, SettingsView, UpdateNotice } from "./app/Views";
+import { EpisodeSheet, InboxView } from "./app/Slack";
+import { AgentsView, ProjectsView, ReviewView, SettingsView, UpdateNotice } from "./app/Views";
 import {
   ackChange,
   decideProposal,
@@ -19,8 +20,10 @@ import {
   openExternal,
   setDnd,
   setPaused,
+  slackStatus,
   type HoverFlags,
   type McpStatus,
+  type SlackStatus,
 } from "./ipc";
 import { liveClaims, todayScope } from "./model";
 import { parseRoute, readLocation, writeLocation, type Route, type View } from "./route";
@@ -48,6 +51,7 @@ export default function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const [flags, setFlags] = useState<HoverFlags | null>(null);
   const [mcp, setMcp] = useState<McpStatus | null>(null);
+  const [slack, setSlack] = useState<SlackStatus | null>(null);
   const update = useUpdater();
   const searchRef = useRef<HTMLInputElement>(null);
   /** Where focus was when the sheet opened, so Esc can put it back. */
@@ -71,6 +75,14 @@ export default function App() {
     }
   }, []);
 
+  const refreshSlack = useCallback(async () => {
+    try {
+      setSlack(await slackStatus());
+    } catch (error) {
+      console.warn("[relay] slack_status", error);
+    }
+  }, []);
+
   const navigate = useCallback((next: Route) => {
     writeLocation(next);
     setRoute(next);
@@ -82,38 +94,56 @@ export default function App() {
     // Nothing in Rust pushes data changes yet, so coming back to the window re-reads the snapshot.
     const onFocus = () => void refresh();
     window.addEventListener("focus", onFocus);
-    const offChange = onEvent("relay://change", () => void refresh());
+    const offChange = onEvent("relay://change", () => {
+      void refresh();
+      void refreshSlack();
+    });
     const offOpen = onEvent("relay://open", (r) => navigate(parseRoute(r)));
     const offState = onEvent("relay://state", setFlags);
     if (inTauri) hoverState().then(setFlags, (e) => console.warn("[relay] hover_state", e));
     // Subscribe before asking, so a status Rust sends in between is not lost.
     const offMcp = onMcpStatus(setMcp);
     void refreshMcp();
+    const offSlack = onEvent("slack://status", setSlack);
+    void refreshSlack();
     return () => {
       window.removeEventListener("focus", onFocus);
       offChange();
       offOpen();
       offState();
       offMcp();
+      offSlack();
     };
-  }, [refresh, refreshMcp, navigate]);
+  }, [refresh, refreshMcp, refreshSlack, navigate]);
 
   const openTask = useCallback(
     (task: string, focus: string | null = null) => {
-      if (!route.task && document.activeElement instanceof HTMLElement) returnFocus.current = document.activeElement;
-      navigate({ ...route, task, focus });
+      if (!route.task && !route.episode && document.activeElement instanceof HTMLElement) returnFocus.current = document.activeElement;
+      navigate({ ...route, task, focus, episode: null });
     },
     [route, navigate],
   );
 
-  const closeTask = useCallback(() => {
-    navigate({ ...route, task: null, focus: null });
+  const openEpisode = useCallback(
+    (episode: string) => {
+      if (!route.task && !route.episode && document.activeElement instanceof HTMLElement) returnFocus.current = document.activeElement;
+      navigate({ ...route, task: null, focus: null, episode });
+    },
+    [route, navigate],
+  );
+
+  /** Closes whichever sheet is open and puts focus back where it was before. */
+  const closeSheet = useCallback(() => {
+    navigate({ ...route, task: null, focus: null, episode: null });
     const back = returnFocus.current;
     returnFocus.current = null;
     if (back?.isConnected) back.focus();
   }, [route, navigate]);
 
-  const setView = useCallback((view: View) => navigate({ view, task: route.task, focus: null, proposal: null }), [route.task, navigate]);
+  const setView = useCallback(
+    (view: View) => navigate({ view, task: route.task, focus: null, proposal: null, episode: null }),
+    [route.task, navigate],
+  );
 
   const decide = useCallback(
     async (p: Proposal, decision: ProposalDecision) => {
@@ -195,9 +225,9 @@ export default function App() {
         return;
       }
       if (e.key === "Escape") {
-        if (route.task) {
+        if (route.task || route.episode) {
           e.preventDefault();
-          closeTask();
+          closeSheet();
         } else if (notice) setNotice(null);
         return;
       }
@@ -209,7 +239,7 @@ export default function App() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [route.task, current, deciding, notice, decide, openTask, closeTask]);
+  }, [route.task, route.episode, current, deciding, notice, decide, openTask, closeSheet]);
 
   if (!snap) {
     return (
@@ -234,12 +264,13 @@ export default function App() {
 
   const scope = todayScope(snap);
   const selected = route.task ? snap.tasks.find((t) => t.id === route.task) : undefined;
+  const episode = selected ? null : route.episode;
   const top = snap.proposals[0];
 
   return (
     <div className="win">
       <TitleBar ref={searchRef} query={query} onQuery={setQuery} />
-      <div className={`body${selected ? " with-sheet" : ""}`}>
+      <div className={`body${selected || episode ? " with-sheet" : ""}`}>
         <Rail
           view={route.view}
           onView={setView}
@@ -274,7 +305,9 @@ export default function App() {
             <AgentStrip tasks={snap.tasks} onSelect={openTask} />
           </section>
         )}
-        {route.view === "inbox" && <InboxView snap={snap} />}
+        {route.view === "inbox" && (
+          <InboxView slack={slack} openId={episode} onOpen={openEpisode} onSettings={() => setView("settings")} />
+        )}
         {route.view === "projects" && <ProjectsView snap={snap} selectedId={selected?.id ?? null} onSelect={openTask} />}
         {route.view === "agents" && <AgentsView snap={snap} onSelect={openTask} />}
         {route.view === "review" && (
@@ -285,6 +318,7 @@ export default function App() {
             busy={deciding}
             onDecide={(p, d) => void decide(p, d)}
             onEdit={(p) => openTask(p.taskId, "changes")}
+            onOpenEpisode={openEpisode}
           />
         )}
         {route.view === "settings" && (
@@ -295,6 +329,8 @@ export default function App() {
             onFlag={setFlag}
             mcp={inTauri ? mcp : null}
             onMcpRetry={() => void refreshMcp()}
+            slack={slack}
+            onSlack={setSlack}
           />
         )}
 
@@ -305,12 +341,13 @@ export default function App() {
             project={snap.projects.find((p) => p.id === selected.projectId)}
             statuses={snap.statuses}
             focusChanges={route.focus === "changes"}
-            onClose={closeTask}
+            onClose={closeSheet}
             onAck={(c) => void ack(selected.id, c)}
             onOpen={(url) => void openExternal(url)}
             acking={acking}
           />
         )}
+        {episode && <EpisodeSheet key={episode} id={episode} onClose={closeSheet} />}
       </div>
       {notice && (
         <div className="toast" role="alert">

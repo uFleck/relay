@@ -66,6 +66,11 @@ pub fn analyst_url(port: u16) -> String {
     format!("http://127.0.0.1:{port}/mcp/analyst")
 }
 
+/// The reviewer agent's system prompt; the headless runner writes it into OpenCode's config.
+pub fn analyst_instructions() -> &'static str {
+    analyst::INSTRUCTIONS
+}
+
 /// Reads a token file, or writes a fresh 128-bit random token the first time (or if the file is unusable).
 fn load_token(path: &Path) -> std::io::Result<String> {
     if let Ok(existing) = std::fs::read_to_string(path) {
