@@ -1009,13 +1009,13 @@ pub fn slack_clear_capture(app: AppHandle, state: State<'_, SlackState>) -> Resu
         .clear_slack_capture()
         .map_err(|error| error.to_string())?;
     // Reviewer logs contain DM text; clearing capture must clear them too.
-    if let Ok(dir) = app.path().app_data_dir() {
-        if let Ok(entries) = std::fs::read_dir(dir.join("analyst")) {
-            for entry in entries.flatten() {
-                let name = entry.file_name().to_string_lossy().to_string();
-                if name.starts_with("run-") && name.ends_with(".log") {
-                    let _ = std::fs::remove_file(entry.path());
-                }
+    if let Ok(dir) = app.path().app_data_dir()
+        && let Ok(entries) = std::fs::read_dir(dir.join("analyst"))
+    {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with("run-") && name.ends_with(".log") {
+                let _ = std::fs::remove_file(entry.path());
             }
         }
     }

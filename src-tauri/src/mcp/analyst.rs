@@ -250,13 +250,13 @@ fn op_slot(
         ));
     }
     let existing = store.job_op(job_id, index)?;
-    if let Some(op) = &existing {
-        if op.tool != tool_name {
-            return Err(ToolError::new(
-                "forbidden",
-                format!("idempotencyKey was used by {} before", op.tool),
-            ));
-        }
+    if let Some(op) = &existing
+        && op.tool != tool_name
+    {
+        return Err(ToolError::new(
+            "forbidden",
+            format!("idempotencyKey was used by {} before", op.tool),
+        ));
     }
     let existing = existing.and_then(|op| serde_json::from_str::<Value>(&op.result_json).ok());
     Ok((index, existing))
