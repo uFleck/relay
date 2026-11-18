@@ -130,8 +130,6 @@ it had just created and was refused (`forbidden`) until `add_job_candidate` was 
       when `jobs_complete` never arrives?
 - [ ] Does the UI mask MCP tokens (Rust still sends the full value to the frontend)?
 
-## Opus verdict
-
 ## Opus verdict (2026-11-17)
 
 **Verdict:** changes needed
@@ -265,3 +263,30 @@ Should fix before 1.0:
 - `cargo test` and `clippy` were not re-run for this review.
 - The `8016700` commit boundary (UI files swept in) was not re-audited.
 
+
+## Follow-up fixes (2026-11-17, after the verdict)
+
+**Commits:** `ee8f735`, `dd53333`, `b505dad` (+ the poll fix in the git record).
+
+- **Peer and direction:** capture now takes the peer from the DM channel
+  (`list_dms` / `conversations.info`), not the message author; episode reuse is keyed by
+  `channel_id`, and `direction` compares the author with that peer. The account owner's
+  replies no longer create a "self" peer or merge across DMs.
+- **Reviewer isolation:** the child runs `opencode --standalone`, with `XDG_CONFIG_HOME`
+  pointed at an empty directory under the analyst folder, so the user's global config
+  (Executor) is not merged. The config now uses the V2 `mcp.servers` / `agents` shapes and
+  a catch-all `deny` with one `allow` for `relay-analyst_*`. Two probes with the strict
+  config showed only `relay-analyst_jobs_get` and no Executor calls; the earlier full run
+  also created a task and a proposal. A log tripwire fails the job if `executor`, `hopper`
+  or `spawner` appears.
+- **Analyst writes:** they require the job to be `running`; a negative op index is rejected
+  before any write; a replay checks that the recorded `tool` matches.
+- **Re-analysis:** `create_job` returns `(job, inserted)`; the analyzer returns early when
+  the watermark already has a job, so an edit or a redelivery does not reset or rerun it.
+- **Retention:** a six-hour loop prunes messages older than 30 days by Slack `ts` and closes
+  stale episodes; `slack_clear_capture` also deletes the reviewer run logs.
+- **Pause:** catch-up returns before listing DMs and before each channel while capture is
+  paused.
+- **Still open:** the write and its `job_ops` row are two transactions. A crash in that
+  window can duplicate one write on retry; there is no data corruption otherwise. Fixing it
+  needs store-level write+op transactions.

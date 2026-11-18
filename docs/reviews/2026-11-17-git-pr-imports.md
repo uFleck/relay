@@ -144,3 +144,18 @@ Should fix before 1.0:
 - The `0ac6bd7` bindings and the `e92e9c6` / `d6c3424` UI were read only for the command
   names.
 - `cargo test` and `clippy` were not re-run.
+
+## Follow-up fixes (2026-11-17, after the verdict)
+
+**Commits:** `7db841d`? no - `ee8f735`, `dd53333`, `b505dad` and the PR-poll fix.
+
+- GitHub issue links now use `<owner>/<repo>#<number>` as the external id, so two
+  repositories cannot collide.
+- The PR poller continues after a failing link, reports an aggregate status error, skips
+  links on archived tasks, and backs off to every 30 minutes without a token (the public API
+  allows 60 calls/hour).
+- Imports read up to 10 pages of 100.
+- ClickUp honours one `Retry-After` on 429 and percent-encodes the list id in the path.
+- `job_retry` refuses a job that already has `job_ops` rows and a `pending` review job.
+- **Still open:** the imported task and its link are still two writes (a crash between them
+  leaves an unlinked task), and the page cap is silent. Both are queued for the 1.0 pass.
