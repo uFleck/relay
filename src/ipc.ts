@@ -282,6 +282,8 @@ export const episodeAnalyze = (id: string) =>
 export const jobsList = (args: { stateFilter?: string; limit?: number } = {}) =>
   call<AnalysisJob[]>("jobs_list", args, () => []);
 
+export const jobRetry = (id: string) => call<AnalysisJob | null>("job_retry", { id }, () => null);
+
 export const jevStatus = () => call<JevStatus>("jev_status", undefined, () => ({ configured: false, model: null, error: null }));
 
 export const jevSetKey = (key: string) =>

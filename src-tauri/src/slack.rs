@@ -953,3 +953,28 @@ pub fn slack_clear_capture(app: AppHandle, state: State<'_, SlackState>) -> Resu
     let _ = app.emit("relay://change", ());
     Ok(deleted)
 }
+
+/// Requeues a failed or stuck job and starts the reviewer again.
+#[tauri::command]
+pub fn job_retry(
+    app: AppHandle,
+    state: State<'_, SlackState>,
+    id: String,
+) -> Result<AnalysisJob, String> {
+    let job = state
+        .store
+        .get_job(&id)
+        .map_err(|error| error.to_string())?;
+    if !matches!(job.state.as_str(), "failed" | "pending_agent" | "pending") {
+        return Err(format!(
+            "job {id} is {}; only failed or queued jobs retry",
+            job.state
+        ));
+    }
+    let job = state
+        .store
+        .set_job_status(&id, "pending_agent", None, None)
+        .map_err(|error| error.to_string())?;
+    crate::analyst::spawn_job(app, id);
+    Ok(job)
+}

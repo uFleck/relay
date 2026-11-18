@@ -55,6 +55,17 @@ fn finish(app: &AppHandle, job_id: &str, result: Result<(), String>) {
         );
     }
     let _ = app.emit("relay://change", ());
+    run_next(app);
+}
+
+/// Picks up the next queued job after a run, so a burst does not strand jobs.
+fn run_next(app: &AppHandle) {
+    let store = app.state::<std::sync::Arc<Store>>();
+    if let Ok(jobs) = store.list_jobs(Some("pending_agent"), 1)
+        && let Some(job) = jobs.first()
+    {
+        spawn_job(app.clone(), job.id.clone());
+    }
 }
 
 fn run(app: &AppHandle, job_id: &str) -> Result<(), String> {
