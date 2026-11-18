@@ -222,14 +222,25 @@ pub fn cli_args(request: &RunRequest, settings_json: &str) -> Vec<String> {
     args
 }
 
-/// `--settings` JSON: no hooks, every user-enabled plugin switched off for this run.
+/// `--settings` JSON: no hooks, every user-enabled plugin switched off for this run, and only remote
+/// (https) MCP servers. The user's local stdio servers (each a process tree) cost ~10 CPU-seconds per
+/// run and the sync never calls them; the claude.ai Slack connector is https.
 pub fn run_settings_json(enabled_plugins: &[String]) -> String {
     let plugins: serde_json::Map<String, Value> = enabled_plugins
         .iter()
         .map(|name| (name.clone(), Value::Bool(false)))
         .collect();
-    json!({ "disableAllHooks": true, "enabledPlugins": plugins }).to_string()
+    json!({
+        "disableAllHooks": true,
+        "enabledPlugins": plugins,
+        "allowedMcpServers": [{ "serverUrl": "https://*" }],
+    })
+    .to_string()
 }
+
+/// Env for each run. Without the local servers the CLI starts before the claude.ai connectors finish
+/// connecting, and Slack shows `pending` at init; blocking startup waits for them.
+pub const RUN_ENV: [(&str, &str); 1] = [("MCP_CONNECTION_NONBLOCKING", "false")];
 
 /// Runs one `claude` invocation and returns its stdout (the stream-json lines).
 pub trait Runner {
@@ -1509,6 +1520,10 @@ mod tests {
         let settings: Value = serde_json::from_str(&at("--settings").unwrap()).unwrap();
         assert_eq!(settings["disableAllHooks"], true);
         assert_eq!(settings["enabledPlugins"]["a@b"], false);
+        assert_eq!(
+            settings["allowedMcpServers"],
+            json!([{ "serverUrl": "https://*" }])
+        );
     }
 
     #[test]

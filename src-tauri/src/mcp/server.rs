@@ -115,7 +115,8 @@ async fn not_allowed() -> Response {
 
 fn json_response(value: Value) -> Response {
     (
-        [(header::CONTENT_TYPE, "application/json")],
+        // Windows PowerShell decodes a body without a charset as Latin-1, which garbles accents.
+        [(header::CONTENT_TYPE, "application/json; charset=utf-8")],
         value.to_string(),
     )
         .into_response()

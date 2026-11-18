@@ -106,6 +106,7 @@ impl Runner for ProcessRunner {
         let mut command = Command::new(&self.claude);
         command
             .args(core::cli_args(request, &settings))
+            .envs(core::RUN_ENV)
             .current_dir(&self.cwd)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
