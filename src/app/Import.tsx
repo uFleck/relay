@@ -254,23 +254,8 @@ export function useRun() {
   return { run, busy: run?.kind === "busy", start };
 }
 
-export function ProjectImport({ project }: { project: Project }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <>
-      <div className="repo">
-        <span className="meta">Import tasks from ClickUp or GitHub Issues</span>
-        <span className="push" />
-        <button type="button" className="btn" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-          {open ? "Hide" : "Import…"}
-        </button>
-      </div>
-      {open && <ImportPanel project={project} />}
-    </>
-  );
-}
-
-function ImportPanel({ project }: { project: Project }) {
+/** The Projects → Import tab: one ClickUp list or one GitHub repo's open issues into `project`. */
+export function ImportPanel({ project }: { project: Project }) {
   const clickup = useLive(clickupStatus, []);
   const [listId, setListId] = useState("");
   const [includeClosed, setIncludeClosed] = useState(false);
