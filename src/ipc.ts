@@ -113,6 +113,10 @@ const browserMcp: McpStatus = {
 /** The last status; Rust starts the server in the background, so the first answer may say not running yet. */
 export const mcpStatus = () => call<McpStatus>("mcp_status", undefined, () => ({ ...browserMcp }));
 
+/** Asks for one bearer token only when the user copies or reveals it. */
+export const mcpToken = (which: "agent" | "analyst") =>
+  call<string>("mcp_token", { which }, () => "");
+
 export const onMcpStatus = (handler: (status: McpStatus) => void) => onEvent("mcp://status", handler);
 
 export const openExternal = async (url: string) => {

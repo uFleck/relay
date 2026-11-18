@@ -43,6 +43,7 @@ pub struct McpStatus {
 pub struct McpState {
     status: Mutex<McpStatus>,
     running: Mutex<Option<server::Running>>,
+    dir: Mutex<Option<std::path::PathBuf>>,
 }
 
 impl McpState {
@@ -97,6 +98,9 @@ pub fn load_tokens(dir: &Path) -> Result<Tokens, String> {
 /// Starts the server in the background on [`DEFAULT_PORT`] and records the outcome (also as `mcp://status`).
 /// A taken port is reported as an error; the server never moves to another port.
 pub fn start(app: AppHandle, store: Arc<Store>, dir: &Path) {
+    if let Ok(mut stored) = app.state::<McpState>().dir.lock() {
+        *stored = Some(dir.to_path_buf());
+    }
     let base = McpStatus {
         port: DEFAULT_PORT,
         url: url(DEFAULT_PORT),
@@ -153,4 +157,25 @@ pub fn start(app: AppHandle, store: Arc<Store>, dir: &Path) {
 #[tauri::command]
 pub fn mcp_status(state: tauri::State<'_, McpState>) -> McpStatus {
     state.status()
+}
+
+/// Reveals one bearer token on demand. The status payload never needs to carry it, and the
+/// setup sheet only asks when the user copies or reveals a value.
+#[tauri::command]
+pub fn mcp_token(app: AppHandle, which: String) -> Result<String, String> {
+    let state = app.state::<McpState>();
+    let dir = state
+        .dir
+        .lock()
+        .map_err(|_| "MCP state is poisoned".to_string())?
+        .clone()
+        .ok_or("MCP is not initialized yet")?;
+    let file = match which.as_str() {
+        "agent" => AGENT_TOKEN_FILE,
+        "analyst" => ANALYST_TOKEN_FILE,
+        other => return Err(format!("unknown MCP token {other}")),
+    };
+    std::fs::read_to_string(dir.join(file))
+        .map(|token| token.trim().to_string())
+        .map_err(|error| format!("cannot read the {which} token: {error}"))
 }

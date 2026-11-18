@@ -251,6 +251,7 @@ pub fn run() {
             commands::ack_change,
             commands::decide_proposal,
             mcp::mcp_status,
+            mcp::mcp_token,
             slack::slack_status,
             slack::slack_connect,
             slack::slack_disconnect,
