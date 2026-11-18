@@ -86,6 +86,35 @@ export const hoverPointer = () => call<[number, number] | null>("hover_pointer",
 /** Only for a field that needs the keyboard; pass false to hand focus back. */
 export const hoverFocus = (focus: boolean) => call<void>("hover_focus", { focus }, () => undefined);
 
+/* ── MCP ── */
+
+/** The loopback MCP server as Rust reports it; `mcp://status` carries the same shape. Tokens are local
+    bearer tokens for this machine, null until Rust has read or created the token files. */
+export interface McpStatus {
+  running: boolean;
+  port: number;
+  url: string;
+  analystUrl: string;
+  error: string | null;
+  agentToken: string | null;
+  analystToken: string | null;
+}
+
+const browserMcp: McpStatus = {
+  running: false,
+  port: 38547,
+  url: "http://127.0.0.1:38547/mcp",
+  analystUrl: "http://127.0.0.1:38547/mcp/analyst",
+  error: null,
+  agentToken: null,
+  analystToken: null,
+};
+
+/** The last status; Rust starts the server in the background, so the first answer may say not running yet. */
+export const mcpStatus = () => call<McpStatus>("mcp_status", undefined, () => ({ ...browserMcp }));
+
+export const onMcpStatus = (handler: (status: McpStatus) => void) => onEvent("mcp://status", handler);
+
 export const openExternal = async (url: string) => {
   if (!inTauri) {
     window.open(url, "_blank", "noopener");
@@ -113,6 +142,7 @@ interface Events {
   "relay://open": string;
   "relay://change": ChangeEvent;
   "relay://state": HoverFlags;
+  "mcp://status": McpStatus;
 }
 
 /** Subscribes to an app event. Returns an unsubscribe; a no-op in the browser. */

@@ -13,11 +13,14 @@ import {
   getSnapshot,
   hoverState,
   inTauri,
+  mcpStatus,
   onEvent,
+  onMcpStatus,
   openExternal,
   setDnd,
   setPaused,
   type HoverFlags,
+  type McpStatus,
 } from "./ipc";
 import { liveClaims, todayScope } from "./model";
 import { parseRoute, readLocation, writeLocation, type Route, type View } from "./route";
@@ -44,6 +47,7 @@ export default function App() {
   const [acking, setAcking] = useState<ReadonlySet<string>>(new Set());
   const [notice, setNotice] = useState<string | null>(null);
   const [flags, setFlags] = useState<HoverFlags | null>(null);
+  const [mcp, setMcp] = useState<McpStatus | null>(null);
   const update = useUpdater();
   const searchRef = useRef<HTMLInputElement>(null);
   /** Where focus was when the sheet opened, so Esc can put it back. */
@@ -56,6 +60,14 @@ export default function App() {
     } catch (error) {
       console.error("[relay] snapshot", error);
       setLoadError(errorText(error));
+    }
+  }, []);
+
+  const refreshMcp = useCallback(async () => {
+    try {
+      setMcp(await mcpStatus());
+    } catch (error) {
+      console.warn("[relay] mcp_status", error);
     }
   }, []);
 
@@ -74,13 +86,17 @@ export default function App() {
     const offOpen = onEvent("relay://open", (r) => navigate(parseRoute(r)));
     const offState = onEvent("relay://state", setFlags);
     if (inTauri) hoverState().then(setFlags, (e) => console.warn("[relay] hover_state", e));
+    // Subscribe before asking, so a status Rust sends in between is not lost.
+    const offMcp = onMcpStatus(setMcp);
+    void refreshMcp();
     return () => {
       window.removeEventListener("focus", onFocus);
       offChange();
       offOpen();
       offState();
+      offMcp();
     };
-  }, [refresh, navigate]);
+  }, [refresh, refreshMcp, navigate]);
 
   const openTask = useCallback(
     (task: string, focus: string | null = null) => {
@@ -232,6 +248,7 @@ export default function App() {
           review={snap.proposals.length}
           liveAgents={liveClaims(snap.tasks).length}
           sync={snap.sync}
+          mcp={inTauri ? mcp : null}
           notice={<UpdateNotice update={update} />}
         />
 
@@ -270,7 +287,16 @@ export default function App() {
             onEdit={(p) => openTask(p.taskId, "changes")}
           />
         )}
-        {route.view === "settings" && <SettingsView snap={snap} update={update} flags={inTauri ? flags : null} onFlag={setFlag} />}
+        {route.view === "settings" && (
+          <SettingsView
+            snap={snap}
+            update={update}
+            flags={inTauri ? flags : null}
+            onFlag={setFlag}
+            mcp={inTauri ? mcp : null}
+            onMcpRetry={() => void refreshMcp()}
+          />
+        )}
 
         {selected && (
           <TaskSheet

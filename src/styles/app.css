@@ -951,6 +951,62 @@ h3.sub {
   accent-color: var(--accent);
 }
 
+.mcp {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 4px 20px 8px;
+}
+.mcp .k {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.mcp code,
+.snip pre {
+  font: 500 11.5px/1.6 var(--font-mono);
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: var(--r);
+  padding: 3px 8px;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.mcp-note {
+  margin: 4px 20px 6px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+.mcp-note code {
+  font: 500 11px var(--font-mono);
+  color: var(--text-secondary);
+  user-select: text;
+}
+.mcp-err {
+  margin: 0 20px 6px;
+  font: 500 11.5px var(--font-mono);
+  color: var(--err);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.snip {
+  margin: 10px 20px 0;
+}
+.snip-h {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.snip .mcp-note {
+  margin: 2px 0 6px;
+}
+.snip pre {
+  margin: 0;
+  padding: 8px 10px;
+  white-space: pre-wrap;
+}
+
 .unote {
   display: grid;
   gap: 6px;

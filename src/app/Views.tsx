@@ -2,10 +2,11 @@ import { useState } from "react";
 import { Icon } from "../components/Icon";
 import { ProjectChip } from "../components/bits";
 import { ProposalCard } from "../components/ProposalCard";
-import type { HoverFlags } from "../ipc";
+import type { HoverFlags, McpStatus } from "../ipc";
 import { claimState, clock, elapsed, liveClaims, plural, statusOf, useNow } from "../model";
 import type { Proposal, ProposalDecision, Snapshot, Task } from "../types";
 import { checkForUpdates, downloadUpdate, installUpdate, type UpdateState } from "../updater";
+import { McpSetup } from "./McpSetup";
 import { TaskGroups } from "./Today";
 
 /* The rail's views besides Today. Each reads the same snapshot; none invents data the snapshot lacks. */
@@ -232,9 +233,12 @@ interface SettingsProps {
   update: UpdateState;
   flags: HoverFlags | null;
   onFlag: (flag: "dnd" | "paused", on: boolean) => Promise<void>;
+  /** Null in the browser, where there is no MCP server. */
+  mcp: McpStatus | null;
+  onMcpRetry: () => void;
 }
 
-export function SettingsView({ snap, update, flags, onFlag }: SettingsProps) {
+export function SettingsView({ snap, update, flags, onFlag, mcp, onMcpRetry }: SettingsProps) {
   const [saving, setSaving] = useState<string | null>(null);
   const toggle = async (flag: "dnd" | "paused") => {
     if (!flags) return;
@@ -270,6 +274,9 @@ export function SettingsView({ snap, update, flags, onFlag }: SettingsProps) {
             </label>
           </>
         )}
+
+        <h3 className="sub">Agents &amp; MCP</h3>
+        <McpSetup status={mcp} onRetry={onMcpRetry} />
 
         <h3 className="sub">Sources</h3>
         {snap.sync.length === 0 ? (

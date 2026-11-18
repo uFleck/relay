@@ -1,6 +1,8 @@
 import { Icon, Mark, type IconName } from "../components/Icon";
+import type { McpStatus } from "../ipc";
 import type { View } from "../route";
 import type { SyncSource } from "../types";
+import { mcpDotState } from "./McpSetup";
 
 interface Props {
   view: View;
@@ -10,11 +12,13 @@ interface Props {
   review: number;
   liveAgents: number;
   sync: SyncSource[];
+  /** The MCP server's status; null in the browser, where the dot is left out. */
+  mcp: McpStatus | null;
   /** The update notice, above the sync dots. */
   notice?: React.ReactNode;
 }
 
-export function Rail({ view, onView, version, inbox, review, liveAgents, sync, notice }: Props) {
+export function Rail({ view, onView, version, inbox, review, liveAgents, sync, mcp, notice }: Props) {
   const item = (v: View, icon: IconName, label: string, trail?: React.ReactNode) => (
     <button type="button" className={`nav${view === v ? " on" : ""}`} aria-current={view === v ? "page" : undefined} onClick={() => onView(v)}>
       <Icon name={icon} />
@@ -37,14 +41,14 @@ export function Rail({ view, onView, version, inbox, review, liveAgents, sync, n
       <div className="sp" />
       {notice}
       <div className="hint">
-        <SyncDots sources={sync} />
+        <SyncDots sources={sync} mcp={mcp} />
       </div>
       {item("settings", "gear", "Settings")}
     </nav>
   );
 }
 
-export function SyncDots({ sources }: { sources: SyncSource[] }) {
+export function SyncDots({ sources, mcp }: { sources: SyncSource[]; mcp?: McpStatus | null }) {
   return (
     <div className="sync meta">
       {sources.length === 0 && <span title="Slack, JEV and the trackers are not connected yet">no sources yet</span>}
@@ -54,6 +58,12 @@ export function SyncDots({ sources }: { sources: SyncSource[] }) {
           {s.short}
         </span>
       ))}
+      {mcp && (
+        <span title={mcp.running ? `MCP: ${mcp.url}` : mcp.error ? `MCP: ${mcp.error}` : "MCP: starting"}>
+          <i className={`dot sync-${mcpDotState(mcp)}`} />
+          MCP
+        </span>
+      )}
     </div>
   );
 }
