@@ -132,3 +132,136 @@ it had just created and was refused (`forbidden`) until `add_job_candidate` was 
 
 ## Opus verdict
 
+## Opus verdict (2026-11-17)
+
+**Verdict:** changes needed
+**Reviewed:** `df5f34a`, `17b1d57`, `8016700`, `f5ca859`, read at those commits and at
+`163d5f6` (HEAD). The `e16d3f8` UI and `c5a4fc6` are out of scope here. Tests were not re-run.
+
+### What holds
+
+- Capture runs in one `IMMEDIATE` transaction. A replayed `(channel, ts)` updates the row
+  in place and never inserts a second one (`crates/relay-core/src/store/mod.rs:2076-2127`).
+  An excluded peer stops before any message or episode write (`store/mod.rs:2087-2090`).
+- Job watermarks are unique in the schema (`migrations/0003_slack_jobs.sql:24-25`).
+  `create_job` returns the existing row for a repeated watermark and supersedes older live
+  jobs in the same transaction (`store/mod.rs:2416-2441`).
+- Routing compares strictly against the plan's thresholds (`jev.rs:515-600`):
+  `worth <= 0.60` rescreens, `needs_human > 0.60` reviews, and these cases also review:
+  both scores high, `task = multiple`, `affects_existing` without a task, and any missing
+  answer.
+- The analyst boundary checks the candidate list before any write
+  (`src-tauri/src/mcp/analyst.rs:198-207`). The idempotency key must name the same job
+  (`analyst.rs:210-219`). An analyst proposal may only touch `statusId`, `dueAt` and
+  `priority` (`store/mod.rs:1617-1625`).
+- The Socket Mode ack is sent before the event is handled (`src-tauri/src/slack.rs:290-299`).
+- A timeout terminates the Job Object. An exit without `jobs_complete` marks the job failed
+  (`src-tauri/src/analyst.rs:136-156`, `37-58`).
+- Tokens are stored under keyring service `dev.relay.app`, and `SlackClient`'s `Debug`
+  redacts both tokens (`crates/relay-core/src/slack.rs:80-87`).
+
+### What I would change
+
+Blocking:
+
+1. **The reviewer is not isolated.** `OPENCODE_CONFIG` adds a config file; OpenCode still
+   merges it with the global `~/.config/opencode/opencode.json`. On this machine that file
+   loads the `executor` MCP server. The log of the "verified" live run
+   (`%APPDATA%\dev.relay.app\analyst\run-01M7P3Q94TZWWTGVNZ0TTTWTPC.log`) shows the reviewer
+   calling Executor's `search` and `execute`, under `--auto`. Every Relay call in that run
+   went through Executor code mode. This breaks PLAN 3.3 and 6: "cannot reach Executor,
+   Hopper or Spawner." See `src-tauri/src/analyst.rs:101-121` and `173-200`.
+   Fix: point the global config location at an empty directory for the child (for example
+   `XDG_CONFIG_HOME` / `OPENCODE_CONFIG_DIR`). Deny tools by default (`"*": false`) and
+   allow only `relay-analyst_*`. Fail the job if the run log shows any other tool.
+2. **The peer is taken from the message author, not from the DM.** Code:
+   `src-tauri/src/slack.rs:427`, `store/mod.rs:2146-2156` and `2188`. The user's own
+   replies create a "self" peer. Episodes are looked up by peer rather than channel, so the
+   user's replies from every DM collect in one episode. Every message is stored as
+   `direction = "in"`. Excluding a peer does not exclude the user's replies to that peer.
+   The live test sent only inbound messages from one peer, so it did not hit this.
+   Fix: pass the DM's counterpart (from `list_dms` or `conversations.info`) as the peer. Key
+   episode reuse by `channel_id`. Derive the direction by comparing the author with that
+   peer.
+3. **Analyst writes ignore the job state, and idempotency is not atomic.** Code:
+   `src-tauri/src/mcp/analyst.rs:232-289` and `313-317`.
+   - Writes and `jobs_complete` are accepted on `done`, `failed`, `superseded` and `shadow`
+     jobs. `jobs_complete` overwrites `superseded` with `done`.
+   - The task, change or proposal is written in one transaction and `job_ops` in another. A
+     kill between the two, or two concurrent calls with the same key, creates a duplicate.
+   - Key `<job>:-1` passes `op_slot`, the write happens, and only then does
+     `record_job_op` reject the negative index.
+   - A replay returns the first result even when the tool differs.
+
+   Fix: do the write and the `job_ops` insert in one store transaction. Require
+   `state = 'running'`. Reject `index < 0` in `op_slot`. Check that `op.tool` matches.
+4. **Re-analysing an existing watermark resets the job and starts the reviewer again.**
+   Code: `src-tauri/src/slack.rs:589-619`. An edit, a redelivered envelope, or a catch-up
+   that re-captures the newest message keeps the same watermark. `create_job` returns the
+   existing job, and `set_job_status` then moves a `done` or `failed` job back to
+   `pending_agent` and calls `spawn_job`.
+   Fix: have `create_job` report whether it inserted a row, and skip the status change and
+   the spawn when it did not.
+5. **Retention is never run.** `prune_slack_messages` (`store/mod.rs:2366`) has no caller.
+   It also prunes by capture time, so a 14-day backfill message survives 44 days. The
+   reviewer logs keep DM text indefinitely (`analyst.rs:93`), and `clear_slack_capture`
+   does not remove them.
+   Fix: prune daily on the message `ts` with a 30-day default. Delete `analyst/run-*.log`
+   in both prune and clear.
+6. **Catch-up ignores Pause.** `catch_up` (`src-tauri/src/slack.rs:347-405`) captures and
+   runs JEV on every `hello` while capture is paused. Only `handle_event` checks the pause
+   (`slack.rs:316`).
+   Fix: check `paused(&app)` before listing DMs and before each capture and analysis.
+
+Should fix before 1.0:
+
+- **Deletes are dropped.** `message_deleted` has `user_id: None`, so `capture` returns at
+  `slack.rs:427`. Deleted DMs stay stored and are still sent to JEV.
+  Fix: mark the message deleted by `(channel, ts)` without resolving a peer.
+- **`history` reads one page.** It ignores `has_more`
+  (`crates/relay-core/src/slack.rs:193-219`). If more than 200 messages arrived while
+  offline, the oldest are skipped and the cursor jumps past them for good.
+  Fix: follow `response_metadata.next_cursor`.
+- **The middle band is dropped.** A rescreen creates no job and stores no answers
+  (`slack.rs:569-572`), and `close_stale_slack_episodes` (`store/mod.rs:2351`) has no
+  caller, so "rescreen at close" never happens. Shadow counts also lose `unsure`.
+  Fix: store a `rescreen` job row, close stale episodes on a timer, and rescreen on close.
+- **Change jobs run immediately.** `route(..., false)` is always called with
+  `task_claimed = false`, and `analyze` starts every `Change` job at once (`slack.rs:549`,
+  `608`). PLAN 3.2 says to wait for episode close unless the task is claimed.
+  Fix: pass the claim state, and queue unclaimed changes until close.
+- **Group DMs are captured.** `mpim` is accepted (`crates/relay-core/src/slack.rs:310`),
+  but PLAN 3.1 makes group DMs opt-in.
+  Fix: accept `im` only unless a setting enables group DMs.
+- **"At most one new task" is not enforced.** `tasks_create` accepts any number of op
+  indexes (`analyst.rs:232-247`).
+  Fix: refuse a second `tasks_create` per job.
+- **Runner state handling.**
+  - `RUNNING` stays `true` if `run` panics (`analyst.rs:27-33`).
+    Fix: reset it in a drop guard.
+  - `finish` overwrites `superseded` with `failed` (`analyst.rs:45-56`).
+    Fix: fail only a job that is `running` or `pending_agent`.
+- **The child joins the Job Object after spawn.** `cmd /C` can start `opencode` before
+  `AssignProcessToJobObject`, and its return value is ignored (`analyst.rs:129-133`,
+  `243-249`).
+  Fix: spawn suspended, or check the assignment and log a failure.
+- **The analyst token sits in plain text.** It is written to `analyst/opencode.json` and
+  stays there after the run (`analyst.rs:91-92`).
+  Fix: delete the file when the run ends.
+- **The command line goes through `cmd /C`** (`analyst.rs:101-116`). The job id and prompt
+  are internal ULIDs and fixed text, and `job_retry` loads the job before spawning, so I
+  found no injection path today. The `cmd` wrapper makes any future free-text argument
+  injectable.
+  Fix: resolve `opencode.cmd` and pass arguments without `cmd /C`, or assert that the job
+  id is `[0-9A-Z]{26}`.
+
+### Not covered
+
+- No live Slack workspace was tested. Socket Mode, `hello` catch-up, user-token DM delivery
+  and real `message_changed` / `message_deleted` payloads are unverified.
+- The reviewer was checked only through the one simulated-DM run log above. Neither the
+  timeout kill nor the Job Object was exercised.
+- The keyring was not tested across a reboot.
+- `cargo test` and `clippy` were not re-run for this review.
+- The `8016700` commit boundary (UI files swept in) was not re-audited.
+

@@ -77,9 +77,9 @@ Then state the commit reviewed and any follow-up package that should be opened.
 | 2026-11-17 | [Agent MCP endpoint + analyst boundary](2026-11-17-mcp-agent.md) | `3eccbeb` | Opus 5.5 | Self-reviewed; user review pending |
 | 2026-11-17 | [MCP setup in Settings](2026-11-17-mcp-ui.md) | `3e3042c` | Opus 5.5 | Self-reviewed; user review pending |
 | 2026-11-17 | [Release pipeline + updater](2026-11-17-release-pipeline.md) | `862536a` / v0.1.1 | Opus 5.5 | Validated on a real install |
-| 2026-11-17 | [Slack capture, JEV jobs and reviewer](2026-11-17-slack-jobs.md) | `df5f34a`…`f5ca859` | DeepSeek V4.1 | Live loop verified; Opus review pending |
+| 2026-11-17 | [Slack capture, JEV jobs and reviewer](2026-11-17-slack-jobs.md) | `df5f34a`…`f5ca859` | DeepSeek V4.1 | Changes needed (6 blocking) |
 | 2026-11-17 | [Slack and JEV UI](2026-11-17-slack-ui.md) | `e16d3f8` | Opus 5.5 | Self-reviewed; user review pending |
-| 2026-11-17 | [Git/PR context and imports](2026-11-17-git-pr-imports.md) | `fff648c`…`9064ec9` | DeepSeek V4.1 | Backend complete; UI in `e92e9c6`; Opus review pending |
+| 2026-11-17 | [Git/PR context and imports](2026-11-17-git-pr-imports.md) | `fff648c`…`9064ec9` | DeepSeek V4.1 | Changes needed (2 blocking) |
 
 The release audit is a section of the scaffold record because it audits the
 scaffold's release pipeline; it does not change the scaffold commit.
