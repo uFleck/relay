@@ -18,7 +18,7 @@ State as of 2026-11-17 21:15 (-03:00). Read this before touching the UI, MCP or 
 | `3eccbeb` | Opus | Agent MCP endpoint + analyst boundary |
 | `00bdacf` | maintenance | Agents may submit/reject proposals; approve is UI-only |
 
-Working tree: clean as of this note; the MCP settings sheet is being added in a child package (it will touch `src/`).
+Working tree: clean as of this note. The MCP settings sheet is committed (`3e3042c`).
 
 ## Verified
 
@@ -58,7 +58,7 @@ Manual checks still needed on Windows:
 2. Title bar drag/double-click/minimize/maximize/close; close hover color.
 3. Drag/snap across monitors and left-edge mirroring.
 4. Hover buttons work on the first click without taking focus.
-5. MCP settings sheet (being added): running dot, URLs, token copy, Executor/OpenCode snippets.
+5. MCP settings sheet is live and verified (green state, URLs, token copy, snippets); no manual check left there.
 
 ## Next packages
 
