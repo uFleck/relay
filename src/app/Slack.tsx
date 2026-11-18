@@ -16,10 +16,13 @@ import {
   slackConnect,
   slackDisconnect,
   slackPeers,
+  slackReanalyze,
+  slackReanalyzeRecent,
   slackSetTransport,
   slackSetPeerExcluded,
   slackSyncNow,
   type AnalysisJob,
+  type ReanalyzeReport,
   type EpisodeDetail,
   type SlackEpisode,
   type SlackMessage,
@@ -136,6 +139,52 @@ function syncSummary(report: SlackSyncReport): string {
   if (report.messages === 0) return "Nothing new.";
   const analyzed = report.analyzed > 0 ? ` · ${plural(report.analyzed, "episode")} analyzed` : "";
   return `${plural(report.conversations, "conversation")} checked · ${plural(report.messages, "new message")}${analyzed}`;
+}
+
+function reanalyzeSummary(report: ReanalyzeReport): string {
+  if (report.selected === 0) return "Nothing to redo: no recent conversation is waiting on a newer task.";
+  return `${plural(report.selected, "conversation")} picked · ${report.analyzed} analyzed${report.failed > 0 ? ` · ${report.failed} failed` : ""}`;
+}
+
+/** Redoes the last 3 days of conversations that were screened before the tasks they mention existed. */
+function ReanalyzeRow({ disabled }: { disabled: boolean }) {
+  const [busy, setBusy] = useState(false);
+  const [line, setLine] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function run() {
+    setBusy(true);
+    setLine(null);
+    setError(null);
+    try {
+      const report = await slackReanalyzeRecent();
+      setLine(reanalyzeSummary(report));
+      if (report.error) setError(report.error);
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <div className="setrow">
+        <span>Conversations from the last 3 days that were backfilled or screened out are analyzed again with today's tasks.</span>
+        <span className="push" />
+        <button type="button" className="btn" disabled={disabled || busy} onClick={() => void run()}>
+          {busy && <Spinner />}
+          {busy ? "Re-analyzing…" : "Re-analyze last 3 days"}
+        </button>
+      </div>
+      {line && (
+        <p className="mcp-note" role="status">
+          {line}
+        </p>
+      )}
+      {error && <p className="mcp-err" role="alert">{error}</p>}
+    </>
+  );
 }
 
 function ErrorText({ error }: { error: string }) {
@@ -269,6 +318,7 @@ export function SlackSettings({ status, onStatus }: SlackSettingsProps) {
           </p>
         )}
         {(error ?? claude.lastError) && <ErrorText error={(error ?? claude.lastError) as string} />}
+        <ReanalyzeRow disabled={syncing || claude.running} />
       </>
     );
   }
@@ -310,6 +360,7 @@ export function SlackSettings({ status, onStatus }: SlackSettingsProps) {
         </p>
       )}
       {shown && <ErrorText error={shown} />}
+      {status.configured && <ReanalyzeRow disabled={busy !== null || syncing} />}
 
       {(!status.configured || status.error) && (
         <form className="sform" onSubmit={(e) => void connect(e)}>
@@ -630,6 +681,7 @@ export function EpisodeSheet({ id, onClose }: SheetProps) {
   const [queued, setQueued] = useState<AnalysisJob | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [retrying, setRetrying] = useState(false);
+  const [reanalyzing, setReanalyzing] = useState(false);
   const [analyzeError, setAnalyzeError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -669,6 +721,21 @@ export function EpisodeSheet({ id, onClose }: SheetProps) {
       setAnalyzeError(errorText(err));
     } finally {
       setAnalyzing(false);
+    }
+  }
+
+  async function reanalyze() {
+    setReanalyzing(true);
+    setAnalyzeError(null);
+    try {
+      const next = await slackReanalyze(id);
+      if (next) setQueued(next);
+      else setAnalyzeError(inTauri ? "Relay did not queue a job for this episode." : "Analysis runs in the desktop app.");
+      await Promise.all([jobs.reload(), episode.reload()]);
+    } catch (err) {
+      setAnalyzeError(errorText(err));
+    } finally {
+      setReanalyzing(false);
     }
   }
 
@@ -716,9 +783,24 @@ export function EpisodeSheet({ id, onClose }: SheetProps) {
       <div className="sh-f ejob">
         {analyzeError && <p className="mcp-err">{analyzeError}</p>}
         {job && <JobState job={job} retrying={retrying} onRetry={() => void retry(job)} />}
-        <button type="button" className="btn pri" disabled={!detail || running || waiting || retrying} onClick={() => void analyze()}>
+        <button
+          type="button"
+          className="btn pri"
+          disabled={!detail || running || waiting || retrying || reanalyzing}
+          onClick={() => void analyze()}
+        >
           {running && <Spinner />}
           {analyzing ? "Queuing…" : running ? "Analysis running" : waiting ? "Waiting for an agent…" : "Analyze now"}
+        </button>
+        <button
+          type="button"
+          className="btn"
+          title="Redo this conversation live with the tasks that exist now, replacing a backfill or screened-out result"
+          disabled={!detail || running || waiting || retrying || analyzing || reanalyzing}
+          onClick={() => void reanalyze()}
+        >
+          {reanalyzing && <Spinner />}
+          {reanalyzing ? "Re-analyzing…" : "Re-analyze"}
         </button>
       </div>
     </aside>

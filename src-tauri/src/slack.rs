@@ -5,17 +5,16 @@
 //! stores the message through `relay-core`. The store owns episode segmentation, peer
 //! exclusion and retention; this module owns the connection and the JEV call.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
-use relay_core::analysis::{self, CandidateTask, ProjectChoice, TranscriptLine};
+use relay_core::analysis::{self, ProjectChoice, TranscriptLine};
 use relay_core::jev::{self, JevClient, Route, Thresholds};
 use relay_core::model::{
-    AnalysisJob, EpisodeDetail, EpisodeSummary, NewJob, RawSlackMessage, SlackPeer, StatusCategory,
-    TaskFilter,
+    AnalysisJob, EpisodeDetail, EpisodeSummary, NewJob, RawSlackMessage, SlackPeer,
 };
 use relay_core::slack::{self, InboundEvent, SlackClient, SlackIdentity, SocketFrame};
 use relay_core::store::Store;
@@ -95,6 +94,8 @@ pub struct SlackState {
     jev: Mutex<Option<Arc<JevClient>>>,
     /// One manual sync at a time; the hotkey and the Settings button share it.
     syncing: AtomicBool,
+    /// One re-analysis sweep at a time; a trigger that finds it set does nothing.
+    reanalyzing: AtomicBool,
 }
 
 /// Clears the sync flag on every exit path, errors included.
@@ -119,6 +120,7 @@ impl SlackState {
             }),
             jev: Mutex::new(jev.map(Arc::new)),
             syncing: AtomicBool::new(false),
+            reanalyzing: AtomicBool::new(false),
         }
     }
 
@@ -286,7 +288,7 @@ pub fn start(app: AppHandle, store: Arc<Store>) {
                 for id in closed {
                     // The plan's "rescreen at episode close": middle-band episodes get a
                     // second look, and a replay of the same watermark is a no-op.
-                    let _ = analyze(&retention, &state, &id, false).await;
+                    let _ = analyze(&retention, &state, &id, false, Existing::Keep).await;
                 }
             }
             tokio::time::sleep(Duration::from_secs(6 * 3600)).await;
@@ -472,7 +474,7 @@ async fn handle_event(app: AppHandle, client: SlackClient, payload: serde_json::
                 let app = app.clone();
                 tauri::async_runtime::spawn(async move {
                     let state = app.state::<SlackState>();
-                    match analyze(&app, &state, &episode_id, false).await {
+                    match analyze(&app, &state, &episode_id, false, Existing::Keep).await {
                         Ok(_) => {
                             let status = state.update(|status| {
                                 status.last_event_at = Some(relay_core::model::now());
@@ -603,7 +605,7 @@ async fn run_sync(
         if *stop.borrow() {
             break;
         }
-        match analyze(app, &state, &episode_id, historical).await {
+        match analyze(app, &state, &episode_id, historical, Existing::Keep).await {
             Ok(_) => report.analyzed += 1,
             Err(error) => {
                 let status = state.set_error(Some(error.clone()));
@@ -767,12 +769,22 @@ fn paused(app: &AppHandle) -> bool {
         .is_some_and(|state| state.snapshot().paused)
 }
 
+/// How `analyze` treats a job already stored for the conversation's newest message.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Existing {
+    /// A replay returns the stored job untouched.
+    Keep,
+    /// A shadow, ignored or reviewed job is redone live with the current candidates.
+    Replace,
+}
+
 /// Runs JEV over one episode. `shadow` stores the answers but takes no action.
 async fn analyze(
     app: &AppHandle,
     state: &SlackState,
     conversation_id: &str,
     shadow: bool,
+    existing: Existing,
 ) -> Result<Option<AnalysisJob>, String> {
     let jev = state.jev().ok_or("JEV is not configured")?;
     let detail = state
@@ -818,7 +830,7 @@ async fn analyze(
     let (kind, route_name, route, candidates) = if worth < thresholds.screen_no {
         ("screen", "ignore", Route::Ignore, Vec::new())
     } else {
-        let candidates = candidates(&state.store, &transcript);
+        let candidates = relay_core::candidates::pick(&state.store, &transcript);
         let projects: Vec<ProjectChoice> = state
             .store
             .list_projects()
@@ -892,18 +904,20 @@ async fn analyze(
         _ => None,
     };
 
-    let (job, inserted) = state
-        .store
-        .create_job(NewJob {
-            conversation_id: conversation_id.to_string(),
-            watermark,
-            kind: kind.to_string(),
-            project_id,
-            route: Some(route_name.to_string()),
-            jev_json: Some(answers.to_string()),
-            candidates: candidates.clone(),
-        })
-        .map_err(|error| error.to_string())?;
+    let new_job = NewJob {
+        conversation_id: conversation_id.to_string(),
+        watermark,
+        kind: kind.to_string(),
+        project_id,
+        route: Some(route_name.to_string()),
+        jev_json: Some(answers.to_string()),
+        candidates: candidates.clone(),
+    };
+    let (job, inserted) = match existing {
+        Existing::Keep => state.store.create_job(new_job),
+        Existing::Replace => state.store.replace_job(new_job),
+    }
+    .map_err(|error| error.to_string())?;
     if !inserted {
         // A replay of the same watermark must not reset a finished job or rerun the reviewer.
         return Ok(Some(job));
@@ -943,64 +957,6 @@ async fn analyze(
         .store
         .set_slack_episode_state(conversation_id, episode_state);
     Ok(Some(job))
-}
-
-fn candidates(store: &Store, transcript: &str) -> Vec<CandidateTask> {
-    let mut tasks = Vec::new();
-    let words = keywords(transcript);
-    if !words.is_empty()
-        && let Ok(found) = store.search_tasks(&words.join(" "), 15)
-    {
-        tasks.extend(found);
-    }
-    if let Ok(active) = store.list_tasks(TaskFilter {
-        category: Some(StatusCategory::Active),
-        limit: Some(5),
-        ..TaskFilter::default()
-    }) {
-        tasks.extend(active);
-    }
-
-    let mut seen = HashSet::new();
-    let mut out = Vec::new();
-    for task in tasks {
-        if !seen.insert(task.id.clone()) {
-            continue;
-        }
-        let status = store
-            .get_task_detail(&task.id, None)
-            .map(|detail| detail.status.name)
-            .unwrap_or_else(|_| "unknown".to_string());
-        out.push(CandidateTask {
-            id: task.id,
-            title: task.title,
-            status,
-        });
-        if out.len() == 20 {
-            break;
-        }
-    }
-    out
-}
-
-fn keywords(text: &str) -> Vec<String> {
-    const STOP: [&str; 16] = [
-        "that", "this", "with", "have", "from", "your", "about", "there", "would", "could",
-        "should", "they", "what", "when", "will", "just",
-    ];
-    let mut seen = HashSet::new();
-    let mut out = Vec::new();
-    for word in text.split(|ch: char| !ch.is_alphanumeric()) {
-        let word = word.to_lowercase();
-        if word.len() < 4 || STOP.contains(&word.as_str()) || !seen.insert(word.clone()) {
-            continue;
-        }
-        out.push(word);
-        if out.len() == 5 {
-            break;
-        }
-    }
-    out
 }
 
 fn slack_ts_days_ago(days: i64) -> String {
@@ -1189,9 +1145,84 @@ pub async fn episode_analyze(
     state: State<'_, SlackState>,
     id: String,
 ) -> Result<Option<AnalysisJob>, String> {
-    let job = analyze(&app, &state, &id, false).await?;
+    let job = analyze(&app, &state, &id, false, Existing::Keep).await?;
     let _ = app.emit("relay://change", ());
     Ok(job)
+}
+
+/// Outcome of a re-analysis sweep, for the Settings line.
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReanalyzeReport {
+    /// Conversations the sweep picked.
+    pub selected: usize,
+    /// Of those, how many produced a stored job.
+    pub analyzed: usize,
+    pub failed: usize,
+    pub error: Option<String>,
+}
+
+/// Days of Slack activity the sweep looks back over, and how many conversations it takes.
+const REANALYZE_DAYS: i64 = 3;
+const REANALYZE_LIMIT: usize = 10;
+
+/// Redoes the analysis of the recent conversations whose last result predates the tasks
+/// that exist now, live. One sweep at a time; the others return an empty report.
+async fn reanalyze_recent(app: &AppHandle) -> Result<ReanalyzeReport, String> {
+    let state = app.state::<SlackState>();
+    if state.jev().is_none() {
+        return Err("JEV is not configured".into());
+    }
+    if state.reanalyzing.swap(true, Ordering::SeqCst) {
+        return Ok(ReanalyzeReport::default());
+    }
+    let _guard = SyncGuard(&state.reanalyzing);
+    let ids = state
+        .store
+        .requeue_recent(REANALYZE_DAYS, REANALYZE_LIMIT)
+        .map_err(|error| error.to_string())?;
+    let mut report = ReanalyzeReport {
+        selected: ids.len(),
+        ..ReanalyzeReport::default()
+    };
+    for id in ids {
+        match analyze(app, &state, &id, false, Existing::Replace).await {
+            Ok(Some(_)) => report.analyzed += 1,
+            Ok(None) => {}
+            Err(error) => {
+                report.failed += 1;
+                report.error.get_or_insert(error);
+            }
+        }
+    }
+    let _ = app.emit("relay://change", ());
+    Ok(report)
+}
+
+/// For after a sync or import created tasks. Silent when JEV is off or a sweep runs.
+pub(crate) fn reanalyze_in_background(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        if let Err(error) = reanalyze_recent(&app).await {
+            eprintln!("relay: re-analysis skipped: {error}");
+        }
+    });
+}
+
+/// Redoes one conversation live, replacing a shadow, ignored or reviewed result.
+#[tauri::command]
+pub async fn slack_reanalyze(
+    app: AppHandle,
+    state: State<'_, SlackState>,
+    conversation_id: String,
+) -> Result<Option<AnalysisJob>, String> {
+    let job = analyze(&app, &state, &conversation_id, false, Existing::Replace).await?;
+    let _ = app.emit("relay://change", ());
+    Ok(job)
+}
+
+#[tauri::command]
+pub async fn slack_reanalyze_recent(app: AppHandle) -> Result<ReanalyzeReport, String> {
+    reanalyze_recent(&app).await
 }
 
 #[tauri::command]

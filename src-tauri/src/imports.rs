@@ -221,6 +221,9 @@ pub async fn repos_import(
     .await
     .map_err(|error| error.to_string())??;
     let _ = app.emit("relay://change", ());
+    if count.imported > 0 {
+        crate::slack::reanalyze_in_background(app.clone());
+    }
     crate::github::sync_in_background(app);
     Ok(ImportCount {
         imported: count.imported,

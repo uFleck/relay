@@ -1477,6 +1477,46 @@ impl Store {
         Ok(links)
     }
 
+    /// Links on active tasks whose external id or URL equals one of the given values,
+    /// compared case-insensitively and ignoring a trailing slash on the URL. Callers pass
+    /// lowercase values. Used to tie a transcript's pasted links back to tasks.
+    pub fn find_links_matching(
+        &self,
+        external_ids: &[String],
+        urls: &[String],
+    ) -> Result<Vec<TaskLink>, StoreError> {
+        if external_ids.is_empty() && urls.is_empty() {
+            return Ok(Vec::new());
+        }
+        let marks = |n: usize| vec!["?"; n].join(", ");
+        let mut clauses = Vec::new();
+        let mut bind: Vec<&String> = Vec::new();
+        if !external_ids.is_empty() {
+            clauses.push(format!(
+                "lower(external_id) IN ({})",
+                marks(external_ids.len())
+            ));
+            bind.extend(external_ids);
+        }
+        if !urls.is_empty() {
+            clauses.push(format!("lower(rtrim(url, '/')) IN ({})", marks(urls.len())));
+            bind.extend(urls);
+        }
+        let sql = format!(
+            "SELECT {LINK_COLUMNS} FROM task_links
+             WHERE ({}) AND task_id IN (SELECT id FROM tasks WHERE archived = 0)",
+            clauses.join(" OR ")
+        );
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(bind), link_from_row)?;
+        let mut links = Vec::new();
+        for row in rows {
+            links.push(row?);
+        }
+        Ok(links)
+    }
+
     /// Every link of one kind whose task lives in `project_id`, archived tasks included, with
     /// the task's archived flag. Reconciling an external source needs the archived ones to
     /// tell "reassigned to me" from "never seen".
@@ -2435,6 +2475,18 @@ impl Store {
     /// the existing job with `false` (a replay must not restart the reviewer). Any other
     /// live job for the conversation is marked `superseded`.
     pub fn create_job(&self, new: NewJob) -> Result<(AnalysisJob, bool), StoreError> {
+        self.insert_job(new, false)
+    }
+
+    /// Like `create_job`, but a finished job for the same watermark is rewritten in place
+    /// and returned with `true`, so a re-analysis can replace a shadow or ignored result.
+    /// A job in flight (`running`, `pending_agent`) or one that routed `change` or
+    /// `new_task` is returned untouched with `false`: its action was taken or is under way.
+    pub fn replace_job(&self, new: NewJob) -> Result<(AnalysisJob, bool), StoreError> {
+        self.insert_job(new, true)
+    }
+
+    fn insert_job(&self, new: NewJob, replace: bool) -> Result<(AnalysisJob, bool), StoreError> {
         if new.conversation_id.trim().is_empty() || new.watermark.trim().is_empty() {
             return Err(StoreError::InvalidInput(
                 "job conversation id and watermark are required".into(),
@@ -2469,8 +2521,45 @@ impl Store {
             )
             .optional()?;
         if let Some(job) = existing {
+            let acted = matches!(job.state.as_str(), "running" | "pending_agent")
+                || matches!(job.route.as_deref(), Some("change" | "new_task"));
+            if !replace || acted {
+                tx.commit()?;
+                return Ok((job, false));
+            }
+            let at = now();
+            tx.execute(
+                "UPDATE analysis_jobs
+                 SET state = 'superseded', superseded_by = ?1, updated_at = ?2
+                 WHERE conversation_id = ?3 AND id <> ?1
+                   AND state IN ('pending', 'running', 'pending_agent', 'shadow')",
+                params![job.id, at, new.conversation_id],
+            )?;
+            tx.execute(
+                "UPDATE analysis_jobs
+                 SET project_id = ?1, kind = ?2, state = 'pending', attempts = 0, route = ?3,
+                     jev_json = ?4, candidates_json = ?5, agent_session = NULL, error = NULL,
+                     summary = NULL, superseded_by = NULL, created_at = ?6, updated_at = ?6,
+                     started_at = NULL, finished_at = NULL
+                 WHERE id = ?7",
+                params![
+                    new.project_id,
+                    new.kind,
+                    new.route,
+                    new.jev_json,
+                    candidates_json,
+                    at,
+                    job.id,
+                ],
+            )?;
+            tx.execute("DELETE FROM job_ops WHERE job_id = ?1", params![job.id])?;
+            let job = tx.query_row(
+                &format!("SELECT {JOB_COLUMNS} FROM analysis_jobs WHERE id = ?1"),
+                params![job.id],
+                job_from_row,
+            )?;
             tx.commit()?;
-            return Ok((job, false));
+            return Ok((job, true));
         }
 
         let id = new_id();
@@ -2506,6 +2595,51 @@ impl Store {
         )?;
         tx.commit()?;
         Ok((job, true))
+    }
+
+    /// Conversations worth analysing again, newest activity first: those with a message in
+    /// the last `days` days whose latest job is a `shadow` backfill, or whose latest job
+    /// routed `ignore` or `review` (and drew no proposal) before the newest active task
+    /// existed, so a task created since could now be a candidate. A conversation with a
+    /// job in flight, or none at all, is left out. Re-analysis rewrites the latest job
+    /// with the current time, so a second call does not select the same conversation.
+    pub fn requeue_recent(&self, days: i64, limit: usize) -> Result<Vec<String>, StoreError> {
+        let cutoff =
+            model::format_time(time::OffsetDateTime::now_utc() - time::Duration::days(days));
+        let limit = limit.clamp(1, 50) as i64;
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "WITH latest AS (
+                 SELECT j.conversation_id, j.id, j.state, j.route, j.created_at
+                 FROM analysis_jobs j
+                 WHERE j.state <> 'superseded'
+                   AND j.id = (SELECT j2.id FROM analysis_jobs j2
+                               WHERE j2.conversation_id = j.conversation_id
+                                 AND j2.state <> 'superseded'
+                               ORDER BY j2.created_at DESC, j2.rowid DESC LIMIT 1)
+             )
+             SELECT c.id FROM conversations c JOIN latest l ON l.conversation_id = c.id
+             WHERE c.last_message_at >= ?1
+               AND NOT EXISTS (
+                   SELECT 1 FROM analysis_jobs f
+                   WHERE f.conversation_id = c.id
+                     AND (f.state IN ('running', 'pending_agent')
+                          OR (f.state = 'pending' AND f.route IS NULL)))
+               AND (l.state = 'shadow'
+                    OR (l.route IN ('ignore', 'review')
+                        AND l.state IN ('done', 'pending')
+                        AND NOT EXISTS (SELECT 1 FROM proposals p WHERE p.job_id = l.id)
+                        AND l.created_at < COALESCE(
+                            (SELECT MAX(t.created_at) FROM tasks t WHERE t.archived = 0), '')))
+             ORDER BY c.last_message_at DESC
+             LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![cutoff, limit], |row| row.get::<_, String>(0))?;
+        let mut ids = Vec::new();
+        for row in rows {
+            ids.push(row?);
+        }
+        Ok(ids)
     }
 
     pub fn get_job(&self, id: &str) -> Result<AnalysisJob, StoreError> {
@@ -4960,6 +5094,164 @@ mod tests {
                 .unwrap()
                 .iter()
                 .any(|j| j.id == second.id)
+        );
+    }
+
+    fn recent_conversation(store: &Store, user: &str, seconds_ago: i64) -> String {
+        let ts = time::OffsetDateTime::now_utc().unix_timestamp() - seconds_ago;
+        let mut message = raw_message(&format!("{ts}.000100"), user, "need a report");
+        message.channel_id = format!("D{user}");
+        store
+            .capture_slack_message(user, Some(user), &message, 90)
+            .unwrap()
+            .unwrap()
+            .episode_id
+    }
+
+    fn job_in(store: &Store, conversation: &str, state: &str, route: &str) -> String {
+        let mut new = new_job(conversation, "1.000000");
+        new.route = Some(route.into());
+        let (job, _) = store.create_job(new).unwrap();
+        store.set_job_status(&job.id, state, None, None).unwrap();
+        store
+            .conn()
+            .execute(
+                "UPDATE analysis_jobs SET created_at = '2020-01-01T00:00:00Z' WHERE id = ?1",
+                params![job.id],
+            )
+            .unwrap();
+        job.id
+    }
+
+    fn some_task(store: &Store) {
+        let project = store
+            .create_project_with_default_workflow(NewProject::new("Inbox", "inbox", None))
+            .unwrap();
+        store
+            .create_task(NewTask::new(&project.project.id, "fresh"))
+            .unwrap();
+    }
+
+    #[test]
+    fn requeue_selects_shadow_and_stale_ignored_jobs_newest_first() {
+        let store = Store::open_in_memory().unwrap();
+        let shadow = recent_conversation(&store, "U1", 3_600);
+        let ignored = recent_conversation(&store, "U2", 600);
+        let acted = recent_conversation(&store, "U3", 300);
+        let old = recent_conversation(&store, "U4", 5 * 86_400);
+        let none = recent_conversation(&store, "U5", 100);
+        job_in(&store, &shadow, "shadow", "review");
+        job_in(&store, &ignored, "done", "ignore");
+        job_in(&store, &acted, "done", "new_task");
+        job_in(&store, &old, "shadow", "ignore");
+        let _ = none;
+        some_task(&store);
+
+        assert_eq!(
+            store.requeue_recent(3, 10).unwrap(),
+            vec![ignored.clone(), shadow.clone()]
+        );
+        assert_eq!(store.requeue_recent(3, 1).unwrap(), vec![ignored]);
+    }
+
+    #[test]
+    fn requeue_skips_ignored_jobs_newer_than_every_task_and_jobs_in_flight() {
+        let store = Store::open_in_memory().unwrap();
+        let ignored = recent_conversation(&store, "U1", 600);
+        let busy = recent_conversation(&store, "U2", 500);
+        job_in(&store, &ignored, "done", "ignore");
+        job_in(&store, &busy, "shadow", "review");
+        let mut second = new_job(&busy, "2.000000");
+        second.route = Some("change".into());
+        let (running, _) = store.create_job(second).unwrap();
+        store
+            .set_job_status(&running.id, "running", None, None)
+            .unwrap();
+
+        assert!(
+            store.requeue_recent(3, 10).unwrap().is_empty(),
+            "no task exists to change the outcome, and the other job is running"
+        );
+        some_task(&store);
+        assert_eq!(store.requeue_recent(3, 10).unwrap(), vec![ignored]);
+    }
+
+    #[test]
+    fn a_replaced_job_leaves_the_requeue_and_a_second_run_selects_nothing() {
+        let store = Store::open_in_memory().unwrap();
+        let conversation = recent_conversation(&store, "U1", 600);
+        let shadow = job_in(&store, &conversation, "shadow", "ignore");
+        some_task(&store);
+        assert_eq!(
+            store.requeue_recent(3, 10).unwrap(),
+            vec![conversation.clone()]
+        );
+
+        let mut live = new_job(&conversation, "1.000000");
+        live.route = Some("ignore".into());
+        let (replay, inserted) = store.create_job(live.clone()).unwrap();
+        assert!(
+            !inserted && replay.id == shadow,
+            "a plain replay keeps the shadow job"
+        );
+        let (job, inserted) = store.replace_job(live).unwrap();
+        assert!(inserted);
+        assert_eq!(job.id, shadow, "the row is rewritten in place");
+        assert_eq!(job.state, "pending");
+        store.set_job_status(&job.id, "done", None, None).unwrap();
+
+        assert!(
+            store.requeue_recent(3, 10).unwrap().is_empty(),
+            "re-analysed ignore result is newer than every task"
+        );
+    }
+
+    #[test]
+    fn replace_job_leaves_acted_jobs_alone() {
+        let store = Store::open_in_memory().unwrap();
+        let conversation = recent_conversation(&store, "U1", 600);
+        let acted = job_in(&store, &conversation, "done", "new_task");
+        let mut again = new_job(&conversation, "1.000000");
+        again.route = Some("ignore".into());
+        let (job, inserted) = store.replace_job(again).unwrap();
+        assert!(!inserted);
+        assert_eq!(job.id, acted);
+        assert_eq!(job.route.as_deref(), Some("new_task"));
+    }
+
+    #[test]
+    fn find_links_matching_ignores_case_slashes_and_archived_tasks() {
+        let store = Store::open_in_memory().unwrap();
+        let project = store
+            .create_project_with_default_workflow(NewProject::new("Inbox", "inbox", None))
+            .unwrap();
+        let task = store
+            .create_task(NewTask::new(&project.project.id, "linked"))
+            .unwrap();
+        store
+            .add_link(NewLink {
+                task_id: task.id.clone(),
+                claim_id: None,
+                kind: "clickup".into(),
+                external_id: Some("AbC123".into()),
+                url: "https://app.clickup.com/t/AbC123/".into(),
+                title: None,
+                state: None,
+                metadata_json: None,
+                last_synced_at: None,
+            })
+            .unwrap();
+        let by_id = store.find_links_matching(&["abc123".into()], &[]).unwrap();
+        let by_url = store
+            .find_links_matching(&[], &["https://app.clickup.com/t/abc123".into()])
+            .unwrap();
+        assert_eq!((by_id.len(), by_url.len()), (1, 1));
+        assert!(store.find_links_matching(&[], &[]).unwrap().is_empty());
+        assert!(
+            store
+                .find_links_matching(&["nope".into()], &[])
+                .unwrap()
+                .is_empty()
         );
     }
 
