@@ -37,6 +37,8 @@ Working tree: clean as of this note; the MCP settings sheet is being added in a 
 - `invoke("mcp_status")` returns `{ running, port, url, analystUrl, error, agentToken, analystToken }`; `mcp://status` emits the same.
 - Agent `proposals_decide` is **reject-only**; a human approves in the UI.
 - Port 38547 is fixed and fails loudly; there is no fallback port.
+- **Executor is wired**: `C:\Projects\executor-bridges\servers.json` has a `relay` entry (agent URL + token), the bridge proxies `9450 -> 38547`, and `node sync.mjs` deployed the `relay` app. `executor call tools.relay.projects_list` returns the real Inbox; `tools.relay.tasks_list` returns `{"tasks":[]}`. The bridge (Spawner service) and Relay must both be running.
+- Settings → Agents & MCP shows the green status, URLs, tokens, Copy buttons, and the Executor/OpenCode snippets (`3e3042c`).
 
 ## Runtime commands
 
