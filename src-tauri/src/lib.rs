@@ -271,6 +271,7 @@ pub fn run() {
             mcp::mcp_token,
             slack::slack_status,
             slack::slack_sync_now,
+            slack::slack_set_transport,
             slack::slack_connect,
             slack::slack_disconnect,
             slack::slack_peers,

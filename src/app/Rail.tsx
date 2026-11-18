@@ -49,10 +49,12 @@ export function Rail({ view, onView, version, inbox, review, liveAgents, sync, m
 }
 
 export function SyncDots({ sources, mcp }: { sources: SyncSource[]; mcp?: McpStatus | null }) {
+  // Sources that are not configured stay out of the rail; Settings → Sources lists them all.
+  const live = sources.filter((s) => s.state !== "off");
   return (
     <div className="sync meta">
-      {sources.length === 0 && <span title="Slack, JEV and the trackers are not connected yet">no sources yet</span>}
-      {sources.map((s) => (
+      {live.length === 0 && !mcp && <span title="Nothing is configured yet">no sources connected</span>}
+      {live.map((s) => (
         <span key={s.name} title={s.reason ? `${s.name}: ${s.reason}` : `${s.name}: ok`}>
           <i className={`dot sync-${s.state}`} />
           {s.short}

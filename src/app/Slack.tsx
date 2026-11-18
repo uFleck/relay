@@ -16,6 +16,7 @@ import {
   slackConnect,
   slackDisconnect,
   slackPeers,
+  slackSetTransport,
   slackSetPeerExcluded,
   slackSyncNow,
   type AnalysisJob,
@@ -216,10 +217,64 @@ export function SlackSettings({ status, onStatus }: SlackSettingsProps) {
     }
   }
 
+  async function chooseTransport(next: "claude" | "token") {
+    setError(null);
+    try {
+      onStatus(await slackSetTransport(next));
+    } catch (err) {
+      setError(errorText(err));
+    }
+  }
+
   if (!status) return <p className="empty">Reading Slack status…</p>;
   const shown = error ?? status.error;
+  if (status.transport === "claude" && status.claude) {
+    const claude = status.claude;
+    return (
+      <>
+        <TransportPicker value="claude" onChange={(next) => void chooseTransport(next)} />
+        <div className="setrow" role="status">
+          <i className={`dot sync-${!claude.found || claude.lastError ? "down" : claude.lastRunAt ? "ok" : "off"}`} />
+          <span>
+            {!claude.found
+              ? "Claude Code not found"
+              : claude.lastRunAt
+                ? `Last sync ${ago(claude.lastRunAt, now)} · ${plural(claude.lastMessages, "message")}`
+                : "No sync yet"}
+          </span>
+          <span className="push" />
+          <button
+            type="button"
+            className="btn"
+            disabled={!claude.found || syncing || claude.running}
+            onClick={() => void syncNow()}
+          >
+            {(syncing || claude.running) && <Spinner />}
+            {syncing || claude.running ? "Checking…" : "Sync now"}
+          </button>
+        </div>
+        <p className="mcp-note">
+          {claude.found ? "Claude Code found" : "Claude Code not found"} · last run ${claude.lastCostUsd.toFixed(3)} · today $
+          {claude.costTodayUsd.toFixed(3)}
+          {claude.lastDurationMs > 0 && ` · ${(claude.lastDurationMs / 1000).toFixed(0)} s`}
+          {status.capturePaused && " · capture paused"}
+        </p>
+        <p className="mcp-note">
+          Reads your 1:1 and group DMs through the claude.ai Slack connector (headless Claude, haiku) every 10 minutes
+          and on Ctrl+Alt+S. No Slack app token needed.
+        </p>
+        {syncReport && (
+          <p className="mcp-note" role="status">
+            {syncReport}
+          </p>
+        )}
+        {(error ?? claude.lastError) && <ErrorText error={(error ?? claude.lastError) as string} />}
+      </>
+    );
+  }
   return (
     <>
+      <TransportPicker value="token" onChange={(next) => void chooseTransport(next)} />
       <div className="setrow" role="status">
         <i className={`dot sync-${slackDot(status)}`} />
         <span>{slackLine(status)}</span>
@@ -298,6 +353,30 @@ export function SlackSettings({ status, onStatus }: SlackSettingsProps) {
       </p>
       {status.configured && <PeerList count={status.peers} />}
     </>
+  );
+}
+
+function TransportPicker({
+  value,
+  onChange,
+}: {
+  value: "claude" | "token";
+  onChange: (next: "claude" | "token") => void;
+}) {
+  return (
+    <div className="setrow">
+      <label htmlFor="slack-transport">Transport</label>
+      <span className="push" />
+      <select
+        id="slack-transport"
+        className="inp"
+        value={value}
+        onChange={(e) => onChange(e.target.value as "claude" | "token")}
+      >
+        <option value="claude">Claude (claude.ai Slack connector)</option>
+        <option value="token">Slack app token</option>
+      </select>
+    </div>
   );
 }
 

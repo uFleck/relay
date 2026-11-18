@@ -149,6 +149,20 @@ export interface SlackStatus {
   capturePaused: boolean;
   peers: number;
   openEpisodes: number;
+  transport: "claude" | "token";
+  claude: ClaudeSlackStatus | null;
+}
+
+export interface ClaudeSlackStatus {
+  found: boolean;
+  path: string | null;
+  running: boolean;
+  lastRunAt: string | null;
+  lastMessages: number;
+  lastCostUsd: number;
+  costTodayUsd: number;
+  lastDurationMs: number;
+  lastError: string | null;
 }
 
 export interface SlackSyncReport {
@@ -242,7 +256,12 @@ export interface JevStatus {
 }
 
 export interface GithubStatus {
+  /** A token override is stored in Credential Manager. */
   configured: boolean;
+  /** Where requests get credentials: the stored token, the gh CLI session, or nothing. */
+  source: "token" | "gh" | "none";
+  /** The GitHub login behind the gh session, when known. */
+  login: string | null;
   error: string | null;
 }
 
@@ -264,7 +283,12 @@ const browserSlackStatus: SlackStatus = {
   capturePaused: false,
   peers: 0,
   openEpisodes: 0,
+  transport: "token",
+  claude: null,
 };
+
+export const slackSetTransport = (transport: "claude" | "token") =>
+  call<SlackStatus>("slack_set_transport", { transport }, () => browserSlackStatus);
 
 export const slackStatus = () => call<SlackStatus>("slack_status", undefined, () => browserSlackStatus);
 
@@ -309,13 +333,13 @@ export const jevSetKey = (key: string) =>
 export const jevClearKey = () => call<JevStatus>("jev_clear_key", undefined, () => ({ configured: false, model: null, error: null }));
 
 export const githubStatus = () =>
-  call<GithubStatus>("github_status", undefined, () => ({ configured: false, error: null }));
+  call<GithubStatus>("github_status", undefined, () => ({ configured: false, source: "none", login: null, error: null }));
 
 export const githubSetToken = (token: string) =>
-  call<GithubStatus>("github_set_token", { token }, () => ({ configured: false, error: null }));
+  call<GithubStatus>("github_set_token", { token }, () => ({ configured: false, source: "none", login: null, error: null }));
 
 export const githubClearToken = () =>
-  call<GithubStatus>("github_clear_token", undefined, () => ({ configured: false, error: null }));
+  call<GithubStatus>("github_clear_token", undefined, () => ({ configured: false, source: "none", login: null, error: null }));
 
 export const syncPrsNow = () => call<number>("sync_prs_now", undefined, () => 0);
 

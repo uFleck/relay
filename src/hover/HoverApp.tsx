@@ -366,8 +366,10 @@ function Panel({ snap, flags, update, failed, onPin, onDnd, onDrag }: PanelProps
           </span>
         </div>
         <div className="syncs">
-          {snap.sync.length === 0 && <span className="meta">no sources yet</span>}
-          {snap.sync.map((s) => (
+          {snap.sync.every((s) => s.state === "off") && <span className="meta">no sources connected</span>}
+          {snap.sync
+            .filter((s) => s.state !== "off")
+            .map((s) => (
             <span key={s.name} title={s.reason ? `${s.name}: ${s.reason}` : `${s.name}: ok`}>
               <i className={`dot sync-${s.state}`} />
               {s.name}

@@ -138,7 +138,7 @@ export interface Proposal {
 
 export type ProposalDecision = "approve" | "reject";
 
-export type SyncState = "ok" | "retrying" | "down";
+export type SyncState = "ok" | "retrying" | "down" | "off";
 
 export interface SyncSource {
   name: string;

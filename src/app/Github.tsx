@@ -12,6 +12,7 @@ import {
   projectSetRepo,
   syncPrsNow,
   type GitState,
+  type GithubStatus,
 } from "../ipc";
 import { plural } from "../model";
 import type { Project, Task } from "../types";
@@ -21,6 +22,12 @@ import { Spinner, useLive } from "./Slack";
    sheet's Context block. Errors stay inline; nothing here opens a native dialog. */
 
 /* ── Settings → GitHub ── */
+
+function sourceLine(s: GithubStatus): string {
+  if (s.source === "token") return "Using your stored token";
+  if (s.source === "gh") return s.login ? `Using your gh session (${s.login})` : "Using your gh session";
+  return "No gh session or token (anonymous)";
+}
 
 export function GithubSettings() {
   const { data: status, error: loadError, mutate } = useLive(githubStatus, []);
@@ -83,9 +90,9 @@ export function GithubSettings() {
   return (
     <>
       <div className="setrow" role="status">
-        <i className={`dot sync-${status.error ? "down" : status.configured ? "ok" : "off"}`} />
-        <span className={status.configured && !status.error ? "ok-fg" : undefined}>
-          {status.configured ? "Connected" : "No token"}
+        <i className={`dot sync-${status.error ? "down" : status.source !== "none" ? "ok" : "off"}`} />
+        <span className={status.source !== "none" && !status.error ? "ok-fg" : undefined}>
+          {sourceLine(status)}
         </span>
         <span className="push" />
         {status.configured && (
@@ -100,7 +107,7 @@ export function GithubSettings() {
         </p>
       )}
       <form className="sform" onSubmit={(e) => void save(e)}>
-        <label htmlFor="gh-token">{status.configured ? "Replace token" : "Token"}</label>
+        <label htmlFor="gh-token">{status.configured ? "Replace token" : "Token override (optional)"}</label>
         <input
           id="gh-token"
           className="inp mono"
@@ -120,8 +127,10 @@ export function GithubSettings() {
         </div>
       </form>
       <p className="mcp-note">
-        A token is optional: public repositories work without one, but share GitHub's low anonymous rate limit. Save
-        checks the token with one real GitHub call; it stays in Windows Credential Manager and Relay never shows it again.
+        Relay uses your active gh session when there is one (run <code>gh auth login</code> once). A token here is an
+        optional override that wins over gh. Without either, requests are anonymous and share GitHub's low rate limit.
+        Save checks the token with one real GitHub call; it stays in Windows Credential Manager and Relay never shows
+        it again.
       </p>
       <div className="setrow">
         <button type="button" className="btn" disabled={syncing} onClick={() => void sync()}>

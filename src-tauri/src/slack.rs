@@ -19,12 +19,15 @@ use relay_core::model::{
 };
 use relay_core::slack::{self, InboundEvent, SlackClient, SlackIdentity, SocketFrame};
 use relay_core::store::Store;
+use relay_core::view::{SyncSource, SyncState};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::watch;
 
 use crate::hover::HoverState;
+
+mod claude;
 
 const USER_TOKEN_KEY: &str = "slack-user-token";
 const APP_TOKEN_KEY: &str = "slack-app-token";
@@ -48,6 +51,9 @@ pub struct SlackStatus {
     pub capture_paused: bool,
     pub peers: usize,
     pub open_episodes: usize,
+    /// `claude` (claude.ai Slack connector) or `token` (Slack app token).
+    pub transport: String,
+    pub claude: Option<claude::ClaudeStatus>,
 }
 
 /// What one on-demand sync did, for the Settings button and the hotkey notification.
@@ -121,6 +127,65 @@ impl SlackState {
             return Err("A Slack check is already running.".into());
         }
         Ok(SyncGuard(&self.syncing))
+    }
+
+    /// The Sources rows for Slack and JEV. Slack is optional: an agent can bring DMs
+    /// another way, so "not configured" is neutral, never an error.
+    pub fn sync_sources(&self) -> [SyncSource; 2] {
+        let status = self.status();
+        let (state, reason) = if claude::transport(&self.store) == claude::Transport::Claude {
+            let claude = claude::status(&self.store, self.syncing.load(Ordering::SeqCst));
+            if !claude.found {
+                (SyncState::Down, Some("Claude Code not found".to_string()))
+            } else if let Some(error) = claude.last_error.clone() {
+                (SyncState::Down, Some(format!("Claude proxy: {error}")))
+            } else if let Some(at) = claude.last_run_at.clone() {
+                (
+                    SyncState::Ok,
+                    Some(format!(
+                        "via Claude · last sync {} · ${:.3}",
+                        at.get(11..16).unwrap_or(&at),
+                        claude.last_cost_usd
+                    )),
+                )
+            } else {
+                (
+                    SyncState::Retrying,
+                    Some("via Claude · waiting for first sync".to_string()),
+                )
+            }
+        } else if status.connected {
+            (
+                SyncState::Ok,
+                status.user.map(|user| format!("connected as {user}")),
+            )
+        } else if let Some(error) = status.error {
+            (SyncState::Down, Some(error))
+        } else if status.configured {
+            (SyncState::Retrying, Some("connecting".to_string()))
+        } else {
+            (SyncState::Off, Some("not connected".to_string()))
+        };
+        let slack = SyncSource {
+            name: "Slack".into(),
+            short: "Slack".into(),
+            state,
+            reason,
+        };
+        let jev = if self.jev().is_some() {
+            (SyncState::Ok, Some("key stored".to_string()))
+        } else {
+            (SyncState::Off, Some("not connected".to_string()))
+        };
+        [
+            slack,
+            SyncSource {
+                name: "JEV".into(),
+                short: "JEV".into(),
+                state: jev.0,
+                reason: jev.1,
+            },
+        ]
     }
 
     pub fn status(&self) -> SlackStatus {
@@ -228,12 +293,17 @@ pub fn start(app: AppHandle, store: Arc<Store>) {
         }
     });
 
+    claude::start_schedule(app.clone());
+
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
+        let state = app.state::<SlackState>();
+        if claude::transport(&state.store) == claude::Transport::Claude {
+            return;
+        }
         let Some((user_token, app_token)) = load_tokens() else {
             return;
         };
-        let state = app.state::<SlackState>();
         let _ = state.set_error(None);
         if let Err(error) = connect(&app, &state, user_token, app_token).await {
             publish(&app, &state.set_error(Some(error)));
@@ -548,6 +618,10 @@ async fn run_sync(
 /// Runs the pull sync now. It only needs the user token, so a dead socket or a restarting
 /// supervisor does not block it; when the socket is up it does the same work continuously.
 async fn sync_manual(app: &AppHandle) -> Result<SlackSyncReport, String> {
+    let store = app.state::<SlackState>().store.clone();
+    if claude::transport(&store) == claude::Transport::Claude {
+        return claude::sync(app).await;
+    }
     if paused(app) {
         return Err("Capture is paused. Resume it, then check again.".into());
     }
@@ -623,7 +697,10 @@ fn notify(app: &AppHandle, body: &str) {
 /// The tray item and `Ctrl+Alt+S` both land here. Without a token it opens the setup page.
 pub(crate) fn sync_in_background(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
-        if read_secret(USER_TOKEN_KEY).is_none() {
+        let store = app.state::<SlackState>().store.clone();
+        if claude::transport(&store) == claude::Transport::Token
+            && read_secret(USER_TOKEN_KEY).is_none()
+        {
             crate::open_route(&app, "/settings");
             return;
         }
@@ -969,6 +1046,11 @@ pub fn slack_status(app: AppHandle, state: State<'_, SlackState>) -> SlackStatus
         .list_slack_peers()
         .map(|peers| peers.len())
         .unwrap_or(0);
+    status.transport = claude::transport(&state.store).as_str().to_string();
+    status.claude = Some(claude::status(
+        &state.store,
+        state.syncing.load(Ordering::SeqCst),
+    ));
     status.open_episodes = state
         .store
         .list_slack_episodes(None, 200)
@@ -992,6 +1074,19 @@ pub fn slack_status(app: AppHandle, state: State<'_, SlackState>) -> SlackStatus
 #[tauri::command]
 pub async fn slack_sync_now(app: AppHandle) -> Result<SlackSyncReport, String> {
     sync_manual(&app).await
+}
+
+/// Picks the Slack transport: `claude` (claude.ai connector) or `token` (app token).
+#[tauri::command]
+pub fn slack_set_transport(
+    app: AppHandle,
+    state: State<'_, SlackState>,
+    transport: String,
+) -> Result<SlackStatus, String> {
+    claude::set_transport(&state.store, &transport)?;
+    let status = slack_status(app.clone(), state);
+    publish(&app, &status);
+    Ok(status)
 }
 
 #[tauri::command]
@@ -1245,7 +1340,10 @@ mod tests {
 
     #[test]
     fn sync_summary_uses_singulars_and_counts_the_work() {
-        assert_eq!(sync_summary(&SlackSyncReport::default()), "Slack: nothing new.");
+        assert_eq!(
+            sync_summary(&SlackSyncReport::default()),
+            "Slack: nothing new."
+        );
         let one = SlackSyncReport {
             messages: 1,
             episodes: 1,
@@ -1262,6 +1360,9 @@ mod tests {
             analyzed: 0,
             ..Default::default()
         };
-        assert_eq!(sync_summary(&many), "Slack: 3 new messages in 2 conversations");
+        assert_eq!(
+            sync_summary(&many),
+            "Slack: 3 new messages in 2 conversations"
+        );
     }
 }

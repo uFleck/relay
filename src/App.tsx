@@ -104,7 +104,16 @@ export default function App() {
     // Subscribe before asking, so a status Rust sends in between is not lost.
     const offMcp = onMcpStatus(setMcp);
     void refreshMcp();
-    const offSlack = onEvent("slack://status", setSlack);
+    // The rail's dots come from the snapshot, so a connection change re-reads it.
+    let lastLink = "";
+    const offSlack = onEvent("slack://status", (s) => {
+      setSlack(s);
+      const link = `${s.configured}|${s.connected}|${s.error ?? ""}`;
+      if (link !== lastLink) {
+        if (lastLink) void refresh();
+        lastLink = link;
+      }
+    });
     void refreshSlack();
     return () => {
       window.removeEventListener("focus", onFocus);

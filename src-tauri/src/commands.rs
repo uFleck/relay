@@ -6,7 +6,11 @@ use relay_core::store::{Store, StoreError};
 use relay_core::view::Snapshot;
 use serde::Serialize;
 use std::sync::Arc;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
+
+use crate::github::{self, GithubState};
+use crate::imports;
+use crate::slack::SlackState;
 
 /// The IPC error shape the UI logs. `kind` is a stable code; `message` is for humans.
 #[derive(Debug, Serialize)]
@@ -50,8 +54,15 @@ pub fn relay_snapshot(
     store: State<'_, Arc<Store>>,
 ) -> Result<Snapshot, CommandError> {
     let version = app.package_info().version.to_string();
-    // Sync sources and update state are wired later; the caller supplies none for now.
-    Ok(store.ui_snapshot(&version, Vec::new())?)
+    // MCP has its own dot in the rail and Settings; it is not repeated here.
+    let [slack, jev] = app.state::<SlackState>().sync_sources();
+    let sync = vec![
+        slack,
+        jev,
+        github::sync_source(&app.state::<GithubState>().get()),
+        imports::sync_source(),
+    ];
+    Ok(store.ui_snapshot(&version, sync)?)
 }
 
 /// A human ack from the task sheet. The rev guard keeps the optimistic UI honest.

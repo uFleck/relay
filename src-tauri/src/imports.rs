@@ -13,7 +13,6 @@ use tauri::{AppHandle, Emitter, State};
 use crate::secrets;
 
 const CLICKUP_TOKEN: &str = "clickup-token";
-const GITHUB_TOKEN: &str = "github-token";
 
 #[derive(Debug, Clone, Copy, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -26,6 +25,22 @@ pub struct ImportCount {
 #[serde(rename_all = "camelCase")]
 pub struct ConnectorStatus {
     pub configured: bool,
+}
+
+/// The Sources row for ClickUp.
+pub fn sync_source() -> relay_core::view::SyncSource {
+    use relay_core::view::{SyncSource, SyncState};
+    let (state, reason) = if secrets::read(CLICKUP_TOKEN).is_some() {
+        (SyncState::Ok, "token stored")
+    } else {
+        (SyncState::Off, "not connected")
+    };
+    SyncSource {
+        name: "ClickUp".into(),
+        short: "ClickUp".into(),
+        state,
+        reason: Some(reason.to_string()),
+    }
 }
 
 #[tauri::command]
@@ -136,8 +151,8 @@ pub async fn github_import_issues(
     owner: String,
     repo: String,
 ) -> Result<ImportCount, String> {
-    let client =
-        GithubClient::new(secrets::read(GITHUB_TOKEN)).map_err(|error| error.to_string())?;
+    let client = GithubClient::new(crate::github::current_token().await)
+        .map_err(|error| error.to_string())?;
     let issues = client
         .list_issues(owner.trim(), repo.trim())
         .await

@@ -277,17 +277,16 @@ export function SettingsView({ snap, update, flags, onFlag, mcp, onMcpRetry, sla
         <McpSetup status={mcp} onRetry={onMcpRetry} />
 
         <h3 className="sub">Sources</h3>
-        {snap.sync.length === 0 ? (
-          <p className="empty">Slack, JEV, GitHub and ClickUp are not connected yet.</p>
-        ) : (
-          snap.sync.map((s) => (
-            <div className="setrow" key={s.name}>
-              <i className={`dot sync-${s.state}`} />
-              <span>{s.name}</span>
-              <span className="meta push">{s.reason ?? s.state}</span>
-            </div>
-          ))
+        {snap.sync.every((s) => s.state === "off") && (
+          <p className="empty">Nothing is connected yet. Set up Slack, JEV, GitHub or ClickUp above.</p>
         )}
+        {snap.sync.map((s) => (
+          <div className="setrow" key={s.name}>
+            <i className={`dot sync-${s.state}`} />
+            <span>{s.name}</span>
+            <span className="meta push">{s.reason ?? s.state}</span>
+          </div>
+        ))}
       </div>
     </section>
   );

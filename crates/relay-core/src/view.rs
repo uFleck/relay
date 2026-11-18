@@ -310,6 +310,8 @@ pub enum SyncState {
     Ok,
     Retrying,
     Down,
+    /// Not configured. Neutral, not an error.
+    Off,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
