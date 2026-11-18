@@ -233,6 +233,19 @@ export interface JevStatus {
   error: string | null;
 }
 
+export interface GithubStatus {
+  configured: boolean;
+  error: string | null;
+}
+
+/** A project checkout's read-only git context. */
+export interface GitState {
+  branch: string | null;
+  head: string | null;
+  headSubject: string | null;
+  dirty: boolean;
+}
+
 const browserSlackStatus: SlackStatus = {
   configured: false,
   connected: false,
@@ -276,6 +289,23 @@ export const jevSetKey = (key: string) =>
 
 export const jevClearKey = () => call<JevStatus>("jev_clear_key", undefined, () => ({ configured: false, model: null, error: null }));
 
+export const githubStatus = () =>
+  call<GithubStatus>("github_status", undefined, () => ({ configured: false, error: null }));
+
+export const githubSetToken = (token: string) =>
+  call<GithubStatus>("github_set_token", { token }, () => ({ configured: false, error: null }));
+
+export const githubClearToken = () =>
+  call<GithubStatus>("github_clear_token", undefined, () => ({ configured: false, error: null }));
+
+export const syncPrsNow = () => call<number>("sync_prs_now", undefined, () => 0);
+
+export const projectGitState = (projectId: string) =>
+  call<GitState | null>("project_git_state", { projectId }, () => null);
+
+export const projectSetRepo = (projectId: string, repoPath: string | null) =>
+  call<boolean>("project_set_repo", { projectId, repoPath }, () => false);
+
 interface Events {
   /** A route string for the main window. */
   "relay://open": string;
@@ -283,6 +313,7 @@ interface Events {
   "relay://state": HoverFlags;
   "mcp://status": McpStatus;
   "slack://status": SlackStatus;
+  "github://status": GithubStatus;
 }
 
 /** Subscribes to an app event. Returns an unsubscribe; a no-op in the browser. */

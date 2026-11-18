@@ -25,7 +25,6 @@ use tokio::sync::watch;
 
 use crate::hover::HoverState;
 
-const SERVICE: &str = "dev.relay.app";
 const USER_TOKEN_KEY: &str = "slack-user-token";
 const APP_TOKEN_KEY: &str = "slack-app-token";
 const JEV_KEY: &str = "jev-api-key";
@@ -707,24 +706,15 @@ fn publish(app: &AppHandle, status: &SlackStatus) {
 }
 
 fn read_secret(key: &str) -> Option<String> {
-    keyring::Entry::new(SERVICE, key)
-        .ok()?
-        .get_password()
-        .ok()
-        .filter(|value| !value.trim().is_empty())
+    crate::secrets::read(key)
 }
 
 fn write_secret(key: &str, value: &str) -> Result<(), String> {
-    keyring::Entry::new(SERVICE, key)
-        .map_err(|error| error.to_string())?
-        .set_password(value)
-        .map_err(|error| error.to_string())
+    crate::secrets::write(key, value)
 }
 
 fn delete_secret(key: &str) {
-    if let Ok(entry) = keyring::Entry::new(SERVICE, key) {
-        let _ = entry.delete_credential();
-    }
+    crate::secrets::delete(key);
 }
 
 fn load_tokens() -> Option<(String, String)> {

@@ -155,6 +155,11 @@ impl GithubClient {
         })
     }
 
+    /// A cheap authenticated call that proves a token (or the public rate limit).
+    pub async fn check(&self) -> Result<(), GithubError> {
+        self.get("/rate_limit").await.map(|_| ())
+    }
+
     async fn get(&self, path: &str) -> Result<Value, GithubError> {
         let mut request = self
             .http

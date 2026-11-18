@@ -321,6 +321,24 @@ impl Store {
         project_by_id(&conn, id)
     }
 
+    /// Sets or clears the project's checkout path. `None`/blank clears it.
+    pub fn set_project_repo(
+        &self,
+        id: &str,
+        repo_path: Option<&str>,
+    ) -> Result<Project, StoreError> {
+        let repo_path = none_if_blank(repo_path.map(str::to_string));
+        let conn = self.conn();
+        let changed = conn.execute(
+            "UPDATE projects SET repo_path = ?1, updated_at = ?2 WHERE id = ?3",
+            params![repo_path, now(), id],
+        )?;
+        if changed == 0 {
+            return Err(StoreError::NotFound(format!("project {id}")));
+        }
+        project_by_id(&conn, id)
+    }
+
     pub fn list_statuses(&self, project_id: &str) -> Result<Vec<ProjectStatus>, StoreError> {
         let conn = self.conn();
         project_by_id(&conn, project_id)?;
@@ -4608,6 +4626,21 @@ mod tests {
             deleted: false,
             historical: false,
         }
+    }
+
+    #[test]
+    fn a_project_repo_path_can_be_set_and_cleared() {
+        let (store, project, _statuses) = store_with_project();
+        let updated = store
+            .set_project_repo(&project.id, Some("C:\\Projects\\relay"))
+            .unwrap();
+        assert_eq!(updated.repo_path.as_deref(), Some("C:\\Projects\\relay"));
+        let cleared = store.set_project_repo(&project.id, None).unwrap();
+        assert!(cleared.repo_path.is_none());
+        assert!(matches!(
+            store.set_project_repo("missing", Some("x")),
+            Err(StoreError::NotFound(_))
+        ));
     }
 
     #[test]

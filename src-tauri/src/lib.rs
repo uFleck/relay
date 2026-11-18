@@ -3,8 +3,10 @@
 
 mod analyst;
 mod commands;
+mod github;
 mod hover;
 mod mcp;
+mod secrets;
 mod slack;
 
 use hover::HoverState;
@@ -262,6 +264,12 @@ pub fn run() {
             slack::jev_set_key,
             slack::jev_clear_key,
             slack::slack_simulate_message,
+            github::github_status,
+            github::github_set_token,
+            github::github_clear_token,
+            github::sync_prs_now,
+            github::project_git_state,
+            github::project_set_repo,
             hover::hover_place,
             hover::hover_drag,
             hover::hover_pointer,
@@ -307,7 +315,8 @@ pub fn run() {
             let store = Arc::new(store);
             app.manage(store.clone());
             mcp::start(app.handle().clone(), store.clone(), &dir);
-            slack::start(app.handle().clone(), store);
+            slack::start(app.handle().clone(), store.clone());
+            github::start(app.handle().clone());
 
             build_tray(app.handle())?;
             register_hotkey(app.handle());
