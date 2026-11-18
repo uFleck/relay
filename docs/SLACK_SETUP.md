@@ -64,6 +64,19 @@ JEV in **shadow** mode (answers stored, no task changes).
 The status row shows the workspace, the user, the last event and the number of open episodes. **Pause
 capture** stops writes immediately; **Disconnect** deletes the tokens.
 
+## Checking on demand
+
+The socket is optional. Press **Ctrl+Alt+S** anywhere, choose **Sync now** in Settings → Slack, or use the tray's
+**Sync Slack now**. Relay lists your 1:1 DMs, pulls everything newer than the last checkpoint, and runs JEV — the
+same work the socket does continuously. It reads only the user token, so a dead socket or app token does not block
+it, and it reports a short summary (`Slack: 3 new messages in 2 conversations · 2 analyzed`).
+
+The check does **not** bypass the app install: the user token still comes from an app installed in the workspace.
+If your workspace requires approval, the shortcut cannot read its DMs either.
+
+The first pull of a conversation is a 14-day shadow backfill (answers stored, no tasks); later pulls act normally.
+The check and the socket's catch-up never overlap, and a check while capture is paused is refused.
+
 ## Troubleshooting
 
 | Symptom | Meaning |
@@ -74,6 +87,7 @@ capture** stops writes immediately; **Disconnect** deletes the tokens.
 | `not_in_channel` / empty DM list | the user has no 1:1 DMs, or the app was installed by another user |
 | Socket connects but no events | `message.im` was not added under **events on behalf of users**, or the app was not reinstalled |
 | Workspace blocks user-token apps | only the workspace admin can allow it; the fallback is the rate-limited catch-up poller (also needs the user token) |
+| `Ctrl+Alt+S` does nothing | another app owns the key; use the tray's **Sync Slack now** or the Settings button |
 
 ## Privacy
 

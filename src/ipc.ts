@@ -151,6 +151,14 @@ export interface SlackStatus {
   openEpisodes: number;
 }
 
+export interface SlackSyncReport {
+  conversations: number;
+  messages: number;
+  episodes: number;
+  analyzed: number;
+  error: string | null;
+}
+
 export interface SlackPeer {
   id: string;
   userId: string;
@@ -259,6 +267,15 @@ const browserSlackStatus: SlackStatus = {
 };
 
 export const slackStatus = () => call<SlackStatus>("slack_status", undefined, () => browserSlackStatus);
+
+export const slackSyncNow = () =>
+  call<SlackSyncReport>("slack_sync_now", undefined, () => ({
+    conversations: 0,
+    messages: 0,
+    episodes: 0,
+    analyzed: 0,
+    error: "Slack checking runs in the desktop app.",
+  }));
 
 export const slackConnect = (args: { userToken: string; appToken: string }) =>
   call<SlackStatus>("slack_connect", args, () => browserSlackStatus);

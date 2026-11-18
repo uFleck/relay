@@ -6,6 +6,7 @@
 //! exclusion and retention; this module owns the connection and the JEV call.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -49,6 +50,22 @@ pub struct SlackStatus {
     pub open_episodes: usize,
 }
 
+/// What one on-demand sync did, for the Settings button and the hotkey notification.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SlackSyncReport {
+    /// DMs listed, not only the ones with new messages.
+    pub conversations: usize,
+    /// Messages stored or updated in this run.
+    pub messages: usize,
+    /// Conversations with at least one new message.
+    pub episodes: usize,
+    /// Episodes JEV ran on without an error.
+    pub analyzed: usize,
+    /// The first failure; the full text also goes to the status error.
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JevStatus {
@@ -70,6 +87,17 @@ pub struct SlackState {
     store: Arc<Store>,
     inner: Mutex<Inner>,
     jev: Mutex<Option<Arc<JevClient>>>,
+    /// One manual sync at a time; the hotkey and the Settings button share it.
+    syncing: AtomicBool,
+}
+
+/// Clears the sync flag on every exit path, errors included.
+struct SyncGuard<'a>(&'a AtomicBool);
+
+impl Drop for SyncGuard<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
 }
 
 impl SlackState {
@@ -84,7 +112,15 @@ impl SlackState {
                 channels: HashMap::new(),
             }),
             jev: Mutex::new(jev.map(Arc::new)),
+            syncing: AtomicBool::new(false),
         }
+    }
+
+    fn begin_sync(&self) -> Result<SyncGuard<'_>, String> {
+        if self.syncing.swap(true, Ordering::SeqCst) {
+            return Err("A Slack check is already running.".into());
+        }
+        Ok(SyncGuard(&self.syncing))
     }
 
     pub fn status(&self) -> SlackStatus {
@@ -398,29 +434,61 @@ async fn catch_up(
     if paused(&app) {
         return;
     }
+    // A reconnect must not overlap a manual check: both would call JEV for the same episode.
+    let Ok(_guard) = state.begin_sync() else {
+        return;
+    };
+    let report = run_sync(&app, &client, &stop).await;
+    let status = state.update(|status| {
+        status.team = Some(identity.team.clone());
+        status.user = Some(identity.user.clone());
+        status.last_event_at = Some(relay_core::model::now());
+        status.open_episodes = state
+            .store
+            .list_slack_episodes(Some("open"), 200)
+            .map(|episodes| episodes.len())
+            .unwrap_or(0);
+        // A channel error used to be cleared by this update right after it was published.
+        if report.error.is_none() {
+            status.error = None;
+        }
+    });
+    publish(&app, &status);
+    let _ = app.emit("relay://change", ());
+}
+
+/// Lists the 1:1 DMs, stores what is newer than each channel's checkpoint, and hands the
+/// changed episodes to JEV. Shared by the socket's catch-up and the on-demand sync.
+async fn run_sync(
+    app: &AppHandle,
+    client: &SlackClient,
+    stop: &watch::Receiver<bool>,
+) -> SlackSyncReport {
+    let state = app.state::<SlackState>();
+    let mut report = SlackSyncReport::default();
     let dms = match client.list_dms().await {
         Ok(dms) => dms,
         Err(error) => {
-            let status = state.set_error(Some(format!("conversations.list failed: {error}")));
-            publish(&app, &status);
-            return;
+            let message = format!("conversations.list failed: {error}");
+            let status = state.set_error(Some(message.clone()));
+            publish(app, &status);
+            report.error = Some(message);
+            return report;
         }
     };
+    report.conversations = dms.len();
 
     let mut changed: Vec<(String, bool)> = Vec::new();
     for dm in dms {
-        if *stop.borrow() || paused(&app) {
-            return;
+        if *stop.borrow() || paused(app) {
+            break;
         }
         state.remember_channel(&dm.id, &dm.user_id);
         let cursor = state.store.slack_channel_cursor(&dm.id).unwrap_or(None);
         let historical = cursor.is_none();
-        let oldest = cursor
-            .clone()
-            .unwrap_or_else(|| slack_ts_days_ago(BACKFILL_DAYS));
         // A long offline gap can exceed one page; walk `oldest` forward until a short page.
         let mut messages = Vec::new();
-        let mut oldest = oldest;
+        let mut oldest = cursor.unwrap_or_else(|| slack_ts_days_ago(BACKFILL_DAYS));
         for _ in 0..10 {
             match client.history(&dm.id, Some(&oldest), 200).await {
                 Ok(batch) => {
@@ -436,9 +504,10 @@ async fn catch_up(
                     }
                 }
                 Err(error) => {
-                    let status =
-                        state.set_error(Some(format!("conversations.history failed: {error}")));
-                    publish(&app, &status);
+                    let message = format!("conversations.history failed: {error}");
+                    let status = state.set_error(Some(message.clone()));
+                    publish(app, &status);
+                    report.error.get_or_insert(message);
                     break;
                 }
             }
@@ -446,41 +515,123 @@ async fn catch_up(
         if messages.is_empty() {
             continue;
         }
-        let _name = resolve_name(&state, &client, &dm.user_id).await;
+        let _name = resolve_name(&state, client, &dm.user_id).await;
         for mut message in messages {
             message.historical = historical;
-            if let Some(episode_id) = capture(&state, &client, &message).await
-                && !changed.iter().any(|(id, _)| id == &episode_id)
-            {
-                changed.push((episode_id, historical));
+            if let Some(episode_id) = capture(&state, client, &message).await {
+                report.messages += 1;
+                if !changed.iter().any(|(id, _)| id == &episode_id) {
+                    changed.push((episode_id, historical));
+                }
             }
         }
     }
 
-    for (episode_id, historical) in changed.into_iter().take(CATCHUP_ANALYSES) {
+    let episodes: Vec<_> = changed.into_iter().take(CATCHUP_ANALYSES).collect();
+    report.episodes = episodes.len();
+    for (episode_id, historical) in episodes {
         if *stop.borrow() {
-            return;
+            break;
         }
-        let state = app.state::<SlackState>();
-        if let Err(error) = analyze(&app, &state, &episode_id, historical).await {
-            let status = state.set_error(Some(error));
-            publish(&app, &status);
+        match analyze(app, &state, &episode_id, historical).await {
+            Ok(_) => report.analyzed += 1,
+            Err(error) => {
+                let status = state.set_error(Some(error.clone()));
+                publish(app, &status);
+                report.error.get_or_insert(error);
+            }
         }
     }
+    report
+}
 
+/// Runs the pull sync now. It only needs the user token, so a dead socket or a restarting
+/// supervisor does not block it; when the socket is up it does the same work continuously.
+async fn sync_manual(app: &AppHandle) -> Result<SlackSyncReport, String> {
+    if paused(app) {
+        return Err("Capture is paused. Resume it, then check again.".into());
+    }
+    let user_token = read_secret(USER_TOKEN_KEY)
+        .ok_or("Slack is not configured. Paste your user token in Settings → Slack.")?;
+    let state = app.state::<SlackState>();
+    // The guard lives until this function returns, so a second press cannot overlap.
+    let _guard = state.begin_sync()?;
+    let client = SlackClient::new(user_token, None).map_err(|error| error.to_string())?;
+    let identity = client
+        .auth_test()
+        .await
+        .map_err(|error| format!("Slack rejected the token: {error}"))?;
+    // A manual run has no supervisor telling it to stop.
+    let (_never, stop) = watch::channel(false);
+    let report = run_sync(app, &client, &stop).await;
     let status = state.update(|status| {
+        status.configured = true;
         status.team = Some(identity.team.clone());
         status.user = Some(identity.user.clone());
-        status.error = None;
         status.last_event_at = Some(relay_core::model::now());
         status.open_episodes = state
             .store
             .list_slack_episodes(Some("open"), 200)
             .map(|episodes| episodes.len())
             .unwrap_or(0);
+        if report.error.is_none() {
+            status.error = None;
+        }
     });
-    publish(&app, &status);
+    publish(app, &status);
     let _ = app.emit("relay://change", ());
+    Ok(report)
+}
+
+fn sync_summary(report: &SlackSyncReport) -> String {
+    if report.messages == 0 {
+        return "Slack: nothing new.".to_string();
+    }
+    let message_word = if report.messages == 1 {
+        "message"
+    } else {
+        "messages"
+    };
+    let conversation_word = if report.episodes == 1 {
+        "conversation"
+    } else {
+        "conversations"
+    };
+    let mut text = format!(
+        "Slack: {} new {} in {} {}",
+        report.messages, message_word, report.episodes, conversation_word
+    );
+    if report.analyzed > 0 {
+        text.push_str(&format!(" · {} analyzed", report.analyzed));
+    }
+    if report.error.is_some() {
+        text.push_str(" · some checks failed");
+    }
+    text
+}
+
+fn notify(app: &AppHandle, body: &str) {
+    use tauri_plugin_notification::NotificationExt;
+    let _ = app
+        .notification()
+        .builder()
+        .title("Relay")
+        .body(body)
+        .show();
+}
+
+/// The tray item and `Ctrl+Alt+S` both land here. Without a token it opens the setup page.
+pub(crate) fn sync_in_background(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        if read_secret(USER_TOKEN_KEY).is_none() {
+            crate::open_route(&app, "/settings");
+            return;
+        }
+        match sync_manual(&app).await {
+            Ok(report) => notify(&app, &sync_summary(&report)),
+            Err(error) => notify(&app, &format!("Slack check failed: {error}")),
+        }
+    });
 }
 
 async fn capture(
@@ -836,6 +987,13 @@ pub fn slack_status(app: AppHandle, state: State<'_, SlackState>) -> SlackStatus
     status
 }
 
+/// On-demand check: list the DMs, pull what is new, and run JEV. The same code powers
+/// the socket's catch-up, the tray item and `Ctrl+Alt+S`.
+#[tauri::command]
+pub async fn slack_sync_now(app: AppHandle) -> Result<SlackSyncReport, String> {
+    sync_manual(&app).await
+}
+
 #[tauri::command]
 pub async fn slack_connect(
     app: AppHandle,
@@ -1079,4 +1237,31 @@ pub fn job_retry(
         .map_err(|error| error.to_string())?;
     crate::analyst::spawn_job(app, id);
     Ok(job)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sync_summary_uses_singulars_and_counts_the_work() {
+        assert_eq!(sync_summary(&SlackSyncReport::default()), "Slack: nothing new.");
+        let one = SlackSyncReport {
+            messages: 1,
+            episodes: 1,
+            analyzed: 1,
+            ..Default::default()
+        };
+        assert_eq!(
+            sync_summary(&one),
+            "Slack: 1 new message in 1 conversation · 1 analyzed"
+        );
+        let many = SlackSyncReport {
+            messages: 3,
+            episodes: 2,
+            analyzed: 0,
+            ..Default::default()
+        };
+        assert_eq!(sync_summary(&many), "Slack: 3 new messages in 2 conversations");
+    }
 }

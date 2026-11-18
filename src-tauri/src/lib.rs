@@ -29,6 +29,8 @@ const MAIN: &str = "main";
 const TRAY: &str = "main";
 /// Summons the main window from anywhere. A taken hotkey must never stop Relay starting: the tray still works.
 const HOTKEY: &str = "ctrl+alt+r";
+/// Checks the Slack DMs now, without waiting for the socket. The tray has the same action.
+const SYNC_HOTKEY: &str = "ctrl+alt+s";
 
 /// Sent to the main window with a route (`/review`, `/settings`, `/today?task=<id>&focus=changes`) to navigate to.
 const OPEN_EVENT: &str = "relay://open";
@@ -125,6 +127,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let toggle = MenuItem::with_id(app, "toggle", "Show / Hide", true, None::<&str>)?;
     let paused = CheckMenuItem::with_id(app, "pause", "Pause capture", true, false, None::<&str>)?;
     let dnd = CheckMenuItem::with_id(app, "dnd", "Do not disturb", true, false, None::<&str>)?;
+    let sync = MenuItem::with_id(app, "sync", "Sync Slack now", true, None::<&str>)?;
     let review = MenuItem::with_id(app, "review", "Review queue", true, None::<&str>)?;
     let settings = MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
     let updates = MenuItem::with_id(app, "updates", "Check for updates", true, None::<&str>)?;
@@ -137,6 +140,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             &paused,
             &dnd,
             &PredefinedMenuItem::separator(app)?,
+            &sync,
             &review,
             &settings,
             &updates,
@@ -161,6 +165,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                 let dnd = app.state::<HoverState>().snapshot().dnd;
                 set_dnd_flag(app, !dnd);
             }
+            "sync" => slack::sync_in_background(app.clone()),
             "review" => open_route(app, "/review"),
             "settings" => open_route(app, "/settings"),
             "updates" => {
@@ -188,20 +193,32 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-/// Registers the summon hotkey. When another app holds it, Relay still starts and the tray tooltip says so.
-fn register_hotkey(app: &AppHandle) {
-    let registered = app
+/// Registers the summon and Slack-check hotkeys. A taken key never stops Relay starting: the
+/// tray still works, and the tooltip names the summon key when that one failed.
+fn register_hotkeys(app: &AppHandle) {
+    let summon = app
         .global_shortcut()
         .on_shortcut(HOTKEY, |app, _shortcut, event| {
             if event.state == ShortcutState::Pressed {
                 toggle_main(app);
             }
         });
-    if let Err(err) = registered {
+    if let Err(err) = summon {
         eprintln!("relay: could not register {HOTKEY}: {err}");
         if let Some(tray) = app.tray_by_id(TRAY) {
             let _ = tray.set_tooltip(Some("Relay (Ctrl+Alt+R is taken; use the tray)"));
         }
+    }
+
+    if let Err(err) = app
+        .global_shortcut()
+        .on_shortcut(SYNC_HOTKEY, |app, _shortcut, event| {
+            if event.state == ShortcutState::Pressed {
+                slack::sync_in_background(app.clone());
+            }
+        })
+    {
+        eprintln!("relay: could not register {SYNC_HOTKEY}: {err}");
     }
 }
 
@@ -253,6 +270,7 @@ pub fn run() {
             mcp::mcp_status,
             mcp::mcp_token,
             slack::slack_status,
+            slack::slack_sync_now,
             slack::slack_connect,
             slack::slack_disconnect,
             slack::slack_peers,
@@ -327,7 +345,7 @@ pub fn run() {
             github::start(app.handle().clone());
 
             build_tray(app.handle())?;
-            register_hotkey(app.handle());
+            register_hotkeys(app.handle());
             enable_autostart_once(app.handle());
 
             // A hover that fails to build must not stop Relay; the main window and tray still work.

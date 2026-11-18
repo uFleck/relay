@@ -17,11 +17,13 @@ import {
   slackDisconnect,
   slackPeers,
   slackSetPeerExcluded,
+  slackSyncNow,
   type AnalysisJob,
   type EpisodeDetail,
   type SlackEpisode,
   type SlackMessage,
   type SlackStatus,
+  type SlackSyncReport,
 } from "../ipc";
 import { elapsed, plural, useNow } from "../model";
 import type { SyncState } from "../types";
@@ -129,6 +131,12 @@ function slackLine(s: SlackStatus) {
   return s.configured ? "Connecting…" : "Not connected";
 }
 
+function syncSummary(report: SlackSyncReport): string {
+  if (report.messages === 0) return "Nothing new.";
+  const analyzed = report.analyzed > 0 ? ` · ${plural(report.analyzed, "episode")} analyzed` : "";
+  return `${plural(report.conversations, "conversation")} checked · ${plural(report.messages, "new message")}${analyzed}`;
+}
+
 function ErrorText({ error }: { error: string }) {
   const hint = slackHint(error);
   return (
@@ -151,6 +159,8 @@ export function SlackSettings({ status, onStatus }: SlackSettingsProps) {
   const [userToken, setUserToken] = useState("");
   const [appToken, setAppToken] = useState("");
   const [busy, setBusy] = useState<"connect" | "disconnect" | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncReport, setSyncReport] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   async function connect(e: FormEvent) {
@@ -191,6 +201,21 @@ export function SlackSettings({ status, onStatus }: SlackSettingsProps) {
     }
   }
 
+  async function syncNow() {
+    setSyncing(true);
+    setSyncReport(null);
+    setError(null);
+    try {
+      const report = await slackSyncNow();
+      setSyncReport(syncSummary(report));
+      if (report.error) setError(report.error);
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setSyncing(false);
+    }
+  }
+
   if (!status) return <p className="empty">Reading Slack status…</p>;
   const shown = error ?? status.error;
   return (
@@ -200,9 +225,20 @@ export function SlackSettings({ status, onStatus }: SlackSettingsProps) {
         <span>{slackLine(status)}</span>
         <span className="push" />
         {status.configured && (
-          <button type="button" className="btn bad" disabled={busy !== null} onClick={() => void disconnect()}>
-            {busy === "disconnect" ? "Disconnecting…" : "Disconnect"}
-          </button>
+          <>
+            <button type="button" className="btn" disabled={busy !== null || syncing} onClick={() => void syncNow()}>
+              {syncing && <Spinner />}
+              {syncing ? "Checking…" : "Sync now"}
+            </button>
+            <button
+              type="button"
+              className="btn bad"
+              disabled={busy !== null || syncing}
+              onClick={() => void disconnect()}
+            >
+              {busy === "disconnect" ? "Disconnecting…" : "Disconnect"}
+            </button>
+          </>
         )}
       </div>
       {status.configured && (
@@ -210,6 +246,12 @@ export function SlackSettings({ status, onStatus }: SlackSettingsProps) {
           {plural(status.peers, "peer")} · {plural(status.openEpisodes, "open episode")}
           {status.lastEventAt && ` · last event ${ago(status.lastEventAt, now)}`}
           {status.capturePaused && " · capture paused"}
+        </p>
+      )}
+      {status.configured && <p className="mcp-note">Ctrl+Alt+S checks for new DMs from anywhere.</p>}
+      {syncReport && (
+        <p className="mcp-note" role="status">
+          {syncReport}
         </p>
       )}
       {shown && <ErrorText error={shown} />}
