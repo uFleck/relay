@@ -1477,6 +1477,32 @@ impl Store {
         Ok(links)
     }
 
+    /// Every link of one kind whose task lives in `project_id`, archived tasks included, with
+    /// the task's archived flag. Reconciling an external source needs the archived ones to
+    /// tell "reassigned to me" from "never seen".
+    pub fn list_links_in_project(
+        &self,
+        kind: &str,
+        project_id: &str,
+    ) -> Result<Vec<(TaskLink, bool)>, StoreError> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {LINK_COLUMNS},
+                    (SELECT archived FROM tasks WHERE tasks.id = task_links.task_id) AS archived
+             FROM task_links
+             WHERE kind = ?1
+               AND task_id IN (SELECT id FROM tasks WHERE project_id = ?2)"
+        ))?;
+        let rows = stmt.query_map(params![kind, project_id], |row| {
+            Ok((link_from_row(row)?, row.get::<_, bool>("archived")?))
+        })?;
+        let mut links = Vec::new();
+        for row in rows {
+            links.push(row?);
+        }
+        Ok(links)
+    }
+
     /// Updates the polled fields of a link. `state`, `title` and metadata are kept when `None`.
     pub fn set_link_sync(
         &self,

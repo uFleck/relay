@@ -6,6 +6,7 @@
 pub mod analysis;
 pub mod claude_slack;
 pub mod clickup;
+pub mod clickup_sync;
 pub mod git;
 pub mod github;
 pub mod jev;
