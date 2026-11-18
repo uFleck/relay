@@ -306,6 +306,32 @@ export const projectGitState = (projectId: string) =>
 export const projectSetRepo = (projectId: string, repoPath: string | null) =>
   call<boolean>("project_set_repo", { projectId, repoPath }, () => false);
 
+/** ClickUp and GitHub Issues import (one-shot, link-only). */
+export interface ConnectorStatus {
+  configured: boolean;
+}
+
+export interface ImportCount {
+  imported: number;
+  skipped: number;
+}
+
+const emptyImport: ImportCount = { imported: 0, skipped: 0 };
+
+export const clickupStatus = () => call<ConnectorStatus>("clickup_status", undefined, () => ({ configured: false }));
+
+export const clickupSetToken = (token: string) =>
+  call<ConnectorStatus>("clickup_set_token", { token }, () => ({ configured: false }));
+
+export const clickupClearToken = () =>
+  call<ConnectorStatus>("clickup_clear_token", undefined, () => ({ configured: false }));
+
+export const clickupImport = (args: { projectId: string; listId: string; includeClosed?: boolean }) =>
+  call<ImportCount>("clickup_import", args, () => emptyImport);
+
+export const githubImportIssues = (args: { projectId: string; owner: string; repo: string }) =>
+  call<ImportCount>("github_import_issues", args, () => emptyImport);
+
 interface Events {
   /** A route string for the main window. */
   "relay://open": string;
