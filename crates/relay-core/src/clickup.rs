@@ -84,14 +84,22 @@ impl ClickUpClient {
         list_id: &str,
         include_closed: bool,
     ) -> Result<Vec<ClickUpTask>, ClickUpError> {
-        let path =
-            format!("/list/{list_id}/task?include_closed={include_closed}&subtasks=false&page=0");
-        let value = self.get(&path).await?;
-        let tasks = value
-            .get("tasks")
-            .and_then(Value::as_array)
-            .ok_or(ClickUpError::Missing("tasks"))?;
-        Ok(tasks.iter().filter_map(task_from).collect())
+        let mut out = Vec::new();
+        for page in 0..10 {
+            let path = format!(
+                "/list/{list_id}/task?include_closed={include_closed}&subtasks=false&page={page}"
+            );
+            let value = self.get(&path).await?;
+            let tasks = value
+                .get("tasks")
+                .and_then(Value::as_array)
+                .ok_or(ClickUpError::Missing("tasks"))?;
+            out.extend(tasks.iter().filter_map(task_from));
+            if tasks.len() < 100 {
+                break;
+            }
+        }
+        Ok(out)
     }
 
     async fn get(&self, path: &str) -> Result<Value, ClickUpError> {

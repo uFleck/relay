@@ -172,46 +172,26 @@ impl GithubClient {
         self.get("/rate_limit").await.map(|_| ())
     }
 
-    /// Open issues for a repository, first page (100), pull requests excluded.
+    /// Open issues for a repository, up to 10 pages of 100, pull requests excluded.
     pub async fn list_issues(
         &self,
         owner: &str,
         repo: &str,
     ) -> Result<Vec<GithubIssue>, GithubError> {
-        let value = self
-            .get(&format!(
-                "/repos/{owner}/{repo}/issues?state=open&per_page=100"
-            ))
-            .await?;
-        let items = value.as_array().ok_or(GithubError::Missing("issues"))?;
-        Ok(items
-            .iter()
-            .filter(|item| item.get("pull_request").is_none())
-            .filter_map(|item| {
-                Some(GithubIssue {
-                    number: item.get("number")?.as_u64()?,
-                    title: item.get("title")?.as_str()?.to_string(),
-                    body: item
-                        .get("body")
-                        .and_then(Value::as_str)
-                        .filter(|text| !text.is_empty())
-                        .map(str::to_string),
-                    state: item.get("state")?.as_str()?.to_string(),
-                    url: item.get("html_url")?.as_str()?.to_string(),
-                    labels: item
-                        .get("labels")
-                        .and_then(Value::as_array)
-                        .map(|labels| {
-                            labels
-                                .iter()
-                                .filter_map(|label| label.get("name").and_then(Value::as_str))
-                                .map(str::to_string)
-                                .collect()
-                        })
-                        .unwrap_or_default(),
-                })
-            })
-            .collect())
+        let mut out = Vec::new();
+        for page in 1..=10 {
+            let value = self
+                .get(&format!(
+                    "/repos/{owner}/{repo}/issues?state=open&per_page=100&page={page}"
+                ))
+                .await?;
+            let items = value.as_array().ok_or(GithubError::Missing("issues"))?;
+            out.extend(items.iter().filter_map(issue_from));
+            if items.len() < 100 {
+                break;
+            }
+        }
+        Ok(out)
     }
 
     async fn get(&self, path: &str) -> Result<Value, GithubError> {
@@ -237,6 +217,34 @@ impl GithubClient {
         }
         Ok(response.json().await?)
     }
+}
+
+fn issue_from(item: &Value) -> Option<GithubIssue> {
+    if item.get("pull_request").is_some() {
+        return None;
+    }
+    Some(GithubIssue {
+        number: item.get("number")?.as_u64()?,
+        title: item.get("title")?.as_str()?.to_string(),
+        body: item
+            .get("body")
+            .and_then(Value::as_str)
+            .filter(|text| !text.is_empty())
+            .map(str::to_string),
+        state: item.get("state")?.as_str()?.to_string(),
+        url: item.get("html_url")?.as_str()?.to_string(),
+        labels: item
+            .get("labels")
+            .and_then(Value::as_array)
+            .map(|labels| {
+                labels
+                    .iter()
+                    .filter_map(|label| label.get("name").and_then(Value::as_str))
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default(),
+    })
 }
 
 fn checks_from(value: &Value) -> Checks {
