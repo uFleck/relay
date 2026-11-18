@@ -25,6 +25,7 @@
 | v0.1.1 | **140.9 s** | **145.4 s (2:25)** | 4.56 MiB + `.sig` |
 | v0.2.0 | **176.1 s** | **180.0 s (3:00)** | 4.86 MiB + `.sig` |
 | v0.3.0 | **154.0 s** | **158.1 s (2:38)** | 4.97 MiB + `.sig` |
+| v0.3.1 | **138.9 s** | **143.1 s (2:23)** | 4.97 MiB + `.sig` |
 
 Both are under the 5:00 target with well over a minute of slack.
 
@@ -63,6 +64,12 @@ replaces the binary.
    `plugin:app|version = 0.3.0`.
 4. The DB is clean (0 tasks, 0 episodes) and `mcp_status` no longer contains any token
    field while the MCP server is green.
+
+## Fourth update: 0.3.0 → 0.3.1
+
+The installed 0.3.0 checked, offered **0.3.1**, downloaded and verified the signature, restarted,
+and reports **0.3.1**. This one carries catch-up pagination, rescreen-at-close and deletion
+handling (a patch on top of 0.3.0).
 
 ## Notes and risks
 
