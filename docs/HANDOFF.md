@@ -28,6 +28,12 @@ validated from 0.1.0 → 0.1.1 → 0.2.0 → 0.3.0 → 0.3.1 → 0.3.2.
   pushed back. Tokens in Credential Manager; ClickUp uses the raw token header.
 - **Release**: public repo, `Production` secrets, `scripts/release.ps1`. Measured 128 s / 145 s / 180 s total
   for 0.1.0 / 0.1.1 / 0.2.0. The updater was validated twice on a real install.
+- **GitHub auth and Sources (0.4.0)**: stored token, then `gh auth token`, then anonymous; Settings shows the gh login.
+  The Sources list (Settings, rail, hover) is built from real Slack/JEV/GitHub/ClickUp status.
+- **Claude Slack transport (0.4.0)**: headless `claude -p --model haiku` reads DMs through the claude.ai Slack connector
+  every 10 minutes (first run 20 s after start), on Ctrl+Alt+S, tray and Sync now; transport picker in Settings → Slack.
+  The connector sometimes reports `pending` on a headless start (no retry yet). Running the debug exe uses the real
+  `relay.db` and fires this schedule 20 s after launch.
 - **UI**: main window (Today, Inbox/transcripts, Projects, Agents, Review, Settings), hover entry, Slack/JEV
   UI, GitHub/git context, import panels, MCP setup with masked tokens.
 
