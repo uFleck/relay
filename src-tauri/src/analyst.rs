@@ -203,16 +203,10 @@ fn config_json(token: &str) -> String {
                 "model": MODEL,
                 "system": crate::mcp::analyst_instructions(),
                 "permissions": [
-                    { "action": "relay-analyst_*", "resource": "*", "effect": "allow" },
-                    { "action": "relay-analyst:*", "resource": "*", "effect": "allow" },
-                    { "action": "shell", "resource": "*", "effect": "deny" },
-                    { "action": "edit", "resource": "*", "effect": "deny" },
-                    { "action": "read", "resource": "*", "effect": "deny" },
-                    { "action": "glob", "resource": "*", "effect": "deny" },
-                    { "action": "grep", "resource": "*", "effect": "deny" },
-                    { "action": "webfetch", "resource": "*", "effect": "deny" },
-                    { "action": "websearch", "resource": "*", "effect": "deny" },
-                    { "action": "subagent", "resource": "*", "effect": "deny" }
+                    // Everything is denied; only this job's MCP tools are allowed. The
+                    // action name is <server>_<tool> with unsupported characters as `_`.
+                    { "action": "*", "resource": "*", "effect": "deny" },
+                    { "action": "relay-analyst_*", "resource": "*", "effect": "allow" }
                 ]
             }
         }
