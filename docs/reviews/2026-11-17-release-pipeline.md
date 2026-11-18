@@ -23,6 +23,7 @@
 | --- | --- | --- | --- |
 | v0.1.0 | **123.8 s** | **128.4 s (2:08)** | 4.57 MiB + `.sig` |
 | v0.1.1 | **140.9 s** | **145.4 s (2:25)** | 4.56 MiB + `.sig` |
+| v0.2.0 | **176.1 s** | **180.0 s (3:00)** | 4.86 MiB + `.sig` |
 
 Both are under the 5:00 target with well over a minute of slack.
 
@@ -39,6 +40,19 @@ Both are under the 5:00 target with well over a minute of slack.
    `plugin:app|version = 0.1.1`; Settings shows `Relay 0.1.1 · up to date as far as the last check knows`.
 
 Evidence: `Settings` screenshot after the restart (Relay 0.1.1, green MCP, tokens and snippets).
+
+## Second update: 0.1.1 → 0.2.0 (Slack/JEV feature release)
+
+1. The installed 0.1.1 app reported `plugin:app|version = 0.1.1` and offered **Relay 0.2.0 is available**.
+2. Download reported `Relay 0.2.0 is downloaded and signed`; **Restart to update** replaced the binary.
+3. `%LOCALAPPDATA%\Relay\relay.exe` ProductVersion **0.2.0**, and the running app's
+   `plugin:app|version` is **0.2.0**.
+4. The database is clean after the feature test (0 tasks, 0 episodes, 0 jobs); the JEV key
+   stored in Windows Credential Manager survived the update and the restart
+   (`jev_status` = configured).
+
+This also proves the upgrade keeps the local database and credentials: the updater only
+replaces the binary.
 
 ## Notes and risks
 
