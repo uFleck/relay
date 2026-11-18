@@ -546,7 +546,8 @@ async fn analyze(
             )
             .await
             .map_err(|error| format!("JEV classify failed: {error}"))?;
-        let route = jev::route(&classify, thresholds, false);
+        let combined = analysis::merge_answers(&screen, &classify);
+        let route = jev::route(&combined, thresholds, false);
         answers["classify"] = json!(classify.answers);
         let route_name = match &route {
             Route::Ignore => "ignore",
@@ -919,7 +920,7 @@ pub async fn slack_simulate_message(
     state: State<'_, SlackState>,
     peer: String,
     text: String,
-) -> Result<Option<String>, String> {
+) -> Result<String, String> {
     #[cfg(not(debug_assertions))]
     {
         let _ = (&app, &state, &peer, &text);
@@ -927,13 +928,14 @@ pub async fn slack_simulate_message(
     }
     #[cfg(debug_assertions)]
     {
-        let now = std::time::SystemTime::now()
+        let _ = &app;
+        let millis = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|duration| duration.as_secs())
+            .map(|duration| duration.as_millis())
             .unwrap_or(0);
         let message = RawSlackMessage {
             channel_id: format!("D-{peer}"),
-            ts: format!("{now}.000100"),
+            ts: format!("{}.{:06}", millis / 1000, (millis % 1000) * 1000),
             thread_ts: None,
             user_id: Some(peer.clone()),
             text,
@@ -947,7 +949,17 @@ pub async fn slack_simulate_message(
             .capture_slack_message(&peer, Some("Test peer"), &message, 90)
             .map_err(|error| error.to_string())?
             .ok_or("the test peer is excluded")?;
-        let job = analyze(&app, &state, &stored.episode_id, false).await?;
-        Ok(job.map(|job| job.id))
+        Ok(stored.episode_id)
     }
+}
+
+/// Deletes captured DMs, episodes and jobs. Tasks created from them stay.
+#[tauri::command]
+pub fn slack_clear_capture(app: AppHandle, state: State<'_, SlackState>) -> Result<usize, String> {
+    let deleted = state
+        .store
+        .clear_slack_capture()
+        .map_err(|error| error.to_string())?;
+    let _ = app.emit("relay://change", ());
+    Ok(deleted)
 }

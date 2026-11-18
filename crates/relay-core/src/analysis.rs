@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::jev::{Question, ids};
+use crate::jev::{JevResponse, Question, Usage, ids};
 
 /// Stage B gets the episode capped at this many characters: the first message plus the
 /// newest tail, so the start and the current state both fit.
@@ -141,6 +141,23 @@ pub fn classify_questions(
     questions
 }
 
+/// Combines the two stages for [`crate::jev::route`], which expects the stage A screen
+/// answers next to the stage B classification.
+pub fn merge_answers(screen: &JevResponse, classify: &JevResponse) -> JevResponse {
+    let mut answers = classify.answers.clone();
+    for (id, answer) in &screen.answers {
+        answers.entry(id.clone()).or_insert_with(|| answer.clone());
+    }
+    JevResponse {
+        model: classify.model.clone(),
+        answers,
+        usage: Usage {
+            input_tokens: screen.usage.input_tokens + classify.usage.input_tokens,
+            output_tokens: screen.usage.output_tokens + classify.usage.output_tokens,
+        },
+    }
+}
+
 /// The episode as the model sees it: `Author: text`, oldest first, capped.
 pub fn transcript(lines: &[TranscriptLine]) -> String {
     let rendered: Vec<String> = lines
@@ -233,6 +250,52 @@ mod tests {
             }
             other => panic!("project must be a choice, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn merging_the_stages_keeps_both_answer_sets() {
+        let screen = JevResponse {
+            model: "jev-1".into(),
+            answers: [
+                (
+                    "worth_reviewing".to_string(),
+                    crate::jev::Answer::Noul(crate::jev::NoulAnswer { noul: 0.9 }),
+                ),
+                (
+                    "conversation_state".to_string(),
+                    crate::jev::Answer::Choice(crate::jev::ChoiceAnswer {
+                        choice: "waiting_on_me".into(),
+                        confidence: 1.0,
+                        probabilities: Default::default(),
+                    }),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+            usage: Usage {
+                input_tokens: 10,
+                output_tokens: 2,
+            },
+        };
+        let classify = JevResponse {
+            model: "jev-1".into(),
+            answers: [(
+                "is_new_task".to_string(),
+                crate::jev::Answer::Noul(crate::jev::NoulAnswer { noul: 0.85 }),
+            )]
+            .into_iter()
+            .collect(),
+            usage: Usage {
+                input_tokens: 20,
+                output_tokens: 3,
+            },
+        };
+        let merged = merge_answers(&screen, &classify);
+        assert!(merged.noul("worth_reviewing").is_some());
+        assert!(merged.noul("is_new_task").is_some());
+        assert!(merged.choice("conversation_state").is_some());
+        assert_eq!(merged.usage.input_tokens, 30);
+        assert_eq!(merged.usage.output_tokens, 5);
     }
 
     #[test]

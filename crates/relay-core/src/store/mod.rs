@@ -1442,6 +1442,53 @@ impl Store {
         links_for_task(&conn, task_id)
     }
 
+    /// Every link of one kind (the PR poller walks `kind = "pr"`).
+    pub fn list_links_by_kind(&self, kind: &str) -> Result<Vec<TaskLink>, StoreError> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {LINK_COLUMNS} FROM task_links WHERE kind = ?1
+             ORDER BY COALESCE(last_synced_at, '') LIMIT 500"
+        ))?;
+        let rows = stmt.query_map(params![kind], link_from_row)?;
+        let mut links = Vec::new();
+        for row in rows {
+            links.push(row?);
+        }
+        Ok(links)
+    }
+
+    /// Updates the polled fields of a link. `state`, `title` and metadata are kept when `None`.
+    pub fn set_link_sync(
+        &self,
+        id: &str,
+        state: Option<&str>,
+        title: Option<&str>,
+        metadata_json: Option<&str>,
+    ) -> Result<TaskLink, StoreError> {
+        if let Some(metadata_json) = metadata_json {
+            validate_json(metadata_json, "metadata_json")?;
+        }
+        let conn = self.conn();
+        let changed = conn.execute(
+            "UPDATE task_links SET
+                 state = COALESCE(?1, state),
+                 title = COALESCE(?2, title),
+                 metadata_json = COALESCE(?3, metadata_json),
+                 last_synced_at = ?4
+             WHERE id = ?5",
+            params![state, title, metadata_json, now(), id],
+        )?;
+        if changed == 0 {
+            return Err(StoreError::NotFound(format!("task link {id}")));
+        }
+        let link = conn.query_row(
+            &format!("SELECT {LINK_COLUMNS} FROM task_links WHERE id = ?1"),
+            params![id],
+            link_from_row,
+        )?;
+        Ok(link)
+    }
+
     /// Appends a free-form event (progress lives in `add_progress`; this is for adapters
     /// like git state or a manual note).
     pub fn add_event(&self, new: NewEvent) -> Result<TaskEvent, StoreError> {
@@ -2501,6 +2548,47 @@ impl Store {
             )
             .optional()?;
         Ok(op)
+    }
+
+    /// Adds a task the reviewer created for this job to its candidate list, so a later
+    /// `proposals_submit` for that task is in scope.
+    pub fn add_job_candidate(
+        &self,
+        job_id: &str,
+        task_id: &str,
+    ) -> Result<AnalysisJob, StoreError> {
+        let job = self.get_job(job_id)?;
+        if job.candidates.iter().any(|id| id == task_id) {
+            return Ok(job);
+        }
+        let mut candidates = job.candidates;
+        candidates.push(task_id.to_string());
+        let json = serde_json::to_string(&candidates)
+            .map_err(|error| StoreError::InvalidInput(format!("job candidates: {error}")))?;
+        let conn = self.conn();
+        let changed = conn.execute(
+            "UPDATE analysis_jobs SET candidates_json = ?1, updated_at = ?2 WHERE id = ?3",
+            params![json, now(), job_id],
+        )?;
+        if changed == 0 {
+            return Err(StoreError::NotFound(format!("analysis job {job_id}")));
+        }
+        drop(conn);
+        self.get_job(job_id)
+    }
+
+    /// Deletes every captured DM, episode and analysis job. Tasks are untouched: a task
+    /// created from a conversation is the user's work, not capture history.
+    pub fn clear_slack_capture(&self) -> Result<usize, StoreError> {
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let messages = tx.execute("DELETE FROM messages", [])?;
+        // analysis_jobs and messages cascade from conversations.
+        let conversations = tx.execute("DELETE FROM conversations", [])?;
+        let peers = tx.execute("DELETE FROM slack_peers", [])?;
+        tx.execute("DELETE FROM sync_cursors WHERE connector = 'slack'", [])?;
+        tx.commit()?;
+        Ok(messages + conversations + peers)
     }
 }
 

@@ -253,6 +253,7 @@ pub fn run() {
             slack::slack_disconnect,
             slack::slack_peers,
             slack::slack_set_peer_excluded,
+            slack::slack_clear_capture,
             slack::episodes_list,
             slack::episode_get,
             slack::episode_analyze,

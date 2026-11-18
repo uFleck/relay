@@ -586,12 +586,9 @@ pub fn route(response: &JevResponse, thresholds: Thresholds, task_claimed: bool)
         return Route::NewTask { project };
     }
 
-    review(format!(
-        "{} {affects_existing:.2} and {} {is_new_task:.2} are in the middle band; \
-         rescreen at episode close",
-        ids::AFFECTS_EXISTING,
-        ids::IS_NEW_TASK
-    ))
+    Route::Rescreen {
+        score: worth_reviewing,
+    }
 }
 
 fn review(reason: impl Into<String>) -> Route {
@@ -1078,11 +1075,10 @@ mod tests {
 
         // A new task from an open conversation waits for the close.
         let open = stage_b(0.90, 0.10, 0.20, "none", 0.90, 0.40);
-        let decision = route(&response(open), thresholds, false);
-        assert!(
-            review_reason(&decision).contains("middle band"),
-            "{decision:?}"
-        );
+        assert!(matches!(
+            route(&response(open), thresholds, false),
+            Route::Rescreen { .. }
+        ));
     }
 
     #[test]
@@ -1153,13 +1149,12 @@ mod tests {
 
     #[test]
     fn routing_thresholds_are_strict_and_configurable() {
-        // Exactly on the threshold does not trigger it.
+        // Exactly on the threshold does not trigger it; the episode rescreens at close.
         let exact = stage_b(0.90, 0.60, 0.70, "task_1", 0.80, 0.70);
-        let decision = route(&response(exact), Thresholds::default(), false);
-        assert!(
-            review_reason(&decision).contains("middle band"),
-            "{decision:?}"
-        );
+        assert!(matches!(
+            route(&response(exact), Thresholds::default(), false),
+            Route::Rescreen { .. }
+        ));
 
         // A raised needs_human ceiling lets a change through.
         let custom = Thresholds {

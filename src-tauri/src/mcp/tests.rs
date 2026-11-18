@@ -362,6 +362,25 @@ async fn analyst_jobs_are_scoped_idempotent_and_complete() {
         before_tasks + 1
     );
 
+    // The task the reviewer just created is now a candidate for a proposal.
+    let (err, v) = h
+        .tool(
+            ANALYST,
+            "proposals_submit",
+            json!({
+                "jobId": job_id,
+                "idempotencyKey": format!("{job_id}:5"),
+                "taskId": created_id,
+                "kind": "change_deadline",
+                "baseRev": 1,
+                "patch": {"dueAt": "2026-11-18T18:00:00Z"},
+                "rationale": "the DM said today",
+            }),
+        )
+        .await;
+    assert!(!err, "{v}");
+    assert_eq!(v["proposal"]["state"], "pending");
+
     // A proposal is limited to status/due/priority for analyst jobs.
     let (err, v) = h
         .tool(
@@ -394,7 +413,7 @@ async fn analyst_jobs_are_scoped_idempotent_and_complete() {
         )
         .await;
     assert!(err, "an analyst proposal may not rewrite the title");
-    assert_eq!(h.store.list_proposals(None).unwrap().len(), 1);
+    assert_eq!(h.store.list_proposals(None).unwrap().len(), 2);
 
     // Completing closes the job.
     let (err, v) = h

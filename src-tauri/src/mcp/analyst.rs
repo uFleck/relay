@@ -239,7 +239,9 @@ fn tasks_create(store: &Store, args: CreateArgs) -> ToolResult {
     new.notes = args.notes;
     new.source = Some("analyst".into());
     let task = store.create_task(new)?;
-    let result = json!({ "task": task });
+    // The task the reviewer just created is in scope for a due/priority proposal.
+    let job = store.add_job_candidate(&job.id, &task.id)?;
+    let result = json!({ "task": task, "job": job });
     store.record_job_op(&job.id, index, "tasks_create", &result.to_string())?;
     Ok(result)
 }
