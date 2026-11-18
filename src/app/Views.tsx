@@ -6,6 +6,7 @@ import type { HoverFlags, McpStatus, SlackStatus } from "../ipc";
 import { claimState, clock, elapsed, liveClaims, plural, statusOf, useNow } from "../model";
 import type { Proposal, ProposalDecision, Snapshot, Task } from "../types";
 import { checkForUpdates, downloadUpdate, installUpdate, type UpdateState } from "../updater";
+import { GithubSettings, ProjectRepo } from "./Github";
 import { McpSetup } from "./McpSetup";
 import { FromSlack, JevSettings, SlackSettings } from "./Slack";
 import { TaskGroups } from "./Today";
@@ -56,6 +57,7 @@ export function ProjectsView({ snap, selectedId, onSelect }: ProjectsProps) {
                   {plural(open, "open task")} · {by("active")} in progress · {by("blocked")} blocked · {by("done")} done
                 </span>
               </div>
+              <ProjectRepo project={p} />
               <TaskGroups
                 snapshot={{ ...snap, tasks }}
                 query=""
@@ -262,6 +264,9 @@ export function SettingsView({ snap, update, flags, onFlag, mcp, onMcpRetry, sla
 
         <h3 className="sub">JEV</h3>
         <JevSettings />
+
+        <h3 className="sub">GitHub</h3>
+        <GithubSettings />
 
         <h3 className="sub">Agents &amp; MCP</h3>
         <McpSetup status={mcp} onRetry={onMcpRetry} />

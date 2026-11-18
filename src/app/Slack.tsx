@@ -32,7 +32,7 @@ const SLACK_APPS = "https://api.slack.com/apps";
 
 /** Loads `load` now, on every `relay://change` and whenever the window regains focus. A reply that
     arrives after a newer request started is dropped. */
-function useLive<T>(load: () => Promise<T>, deps: React.DependencyList) {
+export function useLive<T>(load: () => Promise<T>, deps: React.DependencyList) {
   const [state, setState] = useState<{ data: T | undefined; error: string | null }>({ data: undefined, error: null });
   const seq = useRef(0);
   const reload = useCallback(load, deps);
@@ -62,7 +62,7 @@ function useLive<T>(load: () => Promise<T>, deps: React.DependencyList) {
   return { ...state, reload: run, mutate };
 }
 
-function Spinner() {
+export function Spinner() {
   return <span className="spin" aria-hidden="true" />;
 }
 

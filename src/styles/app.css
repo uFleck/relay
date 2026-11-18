@@ -826,14 +826,20 @@
   margin-left: auto;
   flex: none;
 }
-.lnk svg {
+.lnk svg,
+.prrow svg {
   color: var(--text-tertiary);
 }
-.lnk svg.pr-merged {
+.lnk svg.pr-merged,
+.prrow svg.pr-merged {
   color: var(--c-merged);
 }
-.lnk svg.pr-open {
+.lnk svg.pr-open,
+.prrow svg.pr-open {
   color: var(--ok);
+}
+.prrow svg.pr-closed {
+  color: var(--err);
 }
 .sh-f {
   display: flex;
@@ -1262,4 +1268,84 @@ h3.sub {
   flex: 1;
   min-width: 0;
   gap: 2px;
+}
+
+/* ── GitHub and git context ── */
+
+.ok-fg {
+  color: var(--ok);
+}
+.err-fg {
+  color: var(--err);
+}
+.ib:disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.gitl {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.gitl b {
+  font-size: 11.5px;
+  color: var(--text-primary);
+}
+.gdirty {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--warn);
+}
+
+.repo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: var(--row-h);
+  padding: 0 20px;
+  font-size: 12px;
+}
+.repo > .mono {
+  max-width: 34%;
+  font-size: 11.5px;
+}
+.repo .btn {
+  flex: none;
+}
+
+.ctx-git {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 0 4px 0 9px;
+  margin-bottom: 6px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--r);
+  font-size: 12px;
+}
+.prrow {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 7px;
+  padding: 6px 4px 7px 9px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--r);
+  font-size: 12px;
+}
+.prrow + .prrow {
+  margin-top: 6px;
+}
+.prchips {
+  grid-column: 2 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
 }

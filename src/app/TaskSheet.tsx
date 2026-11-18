@@ -3,6 +3,7 @@ import { Icon } from "../components/Icon";
 import { linkIcon, ProjectChip, Prose } from "../components/bits";
 import { claimState, clock, elapsed, isUnacked, statusColor, useNow } from "../model";
 import type { Change, Project, Status, Task } from "../types";
+import { TaskContext } from "./Github";
 
 interface Props {
   task: Task;
@@ -59,6 +60,8 @@ export function TaskSheet({ task, project, statuses, focusChanges, onClose, onAc
             <Prose text={task.description} />
           </div>
         </section>
+
+        <TaskContext key={task.projectId} task={task} onOpen={onOpen} />
 
         <section className="sec" ref={changesRef}>
           <h3>

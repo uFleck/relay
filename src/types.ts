@@ -23,6 +23,8 @@ export interface Project {
   name: string;
   /** Circuit identity token, e.g. "--i1". */
   colorVar: string;
+  /** The linked checkout. Optional: snapshots that predate the field leave it out. */
+  repoPath?: string | null;
 }
 
 export type ClaimHolder = "T3" | "OpenCode" | "Claude Code";
@@ -70,6 +72,8 @@ export interface TaskLink {
   label: string;
   state: string;
   url: string;
+  /** PR links: `{ checks, review, headSha }` once the poller has synced them. */
+  metadataJson?: string;
 }
 
 export interface Due {

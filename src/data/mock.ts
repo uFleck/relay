@@ -207,7 +207,13 @@ export const mockSnapshot: Snapshot = {
       changes: [],
       links: [
         { kind: "github", label: "Issue #31", state: "open", url: "https://github.com/uFleck/relay/issues/31" },
-        { kind: "pr", label: "PR #33", state: "merged", url: "https://github.com/uFleck/relay/pull/33" },
+        {
+          kind: "pr",
+          label: "PR #33",
+          state: "merged",
+          url: "https://github.com/uFleck/relay/pull/33",
+          metadataJson: '{"checks":"passing","review":"approved","headSha":"9c1e4f2"}',
+        },
       ],
     },
     {
