@@ -318,11 +318,11 @@ pub fn definitions() -> Vec<Value> {
         ),
         tool(
             "proposals_decide",
-            "Approve (applies at baseRev) or reject a pending proposal.",
+            "Reject a pending proposal. Agents cannot approve; a human decides in Relay.",
             schema(
                 json!({
                     "proposalId": s("Proposal id"),
-                    "decision": {"type": "string", "enum": ["approve", "reject"]},
+                    "decision": {"type": "string", "enum": ["reject"]},
                 }),
                 &["proposalId", "decision"],
             ),
@@ -708,8 +708,15 @@ pub fn call(store: &Store, name: &str, args: Value) -> Option<ToolResult> {
         "proposals_list" => parse::<ProposalListArgs>(args)
             .and_then(|a| ok(json!({ "proposals": store.list_proposals(a.state.as_deref())? }))),
         "proposals_submit" => parse(args).and_then(|a| proposals_submit(store, a)),
-        "proposals_decide" => parse::<DecideArgs>(args)
-            .and_then(|a| ok(store.decide_proposal(&a.proposal_id, a.decision, "agent")?)),
+        "proposals_decide" => parse::<DecideArgs>(args).and_then(|a| {
+            if matches!(a.decision, ProposalDecision::Approve) {
+                return Err(ToolError::new(
+                    "forbidden",
+                    "agents cannot approve proposals; a human decides in Relay",
+                ));
+            }
+            ok(store.decide_proposal(&a.proposal_id, a.decision, "agent")?)
+        }),
         "sync_status" => parse::<Empty>(args).and_then(|_| ok(json!({ "connectors": [] }))),
         "sync_now" => parse::<Empty>(args).and_then(|_| {
             Err(ToolError::new(

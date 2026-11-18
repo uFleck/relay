@@ -30,6 +30,15 @@ Uncommitted: the partial main UI (`src/app/**`, `src/components/**`, `src/data/*
 - Visual smoke test with 5 seeded tasks: status groups, T3/OpenCode claims, unacked change dot, links and the agent strip render. Demo rows were removed; the real DB has 0 tasks again.
 - After the 2026-11-17 destructive-reset incident, the recovered UI passes `pnpm typecheck`/`build` and the same seeded visual test renders the same Today view.
 
+## MCP (implemented 2026-11-17)
+
+`3eccbeb` adds the loopback MCP server on `127.0.0.1:38547`:
+
+- Agent: `http://127.0.0.1:38547/mcp`, 20 tools, bearer token in `%APPDATA%\dev.relay.app\mcp-agent.token`.
+- Analyst: `http://127.0.0.1:38547/mcp/analyst`, 8 tools (job tools stubbed), separate token.
+- `invoke("mcp_status")` returns `{ running, port, url, analystUrl, error, agentToken, analystToken }`; the UI still needs a Settings → Agents sheet with copy buttons and the Executor snippet.
+- Agents may submit or reject a proposal; **approve is UI-only**.
+
 ## Runtime commands (already implemented)
 
 `hover_ready`, `hover_place(x,y,w,h)`, `hover_drag`, `hover_pointer`, `hover_focus(focus)`, `hover_set_pinned(pinned)`, `hover_state`, `set_paused`, `set_dnd`, `check_for_updates`, `show_main_window` (no args), `open_main(route)`, plus `relay_snapshot`, `ack_change({taskId,changeId,rev})`, `decide_proposal({proposalId,decision,rev})`.

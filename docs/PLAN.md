@@ -338,7 +338,7 @@ Loopback HTTP, bearer tokens, `POST /mcp` (agent) and `POST /mcp/analyst` (revie
 | `tasks_ack_change` | acknowledge a change for this `claim_id` |
 | `tasks_complete` | move to `review`, release claim with `completed` |
 | `tasks_release` | release claim as `blocked` / `abandoned` |
-| `proposals_list` / `proposals_submit` / `proposals_decide` | human-in-the-loop field changes |
+| `proposals_list` / `proposals_submit` / `proposals_decide` | human-in-the-loop field changes; agents may submit or reject, **approve is UI-only** |
 | `jobs_next` / `jobs_get` | pending analysis jobs (for a user-run reviewer) |
 | `sync_status` / `sync_now` | connector state and on-demand import/pull |
 

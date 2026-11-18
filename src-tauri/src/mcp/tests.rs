@@ -7,7 +7,7 @@ use axum::{
     body::Body,
     http::{Request, StatusCode, header},
 };
-use relay_core::model::{NewChange, NewProject, StatusCategory};
+use relay_core::model::{NewChange, NewProject, NewProposal, StatusCategory};
 use relay_core::store::Store;
 use serde_json::{Value, json};
 use tower::ServiceExt;
@@ -542,6 +542,56 @@ async fn serves_over_a_real_socket() {
     stream.read_to_string(&mut response).await.unwrap();
     assert!(response.starts_with("HTTP/1.1 200"), "{response}");
     assert!(response.contains("\"tasks_claim\""));
+}
+
+#[tokio::test]
+async fn agents_can_reject_but_not_approve_their_proposals() {
+    let h = H::new();
+    let task_id = h.task("Proposal target").await;
+    let task = h.store.get_task(&task_id).unwrap();
+    let proposal = h
+        .store
+        .create_proposal(NewProposal {
+            job_id: None,
+            project_id: h.project_id.clone(),
+            task_id: Some(task_id.clone()),
+            kind: "change_priority".into(),
+            base_rev: Some(task.rev),
+            patch: json!({"priority": 1}),
+            rationale: Some("test".into()),
+            jev_json: None,
+            confidence: Some(0.9),
+        })
+        .unwrap();
+    let id = proposal.proposal.id;
+
+    let (err, v) = h
+        .tool(
+            AGENT,
+            "proposals_decide",
+            json!({"proposalId": id, "decision": "approve"}),
+        )
+        .await;
+    assert!(err, "an agent must not approve its own proposal");
+    assert_eq!(v["kind"], "forbidden");
+    assert!(
+        h.store
+            .list_proposals(Some("pending"))
+            .unwrap()
+            .iter()
+            .any(|p| p.proposal.id == id),
+        "the refused approve must leave the proposal pending"
+    );
+
+    let (err, v) = h
+        .tool(
+            AGENT,
+            "proposals_decide",
+            json!({"proposalId": id, "decision": "reject"}),
+        )
+        .await;
+    assert!(!err, "reject must work: {v}");
+    assert_eq!(v["proposal"]["state"], "rejected");
 }
 
 #[test]
