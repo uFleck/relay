@@ -1,5 +1,11 @@
 # Relay redesign: mockups for a decision
 
+## Decision (2026-11-18)
+
+- **Overlay: B · Capsule, revision 2.** The ring ("C" shape) tab is replaced by a flat slab flush with the edge. The expanded panel adds a note box for the notepad feature: Save goes to Notes, and Send to AI uses a prompt preset (Turn into to-dos, `/orchestrate`, `/ship`, Custom prompt). A draft holds the panel open. The hover must become activatable while the note box has focus, because it uses `WS_EX_NOACTIVATE` today.
+- **Projects: B · Workspace.**
+- **Controls: Base UI + Relay tokens.** The user saw little difference between the headless options, and Base UI won on bundle size and maintenance.
+
 Static, self-contained HTML. Open any file from disk; nothing loads from the network. Every page has a theme toggle (auto / light / dark) and follows `prefers-color-scheme` on auto. Fonts are the ones Windows already ships (Segoe UI Variable, Cascadia Mono, Bahnschrift), so the redesign bundles no web fonts.
 
 | File | Screen | Direction |

@@ -55,14 +55,43 @@ button { font: inherit; color: inherit; }
 .spec > h2 { font: 600 12px var(--ui); color: var(--ink2); margin: 0 0 8px; }
 .stage { background: var(--wall); border-radius: 10px; padding: 18px 0 18px 18px; display: flex; justify-content: flex-end; align-items: flex-start; gap: 22px; min-height: 120px; overflow: hidden; }
 
-/* tab: half capsule hugging the edge, progress ring = done / today */
-.tab { width: 46px; height: 52px; border-radius: 26px 0 0 26px; background: var(--glass); backdrop-filter: blur(24px) saturate(1.4);
-  box-shadow: var(--shadow); display: grid; place-items: center; position: relative; padding-left: 4px; }
-.tab svg { width: 38px; height: 38px; transform: rotate(-90deg); }
-.tab .n { position: absolute; left: 4px; width: 42px; text-align: center; font: 600 14px var(--disp); }
-.tab .b { position: absolute; top: -5px; left: -4px; min-width: 18px; height: 18px; border-radius: 9px; font: 700 10.5px/18px var(--ui); text-align: center; padding: 0 5px;
-  background: var(--warm-dot); color: #2a1600; box-shadow: 0 0 0 2px var(--solid); }
+/* tab: a flat slab flush with the edge (no ring). Count, then a vertical done/today fill, then sync pips. */
+.tab { width: 34px; padding: 8px 0 8px; border-radius: 10px 0 0 10px; background: var(--glass); backdrop-filter: blur(24px) saturate(1.4);
+  box-shadow: var(--shadow); display: flex; flex-direction: column; align-items: center; gap: 6px; position: relative; }
+.tab .n { font: 600 15px/1 var(--disp); }
+.tab .fill { width: 4px; height: 26px; border-radius: 2px; background: var(--tint2); position: relative; overflow: hidden; }
+.tab .fill i { position: absolute; left: 0; right: 0; bottom: 0; background: var(--acc); border-radius: 2px; }
+.tab .pips { display: flex; flex-direction: column; gap: 3px; }
+.tab .pips i { width: 4px; height: 4px; border-radius: 50%; background: var(--ok); }
+.tab .pips i.r { background: var(--stale); animation: blink 1.6s steps(2) infinite; }
+.tab .b { min-width: 22px; height: 18px; border-radius: 9px; font: 700 10.5px/18px var(--ui); text-align: center; padding: 0 5px;
+  background: var(--warm-dot); color: #2a1600; }
 .tab .b.u { background: var(--acc); color: var(--on-acc); }
+.tab .nt { width: 22px; height: 18px; border-radius: 6px; display: grid; place-items: center; color: var(--ink2); }
+.tab .nt svg { width: 13px; height: 13px; }
+
+/* note composer: feeds the notepad (Notes view) and can send straight to an agent with a prompt preset */
+.note-c { margin-top: 6px; background: var(--solid); border-radius: 10px; box-shadow: 0 0 0 1px var(--line); padding: 6px 6px 6px 10px; }
+.note-c:focus-within { box-shadow: 0 0 0 1.5px var(--acc), 0 0 0 4px var(--acc-soft); }
+.note-c textarea { width: 100%; border: 0; background: none; resize: none; font: 13px/1.4 var(--ui); color: var(--ink); outline: none; height: 20px; padding: 2px 0; display: block; }
+.note-c.open textarea { height: 58px; }
+.note-c .bar { display: none; align-items: center; gap: 6px; margin-top: 4px; flex-wrap: wrap; }
+.note-c.open .bar { display: flex; }
+.note-c .tag { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px; border-radius: 11px; background: var(--tint2); font-size: 11.5px; color: var(--ink2); border: 0; cursor: pointer; }
+.note-c .tag i { width: 7px; height: 7px; border-radius: 2px; background: var(--a1); }
+.note-c .sp { flex: 1; }
+.note-c .send { display: inline-flex; border-radius: 6px; overflow: hidden; position: relative; }
+.note-c .send .btn { border-radius: 0; }
+.note-c .send .btn + .btn { padding: 0 7px; border-left: 1px solid rgba(255,255,255,.25); }
+.note-c .row1 { display: flex; align-items: center; gap: 8px; }
+.note-c .row1 svg { width: 14px; height: 14px; color: var(--ink3); flex: none; }
+.note-c .hint { font-size: 11px; color: var(--ink3); white-space: nowrap; }
+.menu { position: absolute; right: 0; bottom: calc(100% + 6px); width: 230px; background: var(--solid); border-radius: 10px; box-shadow: var(--shadow); padding: 4px; z-index: 3; }
+.menu div { padding: 6px 8px; border-radius: 6px; cursor: pointer; font-size: 12.5px; }
+.menu div:hover { background: var(--tint2); }
+.menu div small { display: block; color: var(--ink3); font-size: 11px; }
+.menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 2px; }
+.saved { font-size: 11.5px; color: var(--ok); padding: 4px 4px 0; }
 .tab.pulse { animation: halo 2.4s var(--ease) 3; }
 @keyframes halo { 0% { box-shadow: var(--shadow), 0 0 0 0 rgba(245,158,11,.7); } 70% { box-shadow: var(--shadow), 0 0 0 12px rgba(245,158,11,0); } 100% { box-shadow: var(--shadow); } }
 
@@ -143,18 +172,20 @@ kbd { font: 11px var(--mono); background: var(--tint2); border-radius: 4px; padd
 </head>
 <body>
 <div class="top"><h1>Overlay · Direction B · Capsule</h1><span class="sub">relay 0.5.5 · design/redesign · mockup, not shipped</span><span class="sp"></span><button class="tbtn" id="theme">Theme: auto</button></div>
-<p class="lede">A native Windows 11 companion. The tab is a half capsule whose ring fills as today's tasks close. The panel is acrylic over the desktop, with agents shown as avatars whose ring is the lease. Updates arrive as a banner at the top, so the footer only holds sync and the shortcut.</p>
+<p class="lede"><b>Chosen direction, revision 2:</b> the ring tab is gone. The tab is now a flat slab flush with the edge: count, a done/today fill bar, sync pips and a note glyph. The panel gains a note box that feeds the notepad: Save keeps it in Notes, and Send to AI runs it with a prompt preset (to-dos, /orchestrate, /ship, custom). A note in progress holds the panel open, like Pin. Try it in the live dock below.</p>
+<p class="lede">A native Windows 11 companion. The panel is acrylic over the desktop, with agents shown as avatars whose ring is the lease. Updates arrive as a banner at the top, so the footer only holds sync and the shortcut.</p>
 <div class="grid" id="specs"></div>
 <section class="live">
   <div class="spec"><h2>Live · hover the tab, leave to collapse (400 ms grace)</h2></div>
   <div class="ctl"><button class="tbtn" data-a="pulse">Simulate change</button><button class="tbtn" data-a="needs">State: needs you</button><button class="tbtn" data-a="upd">Update: none</button></div>
   <div class="stage"><div class="dock" id="dock"></div></div>
 </section>
-<p class="note"><b>Keeps:</b> every count, claim (holder, elapsed, last progress, lease), next due, sync with retry blink, update state, DND, pin, drag, Ctrl+Alt+R. <b>Changes:</b> a done/today ring on the tab; agent identity by colour avatar (OC, T3, CC); update moves from footer to top banner; needs-you cards are tinted, not bordered.</p>
+<p class="note"><b>Keeps:</b> every count, claim (holder, elapsed, last progress, lease), next due, sync with retry blink, update state, DND, pin, drag, Ctrl+Alt+R. <b>Implementation note:</b> the hover never takes focus today (<code>WS_EX_NOACTIVATE</code>), so typing needs Rust to make the window activatable while the note box is focused, then drop that on blur or Esc. <b>Changes:</b> a done/today fill bar on the tab; agent identity by colour avatar (OC, T3, CC); update moves from footer to top banner; needs-you cards are tinted, not bordered.</p>
 <script>
 const I = {
   moon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M13 9.5A5.5 5.5 0 0 1 6.5 3a5.5 5.5 0 1 0 6.5 6.5Z"/></svg>',
   pin: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9.5 2 14 6.5l-2 1-2.5 2.5L9 13 3 7l3-.5L8.5 4l1-2ZM5.5 10.5 2 14"/></svg>',
+  note: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 2.5h7l3 3v8H3z"/><path d="M5.5 7h5M5.5 9.5h5M5.5 12h3"/></svg>',
   grip: '<svg viewBox="0 0 16 16" fill="currentColor"><circle cx="6" cy="4" r="1.1"/><circle cx="10" cy="4" r="1.1"/><circle cx="6" cy="8" r="1.1"/><circle cx="10" cy="8" r="1.1"/><circle cx="6" cy="12" r="1.1"/><circle cx="10" cy="12" r="1.1"/></svg>',
 };
 const D = {
@@ -168,8 +199,22 @@ const D = {
 };
 const ring = (frac, r, w, col) => { const C = 2 * Math.PI * r; return `<circle cx="${r + w}" cy="${r + w}" r="${r}" fill="none" stroke="var(--tint2)" stroke-width="${w}"/><circle cx="${r + w}" cy="${r + w}" r="${r}" fill="none" stroke="${col}" stroke-width="${w}" stroke-linecap="round" stroke-dasharray="${C * frac} ${C}"/>`; };
 function tab({ needs = D.needs, upd = false, pulse = false } = {}) {
-  return `<div class="tab${pulse ? " pulse" : ""}"><svg viewBox="0 0 38 38">${ring(D.done / D.total, 16, 3, "var(--acc)")}</svg><span class="n">${D.total}</span>
-    ${needs ? `<span class="b">${needs}</span>` : upd ? `<span class="b u">↑</span>` : ""}</div>`;
+  return `<div class="tab${pulse ? " pulse" : ""}" title="Relay: ${D.total} today, ${D.done} done">
+    ${needs ? `<span class="b">${needs}</span>` : upd ? `<span class="b u">↑</span>` : ""}<span class="n">${D.total}</span>
+    <span class="fill"><i style="height:${(D.done / D.total) * 100}%"></i></span>
+    <span class="pips">${D.sync.map(([, s]) => `<i class="${s}"></i>`).join("")}</span>
+    <span class="nt" title="Write a note">${I.note}</span></div>`;
+}
+const N = { text: "", open: false, menu: false, saved: null, notes: 2 };
+const PRESETS = [["Save as note", "Keeps it in Notes, no agent"], ["Turn into to-dos", "Split into tasks under a project"], ["/orchestrate", "One thread per item, each runs /ship"], ["/ship", "Implement, PR, merge"]];
+function composer() {
+  return `<div class="note-c${N.open || N.text ? " open" : ""}">
+    <div class="row1">${I.note}<textarea data-note placeholder="Jot a thought… (Ctrl+Enter saves)">${N.text}</textarea>${N.open || N.text ? "" : `<span class="hint">${N.notes} notes today</span>`}</div>
+    <div class="bar"><button class="tag" title="Attach to a project"><i></i>Account</button><button class="tag">+ task</button><span class="sp"></span>
+      <button class="btn" data-a="save">Save</button>
+      <span class="send"><button class="btn pri" data-a="send">Send to AI</button><button class="btn pri" data-a="menu" aria-haspopup="menu" aria-expanded="${N.menu}">▾</button>
+      ${N.menu ? `<div class="menu" role="menu">${PRESETS.map(([t, d], i) => `${i === 1 ? "<hr>" : ""}<div data-preset="${t}">${t}<small>${d}</small></div>`).join("")}<hr><div data-preset="Custom prompt…">Custom prompt…<small>Edit the prompt before it goes</small></div></div>` : ""}</span></div>
+    ${N.saved ? `<div class="saved">✓ ${N.saved}</div>` : ""}</div>`;
 }
 function claims() {
   return `<div class="sh">Agents working <span>lease 15 min</span></div>${D.claims.map((c) => `
@@ -206,6 +251,7 @@ function panel({ needs = true, upd = "none", dnd = false, pin = false } = {}) {
     ${needs ? "" : `<div class="due"><span class="tm">16:30</span><span class="t">Invoice PDF shows due date one day early (UTC−3)</span><span class="in">in 1h 20m</span></div>
       <div class="calm"><i>✓</i>Nothing needs you · last proposal handled 13:48</div>`}
     ${needs ? `<div class="ft2"><span>Next due 16:30 · Invoice PDF due date…</span></div>` : ""}
+    ${composer()}
     <div class="ft"><span class="dots">${D.sync.map(([k, s]) => `<span title="${s ? "Executor: bridge reconnecting" : k + ": ok"}"><i class="${s}"></i>${k}</span>`).join("")}</span><span class="sp"></span><kbd>Ctrl Alt R</kbd></div>
     <div class="ft2"><span></span><button class="btn">Open Relay ↗</button></div>
   </div>`;
@@ -221,10 +267,26 @@ const S = { open: false, needs: true, upd: "none", dnd: false, pin: false, pulse
 const dock = document.getElementById("dock"); let timer;
 const draw = () => dock.innerHTML = S.open ? panel(S) : tab({ needs: S.needs ? D.needs : 0, upd: S.upd === "ready", pulse: S.pulse && !S.dnd });
 dock.addEventListener("mouseenter", () => { clearTimeout(timer); if (!S.open) { S.open = true; draw(); } });
-dock.addEventListener("mouseleave", () => { if (S.pin) return; timer = setTimeout(() => { S.open = false; draw(); }, 400); });
+// A note in progress holds the panel open, like Pin.
+const drafting = () => N.text.trim() || dock.contains(document.activeElement) && document.activeElement.matches("[data-note]");
+document.addEventListener("input", (e) => { if (e.target.matches("[data-note]")) N.text = e.target.value; });
+document.addEventListener("focusin", (e) => { if (e.target.matches("[data-note]")) { N.open = true; e.target.closest(".note-c").classList.add("open"); e.target.parentElement.querySelector(".hint")?.remove(); } });
+document.addEventListener("keydown", (e) => { if (e.target.matches("[data-note]") && e.key === "Enter" && e.ctrlKey) { e.preventDefault(); finish("Saved to Notes"); redraw(e.target); } });
+function finish(msg) { if (!N.text.trim()) return; N.notes++; N.saved = msg; N.text = ""; N.menu = false; }
+function redraw(from) {
+  const inDock = !from || dock.contains(from);
+  if (inDock) { draw(); const t = dock.querySelector("[data-note]"); if (t && N.open) { t.focus(); t.setSelectionRange(t.value.length, t.value.length); } }
+  else { from.closest(".pan").outerHTML = panel(from.closest(".stage").previousElementSibling?.textContent.includes("idle") ? { needs: false } : { needs: true }); }
+}
+dock.addEventListener("mouseleave", () => { if (S.pin || drafting()) return; timer = setTimeout(() => { S.open = false; draw(); }, 400); });
 dock.addEventListener("animationend", (e) => { if (e.animationName === "halo") S.pulse = false; });
 document.addEventListener("click", (e) => {
+  const pr = e.target.closest("[data-preset]");
+  if (pr) { const p = pr.dataset.preset; finish(p === "Save as note" ? "Saved to Notes" : `Sent to agent with ${p} · opens in Notes`); N.menu = false; redraw(pr); return; }
   const el = e.target.closest("[data-a]"); if (!el) return; const a = el.dataset.a;
+  if (a === "save") { finish("Saved to Notes"); redraw(el); return; }
+  if (a === "send") { finish("Sent to agent with “Turn into to-dos” · opens in Notes"); redraw(el); return; }
+  if (a === "menu") { N.menu = !N.menu; redraw(el); return; }
   if (a === "pin") { S.pin = !S.pin; draw(); }
   if (a === "dnd") { S.dnd = !S.dnd; draw(); }
   if (a === "pulse") { S.open = false; S.pulse = false; draw(); requestAnimationFrame(() => { S.pulse = true; draw(); }); }
