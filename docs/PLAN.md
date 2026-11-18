@@ -88,7 +88,7 @@ Goal: `tag v0.x.y` → signed NSIS installer + `latest.json` on GitHub Releases 
 | Budget | CI/script prints each step; warns > 5:00, fails > 7:00 |
 | Rollback | keep the previous two installers; re-publish the previous `latest.json` to roll back |
 
-Measured on 2026-11-17: a signed `pnpm tauri build` exited 0 in **268.3s (4m28s)** and produced the NSIS installer (4.27 MiB) and `.sig`. That is the build portion only; the release script adds install, `latest.json` and the GitHub upload, so the 5:00 budget is realistic on a warm target but has little slack for a cold build.
+Measured on 2026-11-17: the first cold signed `pnpm tauri build` took **268.3s (4m28s)**; the final build with the full UI + MCP and a warm target took **176.5s (2m56s)**, producing the NSIS installer (4.57 MiB) and `.sig`. That is the build portion only; the release script adds install, `latest.json` and the GitHub upload, so the 5:00 budget is realistic on a warm target and has some slack, but a cold build can approach it.
 
 A cold GitHub-hosted Tauri release build will not hit 5 minutes. The plan does not pretend it will: the fast path is local or self-hosted with a warm target, and the CI job is there for reproducibility.
 

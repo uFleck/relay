@@ -27,8 +27,10 @@ Working tree: clean as of this note; the MCP settings sheet is being added in a 
 - `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all -- --check`: clean.
 - `pnpm typecheck`, `pnpm test` (10), `pnpm build` (index + hover.html): pass.
 - MCP end-to-end on the running app: initialize `relay`/`2025-06-18`, **20 agent tools**, `tasks_list` empty, agent token on `/mcp/analyst` 401, analyst token on `/mcp` 401, **8 analyst tools**.
+- **Full AI loop through Executor:** create → claim as T3 Code → Slack requirement → `progress` returned 1 unacked → ack → 0 → complete → **In Review** → archived. The main window showed the review task.
+- Settings → Agents & MCP live: green running state, URLs, tokens, Copy, Executor/OpenCode snippets.
 - Main UI rendered with the real snapshot; empty state is honest. Hover tab (52×64) renders and pinning makes it visible.
-- Signed release build before the latest UI/MCP changes: **268.3s (4m28s)**, NSIS 4.27 MiB + `.sig`. Rebuild after the MCP settings sheet before claiming the final number.
+- Final signed build with full UI + MCP: **176.5s (2m56s)**, NSIS **4.57 MiB** + `.sig`; the earlier cold build was 268.3s.
 
 ## MCP
 
