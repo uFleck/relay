@@ -2,7 +2,7 @@
 
 **Status:** final
 **Agent / model:** Claude Opus 5.5
-**Commit(s):** `7959d33` (controls), `55785ec` (hover), Projects commit after this entry
+**Commit(s):** `7959d33` (controls), `55785ec` (hover), `32c6bb1` (Projects), follow-up fixes after the visual pass
 **Files:** `package.json`, `pnpm-lock.yaml`, `src/ui/controls.tsx`, `src/styles/controls.css`, `src/main.tsx`,
 `src/app/Import.tsx`, `src/app/Slack.tsx`, `src/app/Views.tsx`, `src/app/Today.tsx`, `src/app/TaskSheet.tsx`,
 `src/App.tsx`, `src/styles/app.css`, `src/styles/layout-tokens.css`, `src/hover/HoverApp.tsx`, `src/hover/hover.css`,
@@ -32,12 +32,13 @@ for controls.
 
 ## Checks
 
-`pnpm typecheck`, `pnpm test` (14), `pnpm build`: pass. Main entry after the change: 61.9 KB gz; no baseline measured.
+`pnpm typecheck`, `pnpm test` (14), `pnpm build`, `cargo check` (src-tauri): pass. Main entry after the change: 61.9 KB gz; no baseline measured.
+
+Visual pass in `pnpm dev` (browser, mock data): hover tab and expanded needs-you panel, Projects with a task expanded in place, Settings select open. It found and fixed: Base UI's default `▼` doubling the select chevron, a doubled item check and a horizontal scrollbar in the select popup, and the expanded task scrolling its own row out of view.
 
 ## Not covered
 
-- Not clicked in the running app or the Tauri window; no screenshot of the real hover or Projects page.
-- `cargo check` not run for the two-constant change in `hover.rs`.
+- Not run in the Tauri window: window sizing, edge snapping and the left-edge mirror of the new tab are unchecked.
 - The note box from the mockup is not built: it needs the notepad backend (separate work item). `hover_focus` already
   exists for the keyboard part.
 - Acrylic: the hover window is transparent and sized to the element, so CSS `backdrop-filter` cannot blur the
@@ -50,7 +51,8 @@ for controls.
 - [x] No native dialogs added
 - [x] No secrets touched
 - [x] Policy stays out of adapters (UI only, plus one Rust constant)
-- [ ] Clicked through in the desktop app
+- [x] Clicked through in the browser dev build
+- [ ] Clicked through in the Tauri window
 
 ## Opus verdict
 

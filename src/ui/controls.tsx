@@ -56,7 +56,9 @@ export function Select<V extends string>({ value, options, onChange, id, disable
     <BaseSelect.Root items={options} value={value} disabled={disabled} onValueChange={(next) => next !== null && onChange(next as V)}>
       <BaseSelect.Trigger id={id} className={`ui-select${className ? ` ${className}` : ""}`}>
         <BaseSelect.Value className="ui-select-v" />
-        <BaseSelect.Icon className="ui-select-i" />
+        <BaseSelect.Icon className="ui-select-i">
+          <i />
+        </BaseSelect.Icon>
       </BaseSelect.Trigger>
       <BaseSelect.Portal>
         <BaseSelect.Positioner className="ui-pos" sideOffset={4} alignItemWithTrigger={false}>
@@ -65,7 +67,9 @@ export function Select<V extends string>({ value, options, onChange, id, disable
               {options.map((o) => (
                 <BaseSelect.Item key={o.value} value={o.value} className="ui-opt">
                   <BaseSelect.ItemText>{o.label}</BaseSelect.ItemText>
-                  <BaseSelect.ItemIndicator className="ui-opt-i" />
+                  <BaseSelect.ItemIndicator className="ui-opt-i">
+                    <i />
+                  </BaseSelect.ItemIndicator>
                 </BaseSelect.Item>
               ))}
             </BaseSelect.List>

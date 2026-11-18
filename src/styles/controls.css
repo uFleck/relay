@@ -118,6 +118,9 @@
   white-space: nowrap;
 }
 .ui-select-i {
+  display: flex;
+}
+.ui-select-i i {
   width: 6px;
   height: 6px;
   margin: -3px 2px 0 0;
@@ -131,9 +134,10 @@
   outline: none;
 }
 .ui-pop {
+  width: max-content;
   min-width: var(--anchor-width);
   max-height: var(--available-height);
-  overflow: auto;
+  overflow: hidden auto;
   padding: 4px;
   border: 1px solid var(--border-strong);
   border-radius: var(--r);
@@ -143,6 +147,7 @@
 }
 .ui-opt {
   display: flex;
+  white-space: nowrap;
   align-items: center;
   gap: 8px;
   height: 28px;
@@ -157,7 +162,11 @@
   background: var(--hover-tint);
 }
 .ui-opt-i {
+  display: flex;
   margin-left: auto;
+  padding-left: 12px;
+}
+.ui-opt-i i {
   width: 8px;
   height: 4.5px;
   border: solid var(--accent);
