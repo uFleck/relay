@@ -70,12 +70,16 @@ pub fn state(repo: &Path) -> Result<GitState, GitError> {
 }
 
 pub(crate) fn run(repo: &Path, command: &'static str, args: &[&str]) -> Result<String, GitError> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(repo)
-        .arg(command)
-        .args(args)
-        .output()?;
+    let mut git = Command::new("git");
+    git.arg("-C").arg(repo).arg(command).args(args);
+    // Relay is a GUI app on Windows, so each console child would flash its own window.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        git.creation_flags(CREATE_NO_WINDOW);
+    }
+    let output = git.output()?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         return Err(GitError::Failed { command, stderr });
