@@ -1,7 +1,7 @@
 # Relay handoff (for the next agent)
 
-State as of 2026-11-17 23:30 (-03:00). Relay 0.2.0 is installed on this machine and updates itself from
-`uFleck/relay`; 0.3.0 (git/PR + imports) is committed and waiting for its release.
+State as of 2026-11-17 23:55 (-03:00). Relay 0.3.0 is installed on this machine (0.3.1 is
+released after it); the updater is validated from 0.1.0 → 0.1.1 → 0.2.0 → 0.3.0.
 
 ## What works
 
@@ -31,24 +31,30 @@ State as of 2026-11-17 23:30 (-03:00). Relay 0.2.0 is installed on this machine 
 
 ## Verified
 
-- `cargo test -p relay-core`: **69 passed**.
+- `cargo test -p relay-core`: **70 passed**.
 - `cargo test -p relay --lib`: **22 passed**.
 - `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all -- --check`: clean.
 - `pnpm typecheck`, `pnpm vitest run` (14), `pnpm build`: pass.
-- JEV key persisted in Credential Manager across restarts; the installed 0.2.0 runs with a clean DB
+- JEV key persisted in Credential Manager across restarts; the installed app runs with a clean DB
   (0 tasks, 0 episodes, 0 jobs).
-- `v0.2.0` was offered to an installed 0.1.1, downloaded, signature-verified, installed and reported 0.2.0.
+- Live PR sync: a linked `tauri-apps/tauri#16356` updated to `open` with `checks failing`, and
+  `project_git_state` returned `master` / `7db841d` / dirty.
+- Updates: 0.1.0 → 0.1.1, 0.1.1 → 0.2.0 and 0.2.0 → 0.3.0 all downloaded, verified the
+  signature, restarted and reported the new version.
 
 ## Not verified (do these before 1.0)
 
 1. **Real Slack**. The socket has never talked to Slack. Create the app with `docs/SLACK_SETUP.md`, paste the
    `xoxp-` and `xapp-` tokens, confirm `auth.test`, the 14-day backfill, a real DM, thread replies and JEV.
    Workspace approval may be required.
-2. **Real imports and PR polling**. Only mock servers cover the parsers; no ClickUp list, GitHub issue or PR
-   was imported/polled live.
-3. **Manual Windows checks**: expanded hover, drag/snap, 150% scaling, title-bar actions, click-through.
-4. **Opus review** of the DeepSeek P2-P5 packages in `docs/reviews/` (the verdicts are being written).
-5. **Failed-job retry** and the token Reveal/Copy paths were not exercised in the desktop app.
+2. **Real ClickUp import**. Only mock servers cover the parser; no ClickUp list was imported.
+3. **Atomicity gaps** flagged by the Opus review: an analyst write and its `job_ops` row are two
+   transactions, and an imported task and its link are two writes. A crash between them can duplicate one
+   record on retry. Close these before 1.0.
+4. **Manual Windows checks**: expanded hover, drag/snap, 150% scaling, title-bar actions, click-through.
+5. **Imports** cap at 10 pages with no "truncated" warning; a bigger list imports partially.
+6. **Reviews**: Opus found 8 blocking items and all are fixed except the atomicity above; its "should
+   fix" list is in the two records.
 
 ## Commits (recent)
 
@@ -66,15 +72,21 @@ State as of 2026-11-17 23:30 (-03:00). Relay 0.2.0 is installed on this machine 
 | `d163fe1` | Job requeue + next queued job |
 | `9064ec9` | On-demand MCP tokens |
 | `163d5f6` | Import pagination (10 pages) |
+| `135a070` | Release 0.3.0 |
+| `ee8f735` / `dd53333` / `b505dad` | Opus review fixes: peers, isolation, job guards, retention |
+| `22e0359` | Catch-up pagination, rescreen at close, deletions |
+| `53d84eb` | Release 0.3.1 |
 
 Everything is on `origin/master` except work committed after the last push; push before handing off.
 
 ## Next for 1.0
 
 1. Paste Slack tokens; fix whatever the real socket/backfill reveals.
-2. Run one real ClickUp import and one real PR poll; confirm the task sheet context.
-3. Cut **0.3.0** (git/PR + imports), then **1.0.0** once the live checks pass and the Opus review is in.
+2. Run one real ClickUp import; confirm the task list and the import counters.
+3. Make the analyst write + `job_ops` atomic in the store, and the import task + link atomic; add the
+   `truncated` flag for the page cap.
 4. Manual hover/scaling checks and the first-run/onboarding copy.
+5. Cut **1.0.0** only after 1-4 pass.
 
 ## Rules
 
