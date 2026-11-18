@@ -1349,3 +1349,50 @@ h3.sub {
   flex-wrap: wrap;
   gap: 4px;
 }
+
+/* Projects → Import panel */
+.imp {
+  margin: 0 20px 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--r);
+  background: var(--bg-elevated);
+}
+.imp-note {
+  margin: 2px 0 6px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+.imp-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  font-size: 12px;
+}
+.imp-row > b {
+  width: 56px;
+  font-weight: 600;
+}
+.imp-row .inp {
+  width: 140px;
+}
+.imp-row .btn {
+  flex: none;
+}
+.imp-chk {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+}
+.imp-chk input {
+  accent-color: var(--accent);
+}
+.imp-err {
+  font: 500 11.5px var(--font-mono);
+  color: var(--err);
+  overflow-wrap: anywhere;
+  user-select: text;
+}

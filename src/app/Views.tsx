@@ -7,6 +7,7 @@ import { claimState, clock, elapsed, liveClaims, plural, statusOf, useNow } from
 import type { Proposal, ProposalDecision, Snapshot, Task } from "../types";
 import { checkForUpdates, downloadUpdate, installUpdate, type UpdateState } from "../updater";
 import { GithubSettings, ProjectRepo } from "./Github";
+import { ClickupSettings, ProjectImport } from "./Import";
 import { McpSetup } from "./McpSetup";
 import { FromSlack, JevSettings, SlackSettings } from "./Slack";
 import { TaskGroups } from "./Today";
@@ -58,6 +59,7 @@ export function ProjectsView({ snap, selectedId, onSelect }: ProjectsProps) {
                 </span>
               </div>
               <ProjectRepo project={p} />
+              <ProjectImport project={p} />
               <TaskGroups
                 snapshot={{ ...snap, tasks }}
                 query=""
@@ -267,6 +269,9 @@ export function SettingsView({ snap, update, flags, onFlag, mcp, onMcpRetry, sla
 
         <h3 className="sub">GitHub</h3>
         <GithubSettings />
+
+        <h3 className="sub">ClickUp</h3>
+        <ClickupSettings />
 
         <h3 className="sub">Agents &amp; MCP</h3>
         <McpSetup status={mcp} onRetry={onMcpRetry} />
