@@ -147,7 +147,7 @@ Should fix before 1.0:
 
 ## Follow-up fixes (2026-11-17, after the verdict)
 
-**Commits:** `7db841d`? no - `ee8f735`, `dd53333`, `b505dad` and the PR-poll fix.
+**Commits:** `ee8f735`, `dd53333`, `b505dad` and the PR-poll fix in `src-tauri/src/github.rs`.
 
 - GitHub issue links now use `<owner>/<repo>#<number>` as the external id, so two
   repositories cannot collide.
