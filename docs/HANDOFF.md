@@ -12,7 +12,9 @@ released after it); the updater is validated from 0.1.0 → 0.1.1 → 0.2.0 → 
 - **Executor**: `relay` is in `C:\Projects\executor-bridges\servers.json`, the bridge proxies 9450 → 38547.
   The full create → claim → requirement → ack → complete → review loop was verified through Docker Executor.
 - **Slack capture (P2)**: Socket Mode runtime, 14-day first backfill (shadow), 90-minute episode gap, thread
-  replies, edits/deletes, excluded peers, retention, pause. Tokens in Windows Credential Manager.
+  replies, edits/deletes, excluded peers, retention, pause. Tokens in Windows Credential Manager. **Ctrl+Alt+S**,
+  the tray's **Sync Slack now**, and **Sync now** in Settings run the same pull on demand (user token only; no
+  socket needed). The socket catch-up and a manual check never overlap.
 - **JEV (P3)**: real two-stage calls (screen + classify), routing in code, jobs with one live watermark per
   conversation, job-scoped analyst writes with `<jobId>:<opIndex>` idempotency.
 - **Headless reviewer**: one `opencode run --agent relay-analyst` at a time, isolated config, 180 s timeout,
@@ -32,21 +34,24 @@ released after it); the updater is validated from 0.1.0 → 0.1.1 → 0.2.0 → 
 ## Verified
 
 - `cargo test -p relay-core`: **70 passed**.
-- `cargo test -p relay --lib`: **22 passed**.
+- `cargo test -p relay --lib`: **23 passed**.
 - `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all -- --check`: clean.
 - `pnpm typecheck`, `pnpm vitest run` (14), `pnpm build`: pass.
 - JEV key persisted in Credential Manager across restarts; the installed app runs with a clean DB
   (0 tasks, 0 episodes, 0 jobs).
 - Live PR sync: a linked `tauri-apps/tauri#16356` updated to `open` with `checks failing`, and
   `project_git_state` returned `master` / `7db841d` / dirty.
-- Updates: 0.1.0 → 0.1.1, 0.1.1 → 0.2.0 and 0.2.0 → 0.3.0 all downloaded, verified the
+- Updates: 0.1.0 → 0.1.1, 0.1.1 → 0.2.0, 0.2.0 → 0.3.0 and 0.2.0 → 0.3.1 all downloaded, verified the
   signature, restarted and reported the new version.
+- On-demand sync: from a hidden debug app with no token, `Ctrl+Alt+S` opened Settings (`/?view=settings`), and
+  `slack_sync_now` returned `Slack is not configured. Paste your user token in Settings → Slack.`
 
 ## Not verified (do these before 1.0)
 
-1. **Real Slack**. The socket has never talked to Slack. Create the app with `docs/SLACK_SETUP.md`, paste the
-   `xoxp-` and `xapp-` tokens, confirm `auth.test`, the 14-day backfill, a real DM, thread replies and JEV.
-   Workspace approval may be required.
+1. **Real Slack**. The socket has never talked to Slack, and the on-demand pull has not run against it either.
+   Create the app with `docs/SLACK_SETUP.md`, paste the `xoxp-` and `xapp-` tokens, confirm `auth.test`, the
+   14-day backfill, a real DM, thread replies and JEV. `Ctrl+Alt+S` exercises the same loop without Socket Mode.
+   Workspace approval may be required; a free workspace you own can validate the code.
 2. **Real ClickUp import**. Only mock servers cover the parser; no ClickUp list was imported.
 3. **Atomicity gaps** flagged by the Opus review: an analyst write and its `job_ops` row are two
    transactions, and an imported task and its link are two writes. A crash between them can duplicate one
@@ -76,6 +81,7 @@ released after it); the updater is validated from 0.1.0 → 0.1.1 → 0.2.0 → 
 | `ee8f735` / `dd53333` / `b505dad` | Opus review fixes: peers, isolation, job guards, retention |
 | `22e0359` | Catch-up pagination, rescreen at close, deletions |
 | `53d84eb` | Release 0.3.1 |
+| `ed38883` | On-demand Slack sync (`Ctrl+Alt+S`, tray, Settings) |
 
 Everything is on `origin/master` except work committed after the last push; push before handing off.
 
