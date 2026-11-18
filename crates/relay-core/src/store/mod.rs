@@ -4665,6 +4665,41 @@ mod tests {
     }
 
     #[test]
+    fn links_can_be_found_for_idempotent_imports() {
+        let (store, project, _statuses) = store_with_project();
+        let task = create_task(&store, &project, "From ClickUp");
+        store
+            .add_link(NewLink {
+                task_id: task.id.clone(),
+                claim_id: None,
+                kind: "clickup".into(),
+                external_id: Some("abc".into()),
+                url: "https://app.clickup.com/t/abc".into(),
+                title: None,
+                state: Some("todo".into()),
+                metadata_json: None,
+                last_synced_at: None,
+            })
+            .unwrap();
+        let by_id = store
+            .find_link("clickup", Some("abc"), "https://example.invalid")
+            .unwrap()
+            .expect("external id matches");
+        assert_eq!(by_id.task_id, task.id);
+        let by_url = store
+            .find_link("clickup", None, "https://app.clickup.com/t/abc")
+            .unwrap()
+            .expect("url matches");
+        assert_eq!(by_url.id, by_id.id);
+        assert!(
+            store
+                .find_link("github", Some("abc"), "https://example.invalid")
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
     fn slack_capture_segments_by_gap_and_thread() {
         let store = Store::open_in_memory().unwrap();
         let first = store
