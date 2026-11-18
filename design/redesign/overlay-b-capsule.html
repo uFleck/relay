@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Overlay B · Capsule</title>
+<style>
+/* Direction B, "Capsule": Windows 11 native. Acrylic panel over the desktop, 12 px radius, agent avatars,
+   a progress ring on the tab. Calm by default; amber appears only as a soft tint on what needs you. */
+:root {
+  --ui: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --disp: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  --mono: "Cascadia Mono", Consolas, monospace;
+  --ease: cubic-bezier(.22,1,.36,1);
+  color-scheme: light;
+  --wall: linear-gradient(135deg, #b9c7e8 0%, #d9cde9 45%, #f0d9c8 100%);
+  --glass: rgba(250,250,252,.78); --solid: #fbfbfd; --tint: rgba(0,0,0,.035); --tint2: rgba(0,0,0,.06);
+  --line: rgba(0,0,0,.08); --ink: #1b1b20; --ink2: #5a5a66; --ink3: #8b8b97;
+  --acc: #5b5bd6; --acc-soft: rgba(91,91,214,.12); --on-acc: #fff;
+  --warm: #b45309; --warm-soft: rgba(245,158,11,.14); --warm-dot: #f59e0b;
+  --ok: #16a34a; --stale: #d97706; --err: #dc2626;
+  --a1: #6366f1; --a2: #0ea5e9; --a3: #e2725b;
+  --shadow: 0 16px 40px rgba(30,30,60,.22), 0 0 0 1px rgba(0,0,0,.06);
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  color-scheme: dark;
+  --wall: linear-gradient(135deg, #1d2240 0%, #2a1f3a 45%, #3a2a24 100%);
+  --glass: rgba(36,36,44,.74); --solid: #26262e; --tint: rgba(255,255,255,.05); --tint2: rgba(255,255,255,.09);
+  --line: rgba(255,255,255,.09); --ink: #f2f2f6; --ink2: #b1b1bf; --ink3: #7f7f8e;
+  --acc: #a5a6ff; --acc-soft: rgba(165,166,255,.16); --on-acc: #15153a;
+  --warm: #fbbf5a; --warm-soft: rgba(251,191,90,.13); --warm-dot: #fbbf24;
+  --ok: #4ade80; --stale: #fbbf24; --err: #f87171;
+  --shadow: 0 18px 44px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.07);
+} }
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --wall: linear-gradient(135deg, #1d2240 0%, #2a1f3a 45%, #3a2a24 100%);
+  --glass: rgba(36,36,44,.74); --solid: #26262e; --tint: rgba(255,255,255,.05); --tint2: rgba(255,255,255,.09);
+  --line: rgba(255,255,255,.09); --ink: #f2f2f6; --ink2: #b1b1bf; --ink3: #7f7f8e;
+  --acc: #a5a6ff; --acc-soft: rgba(165,166,255,.16); --on-acc: #15153a;
+  --warm: #fbbf5a; --warm-soft: rgba(251,191,90,.13); --warm-dot: #fbbf24;
+  --ok: #4ade80; --stale: #fbbf24; --err: #f87171;
+  --shadow: 0 18px 44px rgba(0,0,0,.55), 0 0 0 1px rgba(255,255,255,.07);
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: transparent; color: var(--ink); font: 13px/1.4 var(--ui); padding: 4px 0 24px; }
+button { font: inherit; color: inherit; }
+.top { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; max-width: 1180px; margin: 0 auto 4px; }
+.top h1 { font: 600 19px var(--disp); margin: 0; }
+.top .sub { color: var(--ink3); font-size: 12px; }
+.top .sp { flex: 1; }
+.tbtn { border: 0; background: var(--tint2); border-radius: 999px; padding: 5px 12px; cursor: pointer; font-size: 12px; }
+.lede { max-width: 1180px; margin: 0 auto 18px; color: var(--ink2); }
+.grid { max-width: 1180px; margin: 0 auto; display: grid; grid-template-columns: repeat(auto-fit, minmax(380px, 1fr)); gap: 18px; }
+.spec > h2 { font: 600 12px var(--ui); color: var(--ink2); margin: 0 0 8px; }
+.stage { background: var(--wall); border-radius: 10px; padding: 18px 0 18px 18px; display: flex; justify-content: flex-end; align-items: flex-start; gap: 22px; min-height: 120px; overflow: hidden; }
+
+/* tab: half capsule hugging the edge, progress ring = done / today */
+.tab { width: 46px; height: 52px; border-radius: 26px 0 0 26px; background: var(--glass); backdrop-filter: blur(24px) saturate(1.4);
+  box-shadow: var(--shadow); display: grid; place-items: center; position: relative; padding-left: 4px; }
+.tab svg { width: 38px; height: 38px; transform: rotate(-90deg); }
+.tab .n { position: absolute; left: 4px; width: 42px; text-align: center; font: 600 14px var(--disp); }
+.tab .b { position: absolute; top: -5px; left: -4px; min-width: 18px; height: 18px; border-radius: 9px; font: 700 10.5px/18px var(--ui); text-align: center; padding: 0 5px;
+  background: var(--warm-dot); color: #2a1600; box-shadow: 0 0 0 2px var(--solid); }
+.tab .b.u { background: var(--acc); color: var(--on-acc); }
+.tab.pulse { animation: halo 2.4s var(--ease) 3; }
+@keyframes halo { 0% { box-shadow: var(--shadow), 0 0 0 0 rgba(245,158,11,.7); } 70% { box-shadow: var(--shadow), 0 0 0 12px rgba(245,158,11,0); } 100% { box-shadow: var(--shadow); } }
+
+.pan { width: 380px; background: var(--glass); backdrop-filter: blur(30px) saturate(1.5); border-radius: 12px 0 0 12px; box-shadow: var(--shadow); padding: 6px 6px 8px; }
+.hh { display: flex; align-items: center; gap: 8px; padding: 4px 4px 4px 8px; cursor: grab; }
+.mark { width: 22px; height: 22px; border-radius: 7px; background: linear-gradient(135deg, var(--a1), var(--a2)); display: grid; place-items: center; color: #fff; font: 700 11px var(--disp); }
+.hh b { font: 600 14px var(--disp); }
+.hh .sp { flex: 1; }
+.rb { width: 30px; height: 30px; border-radius: 8px; border: 0; background: transparent; display: grid; place-items: center; cursor: pointer; color: var(--ink2); }
+.rb:hover { background: var(--tint2); }
+.rb[aria-pressed="true"] { background: var(--acc-soft); color: var(--acc); }
+.rb svg { width: 16px; height: 16px; }
+.hero { display: flex; align-items: center; gap: 14px; padding: 6px 10px 10px; }
+.hero .big { font: 600 34px/1 var(--disp); letter-spacing: -.02em; }
+.hero .big small { font: 400 13px var(--ui); color: var(--ink2); letter-spacing: 0; margin-left: 4px; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 2px; }
+.chip { display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px; border-radius: 11px; background: var(--tint2); font-size: 12px; color: var(--ink2); }
+.chip i { width: 7px; height: 7px; border-radius: 50%; background: var(--acc); }
+.chip.bl i { background: var(--err); }
+.chip.nd { background: var(--warm-soft); color: var(--warm); font-weight: 600; }
+.chip.nd i { background: var(--warm-dot); }
+.card0 { background: var(--solid); border-radius: 10px; padding: 4px; box-shadow: 0 0 0 1px var(--line); }
+.sh { display: flex; align-items: center; justify-content: space-between; padding: 6px 8px 2px; font: 600 12px var(--ui); color: var(--ink2); }
+.sh span { font-weight: 400; color: var(--ink3); }
+.row { display: grid; grid-template-columns: 30px 1fr auto; gap: 0 10px; align-items: center; width: 100%; padding: 6px 8px; border: 0; background: none; border-radius: 8px; text-align: left; cursor: pointer; }
+.row:hover { background: var(--tint); }
+.av { width: 30px; height: 30px; border-radius: 50%; position: relative; display: grid; place-items: center; font: 700 10.5px var(--ui); color: #fff; grid-row: span 2; }
+.av svg { position: absolute; inset: -3px; width: 36px; height: 36px; transform: rotate(-90deg); }
+.av .st { position: absolute; right: -1px; bottom: -1px; width: 9px; height: 9px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 2px var(--solid); }
+.av .st.s { background: var(--stale); }
+.row .t { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row .el { font-size: 11.5px; color: var(--ink3); }
+.row .p { grid-column: 2 / 4; font-size: 12px; color: var(--ink2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row .p .s { color: var(--stale); }
+.due { display: flex; align-items: center; gap: 10px; margin: 6px 0 0; padding: 8px 10px; border-radius: 10px; background: var(--solid); box-shadow: 0 0 0 1px var(--line); }
+.due .tm { font: 600 13px var(--disp); color: var(--acc); background: var(--acc-soft); border-radius: 6px; padding: 1px 7px; }
+.due .t { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.due .in { font-size: 12px; color: var(--ink3); }
+.calm { display: flex; align-items: center; gap: 8px; color: var(--ink3); font-size: 12px; padding: 8px 10px 2px; }
+.calm i { width: 16px; height: 16px; border-radius: 50%; background: color-mix(in srgb, var(--ok) 20%, transparent); display: grid; place-items: center; color: var(--ok); font-style: normal; font-size: 10px; }
+.need { background: var(--warm-soft); border-radius: 10px; padding: 8px 10px; margin-bottom: 6px; display: block; width: 100%; text-align: left; border: 0; cursor: pointer; }
+.need .k { display: flex; gap: 6px; align-items: center; font-size: 11.5px; color: var(--ink2); }
+.need .k b { color: var(--warm); font-weight: 600; }
+.need .t { font-weight: 600; margin: 2px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.need q { display: block; color: var(--ink2); }
+.need .f { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; font-size: 11.5px; color: var(--ink3); }
+.btn { height: 26px; border-radius: 6px; border: 0; padding: 0 12px; font: 600 12px var(--ui); cursor: pointer; background: var(--tint2); }
+.btn.pri { background: var(--acc); color: var(--on-acc); }
+.more { font-size: 12px; color: var(--acc); padding: 0 4px 2px; }
+.ban { display: flex; align-items: center; gap: 10px; margin: 2px 0 6px; padding: 8px 10px; border-radius: 10px; background: var(--acc-soft); }
+.ban .ic { width: 26px; height: 26px; border-radius: 8px; background: var(--acc); color: var(--on-acc); display: grid; place-items: center; font-weight: 700; }
+.ban .tx { flex: 1; line-height: 1.25; }
+.ban .tx span { display: block; font-size: 11.5px; color: var(--ink2); }
+.ban .tr { height: 4px; border-radius: 2px; background: var(--tint2); margin-top: 4px; overflow: hidden; }
+.ban .tr i { display: block; height: 100%; background: var(--acc); border-radius: 2px; }
+.ban.err { background: var(--warm-soft); } .ban.err .ic { background: var(--warm-dot); color: #2a1600; }
+.ft { display: flex; align-items: center; gap: 6px; padding: 8px 8px 0; font-size: 11.5px; color: var(--ink3); }
+.ft .dots { display: flex; gap: 8px; flex-wrap: wrap; }
+.ft .dots span { display: inline-flex; align-items: center; gap: 4px; }
+.ft .dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
+.ft .dots i.r { background: var(--stale); animation: blink 1.6s steps(2) infinite; }
+.ft .sp { flex: 1; }
+.ft2 { display: flex; align-items: center; justify-content: space-between; padding: 6px 8px 0; font-size: 11.5px; color: var(--ink3); }
+kbd { font: 11px var(--mono); background: var(--tint2); border-radius: 4px; padding: 1px 5px; color: var(--ink2); }
+@keyframes blink { 50% { opacity: .3; } }
+.ups { display: flex; flex-direction: column; gap: 8px; width: 380px; }
+.ups .pan { border-radius: 12px; padding: 4px 6px; }
+.ups .ban { margin: 0; }
+.live { max-width: 1180px; margin: 24px auto 0; }
+.live .ctl { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.live .stage { min-height: 470px; padding-top: 24px; }
+.dock .pan { transform-origin: right top; animation: grow 260ms var(--ease); }
+@keyframes grow { from { opacity: 0; transform: scale(.94) translateX(10px); } }
+.note { max-width: 1180px; margin: 16px auto 0; color: var(--ink2); font-size: 12px; }
+.note b { color: var(--ink); }
+@media (max-width: 440px) { .pan, .ups { width: calc(100vw - 60px); } }
+</style>
+</head>
+<body>
+<div class="top"><h1>Overlay · Direction B · Capsule</h1><span class="sub">relay 0.5.5 · design/redesign · mockup, not shipped</span><span class="sp"></span><button class="tbtn" id="theme">Theme: auto</button></div>
+<p class="lede">A native Windows 11 companion. The tab is a half capsule whose ring fills as today's tasks close. The panel is acrylic over the desktop, with agents shown as avatars whose ring is the lease. Updates arrive as a banner at the top, so the footer only holds sync and the shortcut.</p>
+<div class="grid" id="specs"></div>
+<section class="live">
+  <div class="spec"><h2>Live · hover the tab, leave to collapse (400 ms grace)</h2></div>
+  <div class="ctl"><button class="tbtn" data-a="pulse">Simulate change</button><button class="tbtn" data-a="needs">State: needs you</button><button class="tbtn" data-a="upd">Update: none</button></div>
+  <div class="stage"><div class="dock" id="dock"></div></div>
+</section>
+<p class="note"><b>Keeps:</b> every count, claim (holder, elapsed, last progress, lease), next due, sync with retry blink, update state, DND, pin, drag, Ctrl+Alt+R. <b>Changes:</b> a done/today ring on the tab; agent identity by colour avatar (OC, T3, CC); update moves from footer to top banner; needs-you cards are tinted, not bordered.</p>
+<script>
+const I = {
+  moon: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M13 9.5A5.5 5.5 0 0 1 6.5 3a5.5 5.5 0 1 0 6.5 6.5Z"/></svg>',
+  pin: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9.5 2 14 6.5l-2 1-2.5 2.5L9 13 3 7l3-.5L8.5 4l1-2ZM5.5 10.5 2 14"/></svg>',
+  grip: '<svg viewBox="0 0 16 16" fill="currentColor"><circle cx="6" cy="4" r="1.1"/><circle cx="10" cy="4" r="1.1"/><circle cx="6" cy="8" r="1.1"/><circle cx="10" cy="8" r="1.1"/><circle cx="6" cy="12" r="1.1"/><circle cx="10" cy="12" r="1.1"/></svg>',
+};
+const D = {
+  total: 9, done: 4, active: 3, blocked: 1, needs: 3,
+  sync: [["Slack", ""], ["JEV", ""], ["GitHub", ""], ["ClickUp", ""], ["Executor", "r"]],
+  claims: [
+    { t: "RC build auth regression", h: "T3", av: "T3", c: "var(--a1)", el: "1h 12m", p: "rerunning rc smoke on build 2026.11.17-rc3", ago: 2 },
+    { t: "Slack DM: deploy checklist", h: "OpenCode", av: "OC", c: "var(--a2)", el: "42m", p: "drafting rollback steps for billing worker", ago: 4 },
+    { t: "Churn report CSV export", h: "Claude Code", av: "CC", c: "var(--a3)", el: "2h 05m", p: "waiting on churn_v2 schema", ago: 14, st: true },
+  ],
+};
+const ring = (frac, r, w, col) => { const C = 2 * Math.PI * r; return `<circle cx="${r + w}" cy="${r + w}" r="${r}" fill="none" stroke="var(--tint2)" stroke-width="${w}"/><circle cx="${r + w}" cy="${r + w}" r="${r}" fill="none" stroke="${col}" stroke-width="${w}" stroke-linecap="round" stroke-dasharray="${C * frac} ${C}"/>`; };
+function tab({ needs = D.needs, upd = false, pulse = false } = {}) {
+  return `<div class="tab${pulse ? " pulse" : ""}"><svg viewBox="0 0 38 38">${ring(D.done / D.total, 16, 3, "var(--acc)")}</svg><span class="n">${D.total}</span>
+    ${needs ? `<span class="b">${needs}</span>` : upd ? `<span class="b u">↑</span>` : ""}</div>`;
+}
+function claims() {
+  return `<div class="sh">Agents working <span>lease 15 min</span></div>${D.claims.map((c) => `
+  <button class="row"><span class="av" style="background:${c.c}"><svg viewBox="0 0 36 36">${ring(Math.max(.05, 1 - c.ago / 15), 16, 2, c.st ? "var(--stale)" : "var(--ok)")}</svg>${c.av}<span class="st${c.st ? " s" : ""}"></span></span>
+    <span class="t">${c.t}</span><span class="el">${c.h} · ${c.el}</span>
+    <span class="p">${c.p} · <span class="${c.st ? "s" : ""}">${c.ago}m ago</span></span></button>`).join("")}`;
+}
+const needCards = () => `
+  <button class="need"><div class="k"><b>Proposal</b> · #billing-squad · Marina · 14:21 · JEV 0.86</div>
+    <div class="t">Invoice PDF shows due date one day early (UTC−3)</div><q>can we also cover the boleto PDF? same off-by-one there</q>
+    <div class="f"><span>Adds a requirement to ACC-405</span><span class="btn pri" role="button">Review</span></div></button>
+  <button class="need"><div class="k"><b>Unacked</b> · Rafael · 14:02 · 0.78</div>
+    <div class="t">Session cookie SameSite=Lax breaks billing iframe</div><q>needs to work on Safari 17 too, the iframe is embedded there</q>
+    <div class="f"><span>T3 claim hasn't checked in since</span></div></button>
+  <div class="more">+1 more in Review →</div>`;
+function banner(kind) {
+  if (kind === "ready") return `<div class="ban"><span class="ic">↓</span><span class="tx"><b>Relay 0.5.6 is ready</b><span>11.8 MB · signed · restarts in about 3 s</span></span><button class="btn pri">Restart</button></div>`;
+  if (kind === "dl") return `<div class="ban"><span class="ic">↓</span><span class="tx"><b>Downloading 0.5.6</b> · 64%<span class="tr"><i style="width:64%"></i></span></span><button class="btn">Details</button></div>`;
+  if (kind === "err") return `<div class="ban err"><span class="ic">!</span><span class="tx"><b>Update check failed</b><span>Relay 0.5.5 · network unreachable</span></span><button class="btn">Retry</button></div>`;
+  return `<div class="calm" style="padding:4px 8px"><i>✓</i>Relay 0.5.5 is up to date</div>`;
+}
+function panel({ needs = true, upd = "none", dnd = false, pin = false } = {}) {
+  const n = needs ? D.needs : 0;
+  return `<div class="pan">
+    <div class="hh"><span class="mark">R</span><b>Relay</b><span class="sp"></span>
+      <button class="rb" data-a="dnd" aria-pressed="${dnd}" title="Do not disturb">${I.moon}</button>
+      <button class="rb" data-a="pin" aria-pressed="${pin}" title="Pin open">${I.pin}</button>
+      <span class="rb" title="Drag to another edge" style="cursor:grab">${I.grip}</span></div>
+    ${upd !== "none" ? banner(upd) : ""}
+    <div class="hero"><span class="big">${D.total}<small>today</small></span>
+      <span class="chips"><span class="chip"><i></i>${D.active} in progress</span><span class="chip bl"><i></i>${D.blocked} blocked</span>${n ? `<span class="chip nd"><i></i>${n} need you</span>` : ""}</span></div>
+    ${needs ? needCards() : ""}
+    <div class="card0">${claims()}</div>
+    ${needs ? "" : `<div class="due"><span class="tm">16:30</span><span class="t">Invoice PDF shows due date one day early (UTC−3)</span><span class="in">in 1h 20m</span></div>
+      <div class="calm"><i>✓</i>Nothing needs you · last proposal handled 13:48</div>`}
+    ${needs ? `<div class="ft2"><span>Next due 16:30 · Invoice PDF due date…</span></div>` : ""}
+    <div class="ft"><span class="dots">${D.sync.map(([k, s]) => `<span title="${s ? "Executor: bridge reconnecting" : k + ": ok"}"><i class="${s}"></i>${k}</span>`).join("")}</span><span class="sp"></span><kbd>Ctrl Alt R</kbd></div>
+    <div class="ft2"><span></span><button class="btn">Open Relay ↗</button></div>
+  </div>`;
+}
+const specs = [
+  ["Edge tab · calm / needs you / update", `${tab({ needs: 0 })}${tab()}${tab({ needs: 0, upd: true })}`],
+  ["Expanded · idle", panel({ needs: false })],
+  ["Expanded · needs you", panel({ needs: true })],
+  ["Update · up to date / downloading / ready / failed", `<div class="ups">${["none", "dl", "ready", "err"].map((k) => `<div class="pan">${banner(k)}</div>`).join("")}</div>`],
+];
+document.getElementById("specs").innerHTML = specs.map(([h, b]) => `<div class="spec"><h2>${h}</h2><div class="stage">${b}</div></div>`).join("");
+const S = { open: false, needs: true, upd: "none", dnd: false, pin: false, pulse: false };
+const dock = document.getElementById("dock"); let timer;
+const draw = () => dock.innerHTML = S.open ? panel(S) : tab({ needs: S.needs ? D.needs : 0, upd: S.upd === "ready", pulse: S.pulse && !S.dnd });
+dock.addEventListener("mouseenter", () => { clearTimeout(timer); if (!S.open) { S.open = true; draw(); } });
+dock.addEventListener("mouseleave", () => { if (S.pin) return; timer = setTimeout(() => { S.open = false; draw(); }, 400); });
+dock.addEventListener("animationend", (e) => { if (e.animationName === "halo") S.pulse = false; });
+document.addEventListener("click", (e) => {
+  const el = e.target.closest("[data-a]"); if (!el) return; const a = el.dataset.a;
+  if (a === "pin") { S.pin = !S.pin; draw(); }
+  if (a === "dnd") { S.dnd = !S.dnd; draw(); }
+  if (a === "pulse") { S.open = false; S.pulse = false; draw(); requestAnimationFrame(() => { S.pulse = true; draw(); }); }
+  if (a === "needs") { S.needs = !S.needs; el.textContent = "State: " + (S.needs ? "needs you" : "idle"); draw(); }
+  if (a === "upd") { const k = ["none", "dl", "ready", "err"]; S.upd = k[(k.indexOf(S.upd) + 1) % 4]; el.textContent = "Update: " + S.upd; draw(); }
+});
+draw();
+const th = document.getElementById("theme"), modes = ["auto", "light", "dark"];
+th.onclick = () => { const m = modes[(modes.indexOf(th.textContent.slice(7)) + 1) % 3]; th.textContent = "Theme: " + m; m === "auto" ? delete document.documentElement.dataset.theme : document.documentElement.dataset.theme = m; };
+</script>
+</body>
+</html>

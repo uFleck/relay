@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Projects A · Ledger</title>
+<style>
+/* Direction A, "Ledger": every project on one scrolling page, each a section with a sticky header.
+   The header carries the repo and import as one compact toolbar; tasks are dense 32 px rows with a
+   status ring in place of a checkbox. The selected task opens the 380 px side sheet. */
+:root {
+  --ui: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --mono: "Cascadia Mono", Consolas, monospace;
+  color-scheme: light;
+  --frame: #ffffff; --rail: #f5f5f3; --sunk: #f7f7f5; --hover: rgba(0,0,0,.035); --sel: rgba(53,82,230,.08);
+  --line: #e7e7e2; --line2: #d4d4cc; --ink: #17191c; --ink2: #555b64; --ink3: #8d939b;
+  --acc: #3552e6; --on-acc: #fff; --amber: #c27a00; --live: #1f9d4c; --err: #d93a3f;
+  --c-active: #3552e6; --c-review: #d48a00; --c-merged: #8b5cf6; --c-waiting: #e2725b; --c-deploying: #0ea5e9; --c-blocked: #d93a3f; --c-done: #1f9d4c; --c-todo: #9aa0a8;
+  --p1: #3552e6; --p2: #1f9d4c; --p3: #e2725b; --p4: #8b5cf6;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  color-scheme: dark;
+  --frame: #111215; --rail: #0c0d0f; --sunk: #16181c; --hover: rgba(255,255,255,.04); --sel: rgba(142,162,255,.12);
+  --line: #23252a; --line2: #33363d; --ink: #eceef1; --ink2: #a6acb6; --ink3: #6c727c;
+  --acc: #8ea2ff; --on-acc: #0b1030; --amber: #f2b73a; --live: #4ade80; --err: #ff6b6b;
+  --c-active: #8ea2ff; --c-review: #f2b73a; --c-merged: #c39bff; --c-waiting: #ff9b6a; --c-deploying: #5ab8f5; --c-blocked: #ff6b6b; --c-done: #4ade80; --c-todo: #6c727c;
+  --p1: #8ea2ff; --p2: #4ade80; --p3: #ff9b6a; --p4: #c39bff;
+} }
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --frame: #111215; --rail: #0c0d0f; --sunk: #16181c; --hover: rgba(255,255,255,.04); --sel: rgba(142,162,255,.12);
+  --line: #23252a; --line2: #33363d; --ink: #eceef1; --ink2: #a6acb6; --ink3: #6c727c;
+  --acc: #8ea2ff; --on-acc: #0b1030; --amber: #f2b73a; --live: #4ade80; --err: #ff6b6b;
+  --c-active: #8ea2ff; --c-review: #f2b73a; --c-merged: #c39bff; --c-waiting: #ff9b6a; --c-deploying: #5ab8f5; --c-blocked: #ff6b6b; --c-done: #4ade80; --c-todo: #6c727c;
+  --p1: #8ea2ff; --p2: #4ade80; --p3: #ff9b6a; --p4: #c39bff;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: transparent; color: var(--ink); font: 13px/1.4 var(--ui); padding: 4px 0 24px; }
+button, input { font: inherit; color: inherit; }
+.top { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
+.top h1 { font-size: 18px; margin: 0; } .top .sub { color: var(--ink3); font: 11px var(--mono); } .top .sp { flex: 1; }
+.tbtn { border: 1px solid var(--line2); background: var(--frame); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+.lede { color: var(--ink2); margin: 0 0 14px; max-width: 900px; }
+.win { border: 1px solid var(--line2); border-radius: 8px; overflow: hidden; background: var(--frame); display: grid; grid-template-columns: 52px minmax(0, 1fr) 360px; height: 720px; }
+.rail { background: var(--rail); border-right: 1px solid var(--line); display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 10px 0; }
+.rail i { width: 30px; height: 30px; border-radius: 7px; display: grid; place-items: center; color: var(--ink3); font: 600 11px var(--ui); font-style: normal; }
+.rail i.on { background: var(--sel); color: var(--acc); }
+.main { display: flex; flex-direction: column; min-width: 0; }
+.head { display: flex; align-items: center; gap: 12px; padding: 14px 18px 10px; border-bottom: 1px solid var(--line); }
+.head h2 { margin: 0; font-size: 20px; font-weight: 650; }
+.head .meta { font: 11px var(--mono); color: var(--ink3); }
+.head .sp { flex: 1; }
+.filter { display: flex; border: 1px solid var(--line2); border-radius: 6px; overflow: hidden; }
+.filter button { border: 0; background: none; padding: 3px 10px; font-size: 12px; color: var(--ink2); cursor: pointer; }
+.filter button[aria-pressed="true"] { background: var(--sel); color: var(--acc); font-weight: 600; }
+.search { border: 1px solid var(--line2); border-radius: 6px; padding: 3px 8px; width: 180px; background: var(--sunk); color: var(--ink3); font-size: 12px; }
+.scroll { overflow: auto; flex: 1; }
+.proj { border-bottom: 1px solid var(--line); }
+.ph { position: sticky; top: 0; z-index: 1; background: var(--frame); display: flex; align-items: center; gap: 10px; padding: 10px 18px 8px; }
+.ph .sw { width: 10px; height: 10px; border-radius: 3px; background: var(--p); }
+.ph h3 { margin: 0; font-size: 14px; font-weight: 650; }
+.ph .st { display: flex; gap: 10px; font: 11px var(--mono); color: var(--ink3); }
+.ph .st b { color: var(--ink); font-weight: 600; } .ph .st .bl b { color: var(--err); }
+.ph .sp { flex: 1; }
+.chev { border: 0; background: none; color: var(--ink3); cursor: pointer; width: 18px; padding: 0; }
+.tools { display: flex; align-items: center; gap: 6px; margin: 0 18px 8px 46px; padding: 4px 4px 4px 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--sunk); font-size: 12px; }
+.tools .path { font: 11.5px var(--mono); color: var(--ink2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 60px; flex: 0 1 auto; }
+.tools .git { display: inline-flex; align-items: center; gap: 5px; font: 11.5px var(--mono); color: var(--ink2); white-space: nowrap; }
+.tools .git b { color: var(--ink); font-weight: 600; }
+.tools .git .dirty { width: 6px; height: 6px; border-radius: 50%; background: var(--amber); }
+.tools .div { width: 1px; height: 16px; background: var(--line2); margin: 0 2px; }
+.tools .src { display: inline-flex; gap: 5px; align-items: center; color: var(--ink2); white-space: nowrap; }
+.tools .src i { width: 6px; height: 6px; border-radius: 50%; background: var(--live); }
+.tools .none { color: var(--ink3); }
+.tools .sp { flex: 1; }
+.b { height: 24px; padding: 0 9px; border-radius: 5px; border: 1px solid var(--line2); background: var(--frame); font-size: 12px; cursor: pointer; white-space: nowrap; display: inline-flex; align-items: center; gap: 5px; }
+.b.pri { background: var(--acc); border-color: var(--acc); color: var(--on-acc); font-weight: 600; }
+.b.gh { border-color: transparent; background: transparent; color: var(--ink2); }
+.b.gh:hover { background: var(--hover); }
+.imp { margin: 0 18px 10px 46px; border: 1px solid var(--line); border-radius: 7px; padding: 10px; display: grid; gap: 8px; }
+.imp .r { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.imp .r > b { width: 60px; font-size: 12px; }
+.inp { height: 26px; border: 1px solid var(--line2); border-radius: 5px; padding: 0 8px; background: var(--frame); font-size: 12px; width: 150px; }
+.inp:focus { outline: 2px solid color-mix(in srgb, var(--acc) 45%, transparent); outline-offset: 0; border-color: var(--acc); }
+.ck { display: inline-flex; gap: 6px; align-items: center; font-size: 12px; color: var(--ink2); cursor: pointer; }
+.ck span { width: 14px; height: 14px; border-radius: 4px; border: 1.5px solid var(--line2); display: grid; place-items: center; }
+.ck[aria-checked="true"] span { background: var(--acc); border-color: var(--acc); }
+.ck[aria-checked="true"] span::after { content: ""; width: 7px; height: 4px; border: solid var(--on-acc); border-width: 0 0 1.6px 1.6px; transform: rotate(-45deg) translate(1px, -1px); }
+.imp .hint { font-size: 11.5px; color: var(--ink3); }
+.grp { display: flex; align-items: center; gap: 6px; padding: 8px 18px 3px 46px; font: 600 10.5px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--ink3); }
+.grp i { width: 7px; height: 7px; border-radius: 50%; background: var(--c); }
+.grp .n { color: var(--ink3); font-weight: 400; }
+.row { display: grid; grid-template-columns: 16px minmax(0, 1fr) 150px 56px 84px; align-items: center; gap: 10px; height: 32px; padding: 0 18px 0 46px; width: 100%; border: 0; background: none; text-align: left; cursor: pointer; position: relative; }
+.row:hover { background: var(--hover); }
+.row.sel { background: var(--sel); }
+.row.sel::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--acc); }
+.ring { width: 14px; height: 14px; border-radius: 50%; border: 1.6px solid var(--c); position: relative; }
+.ring.half::after { content: ""; position: absolute; inset: 2px; border-radius: 50%; background: conic-gradient(var(--c) 0 50%, transparent 0); }
+.ring.full { background: var(--c); }
+.ring.full::after { content: ""; position: absolute; left: 3.5px; top: 2px; width: 3px; height: 6px; border: solid var(--frame); border-width: 0 1.6px 1.6px 0; transform: rotate(45deg); }
+.ring.x::after { content: ""; position: absolute; inset: 5px 2px; background: var(--c); border-radius: 1px; }
+.row .t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; gap: 6px; align-items: center; min-width: 0; }
+.row .t span { overflow: hidden; text-overflow: ellipsis; }
+.row .ref { font: 11px var(--mono); color: var(--ink3); flex: none; }
+.row .new { width: 6px; height: 6px; border-radius: 50%; background: var(--amber); flex: none; }
+.cl { font: 11.5px var(--mono); color: var(--ink2); display: flex; gap: 5px; align-items: center; white-space: nowrap; overflow: hidden; }
+.cl i { width: 6px; height: 6px; border-radius: 50%; background: var(--live); flex: none; }
+.cl i.s { background: var(--amber); }
+.cl.none { color: var(--ink3); }
+.due { font: 11.5px var(--mono); color: var(--ink2); text-align: right; }
+.due.soon { color: var(--amber); } .due.late { color: var(--err); }
+.lk { display: flex; gap: 4px; justify-content: flex-end; font: 10px var(--mono); color: var(--ink3); }
+.lk span { border: 1px solid var(--line2); border-radius: 3px; padding: 0 3px; }
+.empty { margin: 4px 18px 14px 46px; border: 1px dashed var(--line2); border-radius: 8px; padding: 16px; display: flex; gap: 14px; align-items: center; }
+.empty .ill { width: 38px; height: 38px; border-radius: 10px; background: var(--sunk); display: grid; place-items: center; color: var(--ink3); font-size: 18px; }
+.empty b { display: block; }
+.empty p { margin: 2px 0 0; color: var(--ink2); font-size: 12px; }
+.empty .sp { flex: 1; }
+.alldone { margin: 2px 18px 12px 46px; color: var(--ink3); font-size: 12px; }
+.sheet { border-left: 1px solid var(--line); display: flex; flex-direction: column; min-width: 0; }
+.sh { padding: 14px 16px 10px; border-bottom: 1px solid var(--line); }
+.sh .k { display: flex; gap: 8px; align-items: center; font: 11px var(--mono); color: var(--ink3); }
+.sh .k .x { margin-left: auto; border: 0; background: none; color: var(--ink3); cursor: pointer; }
+.sh h3 { margin: 4px 0 8px; font-size: 16px; line-height: 1.3; }
+.step { display: flex; gap: 3px; }
+.step i { flex: 1; height: 4px; border-radius: 2px; background: var(--line2); }
+.step i.on { background: var(--c-active); } .step i.cur { background: var(--c-active); box-shadow: 0 0 0 2px color-mix(in srgb, var(--c-active) 30%, transparent); }
+.step-l { display: flex; justify-content: space-between; font: 10px var(--mono); color: var(--ink3); margin-top: 4px; }
+.sb { padding: 12px 16px; overflow: auto; flex: 1; display: flex; flex-direction: column; gap: 12px; }
+.claim { border-radius: 7px; background: color-mix(in srgb, var(--live) 10%, transparent); padding: 8px 10px; font-size: 12px; }
+.claim b { display: flex; gap: 6px; align-items: center; } .claim b i { width: 7px; height: 7px; border-radius: 50%; background: var(--live); }
+.claim span { color: var(--ink2); font: 11px var(--mono); }
+.lbl { font: 600 10.5px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--ink3); margin-bottom: 4px; }
+.ch { border-left: 2px solid var(--amber); padding: 2px 0 2px 10px; font-size: 12.5px; }
+.ch .m { font: 11px var(--mono); color: var(--ink3); display: flex; gap: 8px; margin-top: 4px; }
+.ch .m button { border: 0; background: none; padding: 0; color: var(--acc); cursor: pointer; font: inherit; }
+.ch2 { font: 11.5px var(--mono); color: var(--ink2); }
+.links { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.links div { border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; font-size: 12px; display: flex; justify-content: space-between; }
+.links span { font: 11px var(--mono); color: var(--ink3); }
+.sf { padding: 10px 16px; border-top: 1px solid var(--line); display: flex; gap: 8px; }
+.note { color: var(--ink2); font-size: 12px; margin-top: 12px; }
+.note b { color: var(--ink); }
+@media (max-width: 1000px) { .win { grid-template-columns: minmax(0, 1fr); height: auto; } .rail { display: none; } .scroll { max-height: 640px; } .sheet { border-left: 0; border-top: 1px solid var(--line); }
+  .row { grid-template-columns: 16px minmax(0, 1fr) 110px 56px; } .row .lk { display: none; } .search { display: none; } }
+</style>
+</head>
+<body>
+<div class="top"><h1>Projects · Direction A · Ledger</h1><span class="sub">relay 0.5.5 · design/redesign · mockup, not shipped</span><span class="sp"></span><button class="tbtn" id="theme">Theme: auto</button></div>
+<p class="lede">All projects on one page, like a ledger. Each project header sticks while you scroll its tasks, and its repo, git state and import sources sit in one toolbar under the name instead of two loose rows. Status rings replace the browser checkbox. Click any row; click "Import…" on Account.</p>
+<div class="win">
+  <nav class="rail"><i>T</i><i class="on">P</i><i>R</i><i>A</i><i>S</i></nav>
+  <section class="main">
+    <header class="head"><h2>Projects</h2><span class="meta">4 projects · 14 open</span><span class="sp"></span>
+      <div class="filter"><button aria-pressed="true">Open</button><button>All</button><button>Mine</button></div><span class="search">Filter tasks…  Ctrl K</span></header>
+    <div class="scroll" id="list"></div>
+  </section>
+  <aside class="sheet" id="sheet"></aside>
+</div>
+<p class="note"><b>Keeps:</b> project chip and the open / in progress / blocked / done counts, ProjectRepo (path, branch, dirty, refresh, choose folder, clear), ProjectImport (ClickUp list + include closed, GitHub owner/repo), status-ordered groups with empty groups hidden, claim cell, due, link kinds, unacked dot, both empty messages. <b>Adds:</b> sticky headers, collapse per project, an Open/All/Mine filter, and the linked import sources shown inline.</p>
+<script>
+const P = [
+  { id: "account", name: "Account", c: "--p1", repo: "C:\\code\\ublr\\account", branch: "master", ahead: 2, dirty: true, src: ["ClickUp · Billing sprint", "GitHub · ublr/account"], counts: [6, 2, 1, 3] },
+  { id: "relay", name: "Relay", c: "--p4", repo: "C:\\Projects\\relay", branch: "t3/redesign-overlay", ahead: 0, dirty: false, src: ["GitHub · uFleck/relay"], counts: [3, 1, 0, 5] },
+  { id: "ops", name: "Ops", c: "--p3", repo: null, src: [], counts: [0, 0, 0, 2], alldone: true },
+  { id: "portfolio", name: "Portfolio", c: "--p2", repo: null, src: [], counts: [0, 0, 0, 0], empty: true },
+];
+const T = [
+  { id: "a1", p: "account", g: "In Progress", cat: "active", ref: "ACC-412", t: "RC build auth regression", cl: ["T3", "1h 12m"], due: ["18:00", ""], lk: ["PR", "CU"] },
+  { id: "a2", p: "account", g: "In Progress", cat: "active", ref: "ACC-418", t: "Session cookie SameSite=Lax breaks billing iframe", cl: null, due: ["today", "soon"], lk: ["CU", "SL"], unacked: true },
+  { id: "a3", p: "account", g: "In Review", cat: "review", ref: "ACC-405", t: "Invoice PDF shows due date one day early (UTC−3)", cl: ["released 20m"], due: ["16:30", "soon"], lk: ["PR", "CU", "SL"] },
+  { id: "a4", p: "account", g: "In Review", cat: "review", ref: "ACC-401", t: "Retry declined renewals with exponential backoff", cl: ["OpenCode", "12m"], due: ["Fri", ""], lk: ["PR"] },
+  { id: "a5", p: "account", g: "Blocked", cat: "blocked", ref: "ACC-399", t: "Churn report CSV export — waiting on data team schema", cl: ["Claude Code", "2h 05m", "s"], due: ["Nov 15", "late"], lk: ["CU"] },
+  { id: "a6", p: "account", g: "Todo", cat: "todo", ref: "ACC-420", t: "Add tax id mask to the company profile form", cl: null, due: ["—", ""], lk: ["CU"] },
+  { id: "r1", p: "relay", g: "In Progress", cat: "active", ref: "#88", t: "Hover: snap to nearest edge on drag release", cl: ["Claude Code", "18m"], due: ["—", ""], lk: ["GH"] },
+  { id: "r2", p: "relay", g: "Waiting for deploy", cat: "waiting", ref: "#84", t: "Bump tauri-plugin-updater to 2.9 and re-sign latest.json", cl: null, due: ["—", ""], lk: ["PR", "GH"] },
+  { id: "r3", p: "relay", g: "Todo", cat: "todo", ref: "#91", t: "Projects page redesign", cl: null, due: ["Nov 21", ""], lk: ["GH"] },
+];
+let sel = "a3", openImp = false, folded = new Set(), closed = true;
+const ring = (cat) => `<span class="ring${cat === "active" ? " half" : cat === "done" ? " full" : cat === "blocked" ? " x" : ""}" style="--c:var(--c-${cat})"></span>`;
+function tools(p) {
+  const repo = p.repo ? `<span class="path" title="${p.repo}">${p.repo}</span><span class="git">⑂ <b>${p.branch}</b>${p.ahead ? ` ↑${p.ahead}` : ""}${p.dirty ? `<i class="dirty" title="Uncommitted changes"></i>` : ""}</span><button class="b gh" title="Refresh">↻</button>`
+    : `<span class="none">No repo linked</span>`;
+  const src = p.src.length ? p.src.map((s) => `<span class="src"><i></i>${s}</span>`).join("") : `<span class="none">No import source</span>`;
+  return `<div class="tools">${repo}<button class="b gh">${p.repo ? "Change…" : "Choose folder…"}</button>${p.repo ? `<button class="b gh">Clear</button>` : ""}
+    <span class="div"></span>${src}<span class="sp"></span><button class="b" data-imp="${p.id}" aria-expanded="${openImp && p.id === "account"}">${openImp && p.id === "account" ? "Hide import" : "Import…"}</button></div>`;
+}
+const impPanel = () => `<div class="imp">
+  <div class="r"><b>ClickUp</b><input class="inp" placeholder="List id" value="901311428817"><span class="ck" role="checkbox" aria-checked="${closed}" tabindex="0" data-ck><span></span>Include closed</span><button class="b pri">Import list</button></div>
+  <div class="r"><b>GitHub</b><input class="inp" placeholder="owner" value="ublr" style="width:100px"><span style="color:var(--ink3)">/</span><input class="inp" placeholder="repo" value="account" style="width:120px"><button class="b pri">Import issues</button></div>
+  <div class="hint">Imports create local tasks linked to the source. Relay never mirrors the whole list.</div></div>`;
+function proj(p) {
+  const rows = T.filter((t) => t.p === p.id);
+  const groups = [...new Set(rows.map((t) => t.g))];
+  const [open, act, bl, done] = p.counts;
+  const f = folded.has(p.id);
+  let body = "";
+  if (!f) {
+    body = tools(p) + (openImp && p.id === "account" ? impPanel() : "");
+    if (p.empty) body += `<div class="empty"><span class="ill">◇</span><div><b>No tasks in Portfolio yet</b><p>Link the repo so agents can claim work here, or import a ClickUp list or GitHub issues.</p></div><span class="sp"></span><button class="b">Choose folder…</button><button class="b pri" data-imp="account">Import…</button></div>`;
+    else if (p.alldone) body += `<div class="alldone">✓ Every task in this project is done · 2 done this week</div>`;
+    else body += groups.map((g) => { const r = rows.filter((t) => t.g === g); return `<div class="grp" style="--c:var(--c-${r[0].cat})"><i></i>${g} <span class="n">${r.length}</span></div>` + r.map((t) => `
+      <button class="row${t.id === sel ? " sel" : ""}" data-id="${t.id}">${ring(t.cat)}<span class="t"><span>${t.t}</span><span class="ref">${t.ref}</span>${t.unacked ? `<i class="new" title="1 unacked change"></i>` : ""}</span>
+      ${t.cl ? `<span class="cl${t.cl.length === 1 ? " none" : ""}">${t.cl.length > 1 ? `<i class="${t.cl[2] || ""}"></i>${t.cl[0]} · ${t.cl[1]}` : t.cl[0]}</span>` : `<span class="cl none">unclaimed</span>`}
+      <span class="due ${t.due[1]}">${t.due[0]}</span><span class="lk">${t.lk.map((k) => `<span>${k}</span>`).join("")}</span></button>`).join(""); }).join("");
+  }
+  return `<section class="proj"><div class="ph" style="--p:var(${p.c})"><button class="chev" data-fold="${p.id}">${f ? "▸" : "▾"}</button><span class="sw"></span><h3>${p.name}</h3>
+    <span class="st"><span><b>${open}</b> open</span><span><b>${act}</b> in progress</span><span class="bl"><b>${bl}</b> blocked</span><span><b>${done}</b> done</span></span></div>${body}</section>`;
+}
+function sheet() {
+  const t = T.find((x) => x.id === sel);
+  if (!t) return `<div class="sb" style="color:var(--ink3);justify-content:center;text-align:center">Select a task</div>`;
+  return `<div class="sh"><div class="k">${t.ref} · ${P.find((p) => p.id === t.p).name} · ${t.g}<button class="x" data-close>Esc ✕</button></div><h3>${t.t}</h3>
+    <div class="step"><i class="on"></i><i class="on"></i><i class="cur"></i><i></i><i></i><i></i></div><div class="step-l"><span>Todo</span><span>Prog</span><span>Rev</span><span>Merged</span><span>Wait</span><span>RC</span></div></div>
+  <div class="sb">
+    ${t.cl && t.cl.length > 1 ? `<div class="claim"><b><i></i>${t.cl[0]} holds this · ${t.cl[1]}</b><span>last progress 2m ago · lease 15m</span></div>` : `<div class="claim" style="background:var(--sunk)"><b style="color:var(--ink2)">No live claim</b><span>OpenCode released 20m ago · "PR #1182 ready for review"</span></div>`}
+    <div><div class="lbl">Changes</div>
+      <div class="ch">“can we also cover the boleto PDF? same off-by-one there”<div class="m">Marina · #billing-squad · 14:21 · 0.86<button>ack</button><button>permalink</button></div></div>
+      <div class="ch2" style="margin-top:8px">13:10 · status In Progress → In Review · agent</div></div>
+    <div><div class="lbl">Links</div><div class="links"><div>PR #1182<span>open</span></div><div>ClickUp 86b3x<span>synced</span></div><div>Slack thread<span>3 msgs</span></div><div>Repo<span>account</span></div></div></div>
+  </div><div class="sf"><button class="b pri">Open thread</button><button class="b">View diff</button></div>`;
+}
+function draw() { document.getElementById("list").innerHTML = P.map(proj).join(""); document.getElementById("sheet").innerHTML = sheet(); }
+document.addEventListener("click", (e) => {
+  const r = e.target.closest("[data-id]"); if (r) { sel = r.dataset.id; draw(); return; }
+  const i = e.target.closest("[data-imp]"); if (i) { openImp = !openImp; draw(); return; }
+  const f = e.target.closest("[data-fold]"); if (f) { const k = f.dataset.fold; folded.has(k) ? folded.delete(k) : folded.add(k); draw(); return; }
+  if (e.target.closest("[data-ck]")) { closed = !closed; draw(); return; }
+  if (e.target.closest("[data-close]")) { sel = null; draw(); }
+});
+draw();
+const th = document.getElementById("theme"), modes = ["auto", "light", "dark"];
+th.onclick = () => { const m = modes[(modes.indexOf(th.textContent.slice(7)) + 1) % 3]; th.textContent = "Theme: " + m; m === "auto" ? delete document.documentElement.dataset.theme : document.documentElement.dataset.theme = m; };
+</script>
+</body>
+</html>
