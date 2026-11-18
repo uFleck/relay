@@ -174,3 +174,47 @@ set. This avoids a new native build and keeps one TLS provider in the binary.
 ## Opus verdict
 
 _Pending._
+
+## Opus verdict (2026-11-17)
+
+**Verdict:** approved with notes
+**Reviewed:** `6b2bad9` (`crates/relay-core/src/jev.rs` is unchanged at HEAD; line numbers match both)
+
+What holds:
+
+- The API key cannot leak through `Debug` or serialization. It lives in a
+  private `ApiKey` newtype whose `Debug` prints `<redacted>`
+  (`crates/relay-core/src/jev.rs:89-97`). `JevClient`'s `Debug` uses that newtype
+  (`:128-137`), and `JevConfig` has no key field. No `JevError` variant carries
+  the key (`:100-117`). A test checks the redaction (`:1198`).
+- A whole-request timeout applies and maps to `JevError::Timeout`
+  (`:176-178`, `:232-238`). Error bodies are cut on a character boundary at 500
+  characters (`:240-246`).
+- The routing thresholds match PLAN 3.2, with strict `>` everywhere: archive
+  below `0.25` (`:515`), middle band up to and including `0.60` (`:518`),
+  `needs_human > 0.60` (`:528`), both high goes to review (`:546`), `multiple`
+  goes to review (`:554`), high `affects_existing` with `none` goes to review
+  (`:561-568`), and a new task needs `> 0.80` and `complete > 0.70` (`:578`).
+  Any missing answer goes to review and never auto-applies.
+- The rustls provider is installed only when none exists, and the call ignores
+  an install race (`:172-174`).
+
+What I would change:
+
+- The middle band returns `Route::Review` (`:518-523`, `:586-591`). PLAN 3.2
+  says the middle band is "rescreen at close, not an immediate queue". A caller
+  that sends every `Review` to the human queue will flood it. Fix: add
+  `Route::Rescreen { reason }` and return it in those two places.
+- `route` takes `task_claimed: bool` before the caller knows which task JEV
+  picked (`:511`). Fix: take `is_claimed: impl Fn(&str) -> bool` and call it
+  with `task.choice`.
+- The client has no retry, and nothing yet implements "JEV down → queue and
+  retry". That belongs to P3 jobs; the job layer must treat every `JevError` as
+  "queue, never apply".
+
+Nothing blocking for this commit. Fix the `Rescreen` variant before P3 wires
+`route` to jobs.
+
+Not covered: the real JEV API is covered only by the separate live-spike
+record. I did not verify answer parsing against live responses or `Thresholds`
+validation (for example, `screen_no > screen_yes` is accepted).

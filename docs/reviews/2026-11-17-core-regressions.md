@@ -209,3 +209,37 @@ Each item is `Pass` only with the cited evidence; otherwise `Unverified` or
 ## Opus verdict
 
 <!-- Opus: fill this in after reviewing the package commit. -->
+
+## Opus verdict (2026-11-17)
+
+**Verdict:** approved
+**Reviewed:** `70be4a4` (line numbers at `70be4a4`)
+
+What holds:
+
+- The FTS test asserts the bug. Before the fix, `search_tasks("deploy*")`
+  matched two rows. The test requires exactly one (`Deploy relay`), and it
+  requires that `OR`, `title:` and unbalanced quotes stay literal
+  (`crates/relay-core/src/store/mod.rs:3395-3447`). The fix quotes every token
+  and doubles embedded quotes (`:2522`). An empty input or `limit == 0` returns
+  early.
+- The claim race test fails without the fix. It asserts a typed
+  `ClaimConflict` that names the winner, plus one claim row (`:3549-3613`).
+  Without `busy_timeout` the loser gets a raw `SQLITE_BUSY`. The record's
+  negative control, with the timeout set to 0 ms, failed 10 runs out of 10.
+- The rev race asserts `StaleRevision { expected: 1, actual: 2 }`, a stored
+  `rev = 2` and one `updated` event (`:3616-3687`). Under the same contention,
+  it would also see `SQLITE_BUSY` without the timeout.
+- `BUSY_TIMEOUT` is set before WAL and migrations (`:154`), so the claim's
+  `BEGIN IMMEDIATE` waits instead of failing.
+
+What I would change: nothing blocking. The two race tests depend on timing: if
+the threads do not overlap, they pass even without the fix. The 10/10 negative
+control shows that they overlap reliably on this machine. That is acceptable,
+but CI on a slower runner could mask a regression. `upgrade_from_0001…` and
+`human_ack_does_not_clear…` add coverage. They are not regressions of a fixed
+bug, and the record says so.
+
+Not covered: I did not re-run the tests, because the tree has another session's
+uncommitted store edits. FTS behavior for punctuation-only tokens (for example
+`-`, which becomes `"-"`) is not tested.

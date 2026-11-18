@@ -413,3 +413,53 @@ commands while another agent has uncommitted work.
 ## Opus verdict
 
 <!-- Opus: write the verdict here after reviewing the commit in this record. -->
+
+## Opus verdict (2026-11-17)
+
+**Verdict:** changes needed
+**Reviewed:** `9b9492d` (`scripts/` and `.github/actions/release/action.yml` are unchanged at HEAD; line numbers match both)
+
+What holds:
+
+- Five version fields are compared with the release version: `package.json`,
+  `tauri.conf.json`, both `[package]` tables, and `[workspace.package]` when it
+  exists. Any mismatch fails before the build
+  (`scripts/release.ps1:128-156`, `.github/actions/release/action.yml:35-90`).
+- A prerelease is detected from a `-` before any `+build`
+  (`release.ps1:27-30`). It gets `--prerelease` locally (`:358`) and in CI
+  (`action.yml:279-280`), so `/releases/latest`, which is the updater endpoint,
+  stays on the last stable release.
+- The 420 s gate is measured at the end of the build and throws before any
+  upload. Upload time is excluded (`release.ps1:272-287`, `action.yml:195-206`).
+  The hosted fallback only warns, by design.
+- The installer must match the exact version: one
+  `*_<version>_*-setup.exe` plus its `.sig`, with no fallback to the newest
+  `.exe`, and zero or several matches fail (`release.ps1:307-319`,
+  `action.yml:223`). `--verify-tag` is passed to `gh release create`
+  (`release.ps1:353`, `action.yml:275`).
+
+What I would change:
+
+- **Blocking: the local path never checks that the tag is at `HEAD`.**
+  `release.ps1` only checks that `v<version>` exists (`:158-164`). It then
+  builds the working tree at `HEAD` and publishes under the tag, wherever the
+  tag points. `version.ps1 -Tag` tags while the bump is still uncommitted and
+  only warns (`scripts/version.ps1:156-160`), so its normal use tags the commit
+  *before* the bump. The published tag's source then differs from the binary.
+  CI catches this through its version check, but the local fast path is now the
+  primary release path. Fix: in `release.ps1`, fail unless
+  `git rev-parse "$tag^{commit}"` equals `git rev-parse HEAD`. In `version.ps1`,
+  make `-Tag` refuse a dirty tree instead of warning.
+- The `latest.json` URL hardcodes `uFleck/relay` (`release.ps1:327`). The upload
+  target comes from `origin` or `GH_REPO` (`:176`). With any other repository,
+  the release uploads but the updater URL breaks. Fix: fail when `$repo` is not
+  `uFleck/relay`, or build the URL from `$repo` and the updater endpoint
+  together.
+- Audit finding 28 is still open: neither path runs `cargo test` or `pnpm test`
+  before publishing. Fix: run `cargo test -p relay-core` and `pnpm test` before
+  the build step in `release.ps1`, or document that a release requires green CI
+  on the tagged commit.
+
+Not covered: a real `gh release create`, an updater round trip from 0.1.0 to
+0.1.1, the `Production` secret and pubkey pairing, and the self-hosted
+runner's labels.

@@ -293,3 +293,60 @@ Each item is `Pass` only with the cited evidence; otherwise `Unverified` or
 ## Opus verdict
 
 <!-- Opus: fill this in after reviewing c4721f9. -->
+
+## Opus verdict (2026-11-17)
+
+**Verdict:** approved with notes
+**Reviewed:** `c4721f9` (line numbers below are at `c4721f9` unless a later commit is named)
+
+What holds:
+
+- Claim compare-and-set is correct. `claim_task` reads the active claim inside a
+  `BEGIN IMMEDIATE` transaction and returns a typed `ClaimConflict`
+  (`crates/relay-core/src/store/mod.rs:854`, `:886`). Expired, unreleased claims
+  are closed as `expired` in the same transaction. "Active" means unreleased and
+  `lease_expires_at > now` (`:2026`). The comparison is on text, and that is safe
+  because every timestamp is fixed-width UTC with milliseconds
+  (`crates/relay-core/src/model.rs:18-25`).
+- A stale claim cannot write. `ensure_claim_active` rejects a released claim and
+  a claim whose lease has passed, and it treats an unparseable lease as expired
+  (`store/mod.rs:2054`, `model.rs:49-51`).
+- Acks are scoped to the claim. A claimant's ack must own the change's task
+  (`store/mod.rs:783`). The unacked query filters on
+  `mine.claim_id = <this claim>` (`:2091`), so a new claimant starts with a full
+  queue. The unique index on `(change_id, IFNULL(claim_id,''))` makes human acks
+  idempotent (`migrations/0002_change_acks.sql`).
+- Changes are append-only in practice. Retract and supersede only update
+  `state`/`superseded_by` and write an event (`:700`, `:750`). No path rewrites
+  `body`. The stale-rev check runs inside the write transaction (`:2186`), and
+  proposal approval reuses it with `base_rev` (`:1540`).
+
+What I would change:
+
+- Fixed later, not by this commit: the commit had no `busy_timeout`, so a second
+  connection got a raw `SQLITE_BUSY`. It also passed raw user text to FTS5
+  `MATCH` (`:495`). `70be4a4` fixes both (`store/mod.rs:154` and `:2522` at
+  `70be4a4`). Nothing left to do here.
+- Proposal patches are not scoped. `create_proposal` only checks that the patch
+  is a JSON object (`:1352`). On approval, any `TaskPatch` field is applied
+  (`:1540`), including `notes`, `title` and `archived`. An agent proposal could
+  therefore rewrite a description once a human approves it. Fix: in
+  `create_proposal`, parse the patch as `TaskPatch` and reject any field other
+  than `status_id`, `due_at` and `priority`.
+- `migrate` runs each step in a deferred `unchecked_transaction` and reads
+  `user_version` outside it (`:1716-1723`). Two processes that open a fresh
+  database together can both run `0001`, and one of them then fails to open.
+  Fix: use `BEGIN IMMEDIATE` and re-read `user_version` inside the transaction.
+- `heartbeat` checks and extends the lease without a transaction (`:969`). This
+  is safe only while one `Store` mutex is the only writer. Fix: wrap it in an
+  `Immediate` transaction like the other claimant writes.
+- `supersede_change` does not check the state of the new change (`:719-750`).
+  A→B followed by B→A leaves both superseded. Fix: require that `new` is
+  `active`.
+
+Nothing blocking.
+
+Not covered: I did not re-run the tests, because another session has
+uncommitted edits to `store/mod.rs` in this tree. Concurrency across more than
+two connections, and behavior on a slow or network disk, are untested beyond
+`70be4a4`'s two-thread races.

@@ -98,3 +98,43 @@ The new tests cover: the default workflow and canonical ids (`Waiting for deploy
 
 <!-- Opus: fill this in after reviewing 91e4f0a. -->
 
+## Opus verdict (2026-11-17)
+
+**Verdict:** approved with notes
+**Reviewed:** `91e4f0a` (line numbers at `91e4f0a`)
+
+What holds:
+
+- The snapshot exposes only display data. It includes no tokens, no
+  `metadata_json`, no raw messages and no `jev_json`. Tasks are filtered to
+  `archived = 0`, and claims to unreleased claims with a lease still running
+  (`crates/relay-core/src/store/mod.rs:305` onward).
+- All reads run while one `Store` mutex is held (`store/mod.rs:305`), so an
+  in-process MCP write cannot land in the middle of a snapshot.
+- `decide_proposal` cannot bypass the rev rule. The command's rev check is
+  advisory (`src-tauri/src/commands.rs:89`). The store then applies the patch at
+  the proposal's `base_rev` inside its own `Immediate` transaction
+  (`store/mod.rs:1540` and `:2186` at `c4721f9`), so a stale proposal fails
+  atomically.
+- The commands stay thin and map `StoreError::kind()` to a stable code
+  (`commands.rs:47-95`). No command takes or forges a `claim_id`.
+
+What I would change:
+
+- `ack_change` checks the rev of `task_id` but then acks any `change_id`. It
+  never checks that the change belongs to that task (`commands.rs:55-65`). Fix:
+  load the change and reject it when `change.task_id != task_id`.
+- `inbox_count` includes pending proposals, but `proposals` is always empty
+  (`crates/relay-core/src/view.rs:469`, `:475`). Once agents can call
+  `proposals_submit`, the badge will count items the UI cannot show. Fix: ship
+  the proposal rows, or leave them out of the count until P3.
+- The snapshot runs several `SELECT`s without a read transaction
+  (`store/mod.rs:305-400`). Once a second process writes, for example the Slack
+  capture, the snapshot can mix two states. Fix: wrap the reads in one deferred
+  transaction.
+
+Nothing blocking.
+
+Not covered: the UI's actual use of `rev` and `taskRev`, and snapshot cost with
+1000 tasks (the query caps at `MAX_TASK_LIMIT` without saying so).
+

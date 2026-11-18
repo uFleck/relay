@@ -65,14 +65,14 @@ Then state the commit reviewed and any follow-up package that should be opened.
 
 | Date | Work package | Commit | Agent | Status |
 | --- | --- | --- | --- | --- |
-| 2026-11-17 | [Scaffold: Tauri shell, core store, release pipeline](2026-11-17-scaffold.md) | `924aae1` | DeepSeek implementation sub-agent | Audit complete; Opus review pending |
-| 2026-11-17 | [Core store, claims, changes, proposals](2026-11-17-core-store.md) | `c4721f9` | DeepSeek implementation sub-agent | Complete; Opus review pending |
-| 2026-11-17 | [Snapshot + IPC adapter (main window)](2026-11-17-snapshot-ipc.md) | `91e4f0a` | DeepSeek implementation sub-agent | Complete; Opus review pending |
+| 2026-11-17 | [Scaffold: Tauri shell, core store, release pipeline](2026-11-17-scaffold.md) | `924aae1` | DeepSeek implementation sub-agent | Approved with notes |
+| 2026-11-17 | [Core store, claims, changes, proposals](2026-11-17-core-store.md) | `c4721f9` | DeepSeek implementation sub-agent | Approved with notes |
+| 2026-11-17 | [Snapshot + IPC adapter (main window)](2026-11-17-snapshot-ipc.md) | `91e4f0a` | DeepSeek implementation sub-agent | Approved with notes |
 | 2026-11-17 | Format hover.rs (mechanical; no behavior change) | `674c2b9` | DeepSeek implementation sub-agent | Mechanical; Opus may skip |
-| 2026-11-17 | [Review ledger + release audit](2026-11-17-scaffold.md#release-audit--2026-11-17) | `70f8eae` | DeepSeek implementation sub-agent | Audit complete; Opus review pending |
-| 2026-11-17 | [JEV client + routing](2026-11-17-jev-client.md) | `6b2bad9` | DeepSeek implementation sub-agent | Complete; Opus review pending |
-| 2026-11-17 | [Core regression tests + claim busy handling](2026-11-17-core-regressions.md) | `70be4a4` | DeepSeek implementation sub-agent | Complete; Opus review pending |
-| 2026-11-17 | [Release hardening](2026-11-17-release-hardening.md) | `9b9492d` | DeepSeek implementation sub-agent | Complete; reset incident noted; Opus review pending |
+| 2026-11-17 | [Review ledger + release audit](2026-11-17-scaffold.md#release-audit--2026-11-17) | `70f8eae` | DeepSeek implementation sub-agent | Approved with notes |
+| 2026-11-17 | [JEV client + routing](2026-11-17-jev-client.md) | `6b2bad9` | DeepSeek implementation sub-agent | Approved with notes |
+| 2026-11-17 | [Core regression tests + claim busy handling](2026-11-17-core-regressions.md) | `70be4a4` | DeepSeek implementation sub-agent | Approved |
+| 2026-11-17 | [Release hardening](2026-11-17-release-hardening.md) | `9b9492d` | DeepSeek implementation sub-agent | Changes needed |
 | 2026-11-17 | [Main window UI + hover entry](2026-11-17-ui.md) | `c2a5df3` | Opus 5.5 | Self-reviewed; user review pending |
 | 2026-11-17 | [Agent MCP endpoint + analyst boundary](2026-11-17-mcp-agent.md) | `3eccbeb` | Opus 5.5 | Self-reviewed; user review pending |
 | 2026-11-17 | [MCP setup in Settings](2026-11-17-mcp-ui.md) | `3e3042c` | Opus 5.5 | Self-reviewed; user review pending |
