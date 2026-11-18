@@ -18,7 +18,7 @@ import {
 } from "../ipc";
 import { claimState, clock, elapsed, isUnacked, liveClaims, nextDue, todayScope, until, useNow } from "../model";
 import { proposalRoute, taskRoute } from "../route";
-import type { HoverEdge, HoverMode, Snapshot } from "../types";
+import type { ClaimHolder, HoverEdge, HoverMode, Snapshot } from "../types";
 import { followUpdates, requestInstall, useUpdater, type UpdateState } from "../updater";
 import { initialPlacement, placeIn, placementAfterDrag, type Anchor, type Screen } from "./place";
 
@@ -190,7 +190,6 @@ export function HoverApp() {
     return (
       <div className={`hroot${inTauri ? "" : " dev"}`} data-edge={shownEdge} data-mode="tab">
         <div ref={shell} className="tab" aria-label={failed ? "Relay: data unavailable" : "Relay: loading"}>
-          <Mark size={22} />
           <span className="cnt">{failed ? "!" : "·"}</span>
         </div>
       </div>
@@ -209,11 +208,20 @@ export function HoverApp() {
           className={`tab${pulsing ? " pulse" : ""}`}
           onMouseEnter={inTauri ? undefined : expand}
           onAnimationEnd={() => setPulsing(false)}
-          aria-label={`Relay: ${scope.total} today, ${scope.needsYou} need you`}
+          aria-label={`Relay: ${scope.total} today, ${scope.inProgress} in progress, ${scope.needsYou} need you`}
         >
-          <Mark size={22} />
           {badge && <span className={`b${scope.needsYou ? "" : " upd"}`}>{badge}</span>}
           <span className="cnt">{scope.total}</span>
+          <span className="fill">
+            <i style={{ height: `${scope.total ? (scope.inProgress / scope.total) * 100 : 0}%` }} />
+          </span>
+          <span className="pips">
+            {snap.sync
+              .filter((s) => s.state !== "off")
+              .map((s) => (
+                <i key={s.name} className={`dot sync-${s.state}`} />
+              ))}
+          </span>
         </div>
       ) : (
         <div
@@ -275,45 +283,36 @@ function Panel({ snap, flags, update, failed, onPin, onDnd, onDrag }: PanelProps
     onDrag();
   };
 
-  const needsSection = (
-    <section className="sec" key="needs">
-      <h3>Needs you {needs && <span className="meta">{scope.needsYou}</span>}</h3>
-      {needs ? (
-        <NeedsYou snap={snap} openTask={openTask} />
-      ) : (
-        <div className="calm">
-          Nothing waiting.
-          {snap.lastProposalHandledAt && ` Last proposal handled ${clock(snap.lastProposalHandledAt)}.`}
-        </div>
-      )}
-    </section>
+  const needsSection = needs ? (
+    <NeedsYou key="needs" snap={snap} openTask={openTask} />
+  ) : (
+    <div className="calm" key="needs">
+      <span className="ok">✓</span>
+      Nothing needs you
+      {snap.lastProposalHandledAt && ` · last proposal handled ${clock(snap.lastProposalHandledAt)}`}
+    </div>
   );
 
   const claimsSection = (
-    <section className="sec" key="claims">
+    <section className="grp" key="claims">
       <h3>
-        Active claims {claims.length > 0 && <span className="meta">lease {claims[0].claim.leaseMinutes}m</span>}
+        Agents working {claims.length > 0 && <span className="meta">lease {claims[0].claim.leaseMinutes} min</span>}
       </h3>
       {claims.map((t) => {
         const c = t.claim;
         const state = claimState(c, now);
-        const leaseUsed = Math.min(100, ((now - Date.parse(c.lastProgressAt)) / (c.leaseMinutes * 60_000)) * 100);
+        const leaseLeft = Math.max(0.04, 1 - (now - Date.parse(c.lastProgressAt)) / (c.leaseMinutes * 60_000));
         return (
           <button type="button" className="cl" key={c.id} onClick={() => openTask(t.id)}>
-            <span className={`live ${state}`} />
+            <Avatar holder={c.holder} stale={state === "stale"} lease={leaseLeft} />
             <span className="t">{t.title}</span>
             <span className="el">
               {c.holder} · {elapsed(c.claimedAt, now)}
             </span>
             <span className="p">
-              {c.lastProgress}
-              <span className={`meta${state === "stale" ? " stale" : ""}`}>{elapsed(c.lastProgressAt, now)} ago</span>
+              {c.lastProgress} ·{" "}
+              <span className={state === "stale" ? "stale" : undefined}>{elapsed(c.lastProgressAt, now)} ago</span>
             </span>
-            {!needs && (
-              <span className="bar">
-                <i className={state === "stale" ? "st" : undefined} style={{ width: `${Math.max(3, leaseUsed)}%` }} />
-              </span>
-            )}
           </button>
         );
       })}
@@ -321,21 +320,17 @@ function Panel({ snap, flags, update, failed, onPin, onDnd, onDrag }: PanelProps
     </section>
   );
 
-  const dueSection = (
-    <section className="sec" key="due">
-      <h3>Next due</h3>
-      {due ? (
-        <button type="button" className="nx" onClick={() => openTask(due.id)}>
-          <Icon name="clock" className="muted-fg" />
-          <span className="t">{due.title}</span>
-          <span className="when">
-            {clock(due.due!.at)} · {until(due.due!.at, now)}
-          </span>
-        </button>
-      ) : (
-        <div className="calm">Nothing with a time due today.</div>
-      )}
-    </section>
+  const dueSection = due ? (
+    <button type="button" className="nx" key="due" onClick={() => openTask(due.id)}>
+      <span className="tm">{clock(due.due!.at)}</span>
+      <span className="t">{due.title}</span>
+      <span className="when">{until(due.due!.at, now)}</span>
+    </button>
+  ) : (
+    <div className="calm" key="due">
+      <Icon name="clock" className="muted-fg" />
+      Nothing with a time due today
+    </div>
   );
 
   return (
@@ -343,49 +338,65 @@ function Panel({ snap, flags, update, failed, onPin, onDnd, onDrag }: PanelProps
       <div className="hh" onPointerDown={startDrag}>
         <Mark size={20} />
         <b>Relay</b>
-        <span className={`need${needs ? "" : " zero"}`}>{scope.needsYou} needs you</span>
         {flags.paused && <span className="meta">capture paused</span>}
         <span className="push" />
-        <button type="button" className={`ib${flags.dnd ? " on" : ""}`} title="Do not disturb" aria-pressed={flags.dnd} onClick={onDnd}>
+        <button type="button" className={`rb${flags.dnd ? " on" : ""}`} title="Do not disturb" aria-pressed={flags.dnd} onClick={onDnd}>
           <Icon name="moon" />
         </button>
-        <button type="button" className={`ib${flags.pinned ? " on" : ""}`} title="Pin open" aria-pressed={flags.pinned} onClick={onPin}>
+        <button type="button" className={`rb${flags.pinned ? " on" : ""}`} title="Pin open" aria-pressed={flags.pinned} onClick={onPin}>
           <Icon name="pin" />
         </button>
-        <span className="ib grip" title="Drag to another edge">
+        <span className="rb grip" title="Drag to another edge">
           <Icon name="grip" />
         </span>
       </div>
 
-      <div className="gauge">
-        <div className="counts">
-          <b>{scope.total}</b>today<span className="sep">/</span>
-          <b>{scope.inProgress}</b>in progress<span className="sep">/</span>
-          <span className="bl">
-            <b>{scope.blocked}</b>blocked
+      <UpdateBanner update={update} version={snap.version} />
+
+      <div className="hero">
+        <span className="big">
+          {scope.total}
+          <small>today</small>
+        </span>
+        <span className="chips">
+          <span className="chip" style={{ "--c": "var(--c-active)" } as React.CSSProperties}>
+            <i />
+            {scope.inProgress} in progress
           </span>
-        </div>
-        <div className="syncs">
-          {snap.sync.every((s) => s.state === "off") && <span className="meta">no sources connected</span>}
-          {snap.sync
-            .filter((s) => s.state !== "off")
-            .map((s) => (
-            <span key={s.name} title={s.reason ? `${s.name}: ${s.reason}` : `${s.name}: ok`}>
-              <i className={`dot sync-${s.state}`} />
-              {s.name}
+          <span className="chip" style={{ "--c": "var(--c-blocked)" } as React.CSSProperties}>
+            <i />
+            {scope.blocked} blocked
+          </span>
+          {needs && (
+            <span className="chip need" style={{ "--c": "var(--warn)" } as React.CSSProperties}>
+              <i />
+              {scope.needsYou} need you
             </span>
-          ))}
-        </div>
+          )}
+        </span>
       </div>
 
       <div className="hb">{needs ? [needsSection, claimsSection] : [claimsSection, dueSection, needsSection]}</div>
 
       <div className="hfoot">
-        <UpdateRow update={update} version={snap.version} failed={failed} slot={needs && due ? `next due · ${due.title} · ${clock(due.due!.at)}` : null} />
+        {failed ? (
+          <div className="slot warn-fg">Could not read Relay's data · retrying</div>
+        ) : (
+          needs && due && <div className="slot">Next due {clock(due.due!.at)} · {due.title}</div>
+        )}
         <div className="hf">
-          <span className="meta">
-            <kbd>Ctrl+Alt+R</kbd> summon
+          <span className="syncs">
+            {snap.sync.every((s) => s.state === "off") && <span>no sources connected</span>}
+            {snap.sync
+              .filter((s) => s.state !== "off")
+              .map((s) => (
+                <span key={s.name} title={s.reason ? `${s.name}: ${s.reason}` : `${s.name}: ok`}>
+                  <i className={`dot sync-${s.state}`} />
+                  {s.name}
+                </span>
+              ))}
           </span>
+          <kbd title="Summon">Ctrl Alt R</kbd>
           <button type="button" className="btn ghost open" onClick={() => void showMainWindow()}>
             <Icon name="ext" />
             Open Relay
@@ -396,14 +407,40 @@ function Panel({ snap, flags, update, failed, onPin, onDnd, onDrag }: PanelProps
   );
 }
 
-/** The main window owns the updater; this row mirrors it. Restart only installs what is already downloaded. */
-function UpdateRow({ update, version, failed, slot }: { update: UpdateState; version: string; failed: boolean; slot: string | null }) {
+const AVATAR: Record<ClaimHolder, { initials: string; color: string }> = {
+  T3: { initials: "T3", color: "var(--i1)" },
+  OpenCode: { initials: "OC", color: "var(--s3)" },
+  "Claude Code": { initials: "CC", color: "var(--i3)" },
+};
+
+/** The agent's initials; the ring is the lease left since its last progress. */
+function Avatar({ holder, stale, lease }: { holder: ClaimHolder; stale: boolean; lease: number }) {
+  const a = AVATAR[holder];
+  const c = 2 * Math.PI * 16;
+  return (
+    <span className={`av${stale ? " stale" : ""}`} style={{ "--av": a.color } as React.CSSProperties}>
+      <svg viewBox="0 0 36 36" aria-hidden>
+        <circle className="bg" cx="18" cy="18" r="16" />
+        <circle className="fg" cx="18" cy="18" r="16" strokeDasharray={`${c * lease} ${c}`} />
+      </svg>
+      {a.initials}
+      <span className="st" />
+    </span>
+  );
+}
+
+/** The main window owns the updater; this banner mirrors it. Restart only installs what is already downloaded.
+    "Up to date" and "checking" show nothing. */
+function UpdateBanner({ update, version }: { update: UpdateState; version: string }) {
   if (update.kind === "ready") {
     return (
-      <div className="up ready">
-        <Icon name="download" className="accent-fg" />
-        <span>
-          <b>{update.version}</b> ready <span className="meta">· signed</span>
+      <div className="ban">
+        <span className="ic">
+          <Icon name="download" />
+        </span>
+        <span className="tx">
+          <b>Relay {update.version} is ready</b>
+          <small>signed · restarts Relay</small>
         </span>
         <button type="button" className="btn pri" onClick={requestInstall}>
           Restart
@@ -412,14 +449,22 @@ function UpdateRow({ update, version, failed, slot }: { update: UpdateState; ver
     );
   }
   if (update.kind === "available" || update.kind === "downloading") {
+    const pct = update.kind === "downloading" && update.progress !== null ? Math.round(update.progress * 100) : null;
     return (
-      <div className="up ready">
-        <Icon name="download" className="accent-fg" />
-        <span>
-          <b>{update.version}</b>{" "}
-          {update.kind === "available"
-            ? "available"
-            : `downloading${update.progress === null ? "…" : ` ${Math.round(update.progress * 100)}%`}`}
+      <div className="ban">
+        <span className="ic">
+          <Icon name="download" />
+        </span>
+        <span className="tx">
+          <b>
+            {update.kind === "available" ? `Relay ${update.version} available` : `Downloading ${update.version}`}
+            {pct !== null && ` · ${pct}%`}
+          </b>
+          {pct !== null && (
+            <span className="trk">
+              <i style={{ width: `${pct}%` }} />
+            </span>
+          )}
         </span>
         <button type="button" className="btn" onClick={() => void openMain("/settings")}>
           Details
@@ -427,19 +472,21 @@ function UpdateRow({ update, version, failed, slot }: { update: UpdateState; ver
       </div>
     );
   }
-  if (failed) return <div className="up idle warn-fg">Could not read Relay's data · retrying</div>;
-  if (slot) return <div className="up idle">{slot}</div>;
   if (update.kind === "error") {
     return (
-      <div className="up idle">
-        Relay {version} · update check failed{" "}
-        <button type="button" className="linkish" onClick={() => void requestUpdateCheck()}>
-          retry
+      <div className="ban warn">
+        <span className="ic">!</span>
+        <span className="tx">
+          <b>Update check failed</b>
+          <small>Relay {version}</small>
+        </span>
+        <button type="button" className="btn" onClick={() => void requestUpdateCheck()}>
+          Retry
         </button>
       </div>
     );
   }
-  return <div className="up idle">Relay {version} · {update.kind === "checking" ? "checking for updates…" : "up to date"}</div>;
+  return null;
 }
 
 /** Proposals first, then unacked changes; at most two cards, the rest count toward Review. */
