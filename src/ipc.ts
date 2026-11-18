@@ -88,16 +88,14 @@ export const hoverFocus = (focus: boolean) => call<void>("hover_focus", { focus 
 
 /* ── MCP ── */
 
-/** The loopback MCP server as Rust reports it; `mcp://status` carries the same shape. Tokens are local
-    bearer tokens for this machine, null until Rust has read or created the token files. */
+/** The loopback MCP server as Rust reports it; `mcp://status` carries the same shape. It holds no tokens:
+    `mcpToken` fetches one when the user reveals or copies it. */
 export interface McpStatus {
   running: boolean;
   port: number;
   url: string;
   analystUrl: string;
   error: string | null;
-  agentToken: string | null;
-  analystToken: string | null;
 }
 
 const browserMcp: McpStatus = {
@@ -106,8 +104,6 @@ const browserMcp: McpStatus = {
   url: "http://127.0.0.1:38547/mcp",
   analystUrl: "http://127.0.0.1:38547/mcp/analyst",
   error: null,
-  agentToken: null,
-  analystToken: null,
 };
 
 /** The last status; Rust starts the server in the background, so the first answer may say not running yet. */

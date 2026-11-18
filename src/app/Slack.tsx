@@ -9,6 +9,7 @@ import {
   jevClearKey,
   jevSetKey,
   jevStatus,
+  jobRetry,
   jobsList,
   onEvent,
   openExternal,
@@ -414,11 +415,12 @@ export function InboxView({ slack, openId, onOpen, onSettings }: InboxProps) {
   const [filter, setFilter] = useState<Filter>(undefined);
   const { data: episodes, error } = useLive(() => episodesList({ stateFilter: filter, limit: 50 }), [filter]);
   const notConnected = slack !== null && !slack.configured;
-  const sub = notConnected
-    ? "Slack is not connected"
-    : episodes
-      ? `${plural(episodes.length, "episode")}${episodes.length === 50 ? " · newest 50" : ""}`
-      : "Loading episodes…";
+  // Captured episodes stay readable after Slack is disconnected, so "not connected" only replaces an empty list.
+  const sub = !episodes
+    ? "Loading episodes…"
+    : episodes.length === 0 && notConnected
+      ? "Slack is not connected"
+      : `${plural(episodes.length, "captured episode")}${episodes.length === 50 ? " · newest 50" : ""}`;
 
   return (
     <section className="main">
@@ -501,10 +503,12 @@ interface SheetProps {
 export function EpisodeSheet({ id, onClose }: SheetProps) {
   const now = useNow();
   const sheetRef = useRef<HTMLElement>(null);
-  const { data: detail, error } = useLive(() => episodeGet(id), [id]);
+  const episode = useLive(() => episodeGet(id), [id]);
+  const { data: detail, error } = episode;
   const jobs = useLive(() => jobsList({ limit: 50 }), []);
   const [queued, setQueued] = useState<AnalysisJob | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
+  const [retrying, setRetrying] = useState(false);
   const [analyzeError, setAnalyzeError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -515,6 +519,22 @@ export function EpisodeSheet({ id, onClose }: SheetProps) {
   const listed = newest((jobs.data ?? []).filter((j) => j.conversationId === id));
   const job = listed && (!queued || Date.parse(listed.createdAt) >= Date.parse(queued.createdAt)) ? listed : queued;
   const running = analyzing || job?.state === "pending" || job?.state === "running";
+  const waiting = job?.state === "pending_agent";
+
+  async function retry(failed: AnalysisJob) {
+    setRetrying(true);
+    setAnalyzeError(null);
+    try {
+      const next = await jobRetry(failed.id);
+      if (next) setQueued(next);
+      else setAnalyzeError(inTauri ? "Relay did not requeue this job." : "Analysis runs in the desktop app.");
+      await Promise.all([jobs.reload(), episode.reload()]);
+    } catch (err) {
+      setAnalyzeError(errorText(err));
+    } finally {
+      setRetrying(false);
+    }
+  }
 
   async function analyze() {
     setAnalyzing(true);
@@ -574,10 +594,10 @@ export function EpisodeSheet({ id, onClose }: SheetProps) {
 
       <div className="sh-f ejob">
         {analyzeError && <p className="mcp-err">{analyzeError}</p>}
-        {job && <JobState job={job} />}
-        <button type="button" className="btn pri" disabled={!detail || running} onClick={() => void analyze()}>
+        {job && <JobState job={job} retrying={retrying} onRetry={() => void retry(job)} />}
+        <button type="button" className="btn pri" disabled={!detail || running || waiting || retrying} onClick={() => void analyze()}>
           {running && <Spinner />}
-          {analyzing ? "Queuing…" : running ? "Analysis running" : "Analyze now"}
+          {analyzing ? "Queuing…" : running ? "Analysis running" : waiting ? "Waiting for an agent…" : "Analyze now"}
         </button>
       </div>
     </aside>
@@ -617,7 +637,7 @@ function TranscriptLine({ m, name }: { m: SlackMessage; name: string }) {
   );
 }
 
-function JobState({ job }: { job: AnalysisJob }) {
+function JobState({ job, retrying, onRetry }: { job: AnalysisJob; retrying: boolean; onRetry: () => void }) {
   return (
     <div className="jstate" role="status">
       <div className="jstate-h">
@@ -629,7 +649,17 @@ function JobState({ job }: { job: AnalysisJob }) {
         <p className="meta">Waiting for an agent. An analyst session picks this job up through Relay's analyst MCP endpoint.</p>
       )}
       {job.summary && <p>{job.summary}</p>}
-      {job.error && <p className="mcp-err">{job.error}</p>}
+      {job.state === "failed" ? (
+        <div className="jstate-fail">
+          <p className="mcp-err">{job.error ?? "The analysis failed without an error message."}</p>
+          <button type="button" className="btn" disabled={retrying} onClick={onRetry}>
+            {retrying && <Spinner />}
+            {retrying ? "Requeueing…" : "Retry"}
+          </button>
+        </div>
+      ) : (
+        job.error && <p className="mcp-err">{job.error}</p>
+      )}
     </div>
   );
 }

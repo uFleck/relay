@@ -1248,6 +1248,18 @@ h3.sub {
 .jstate p {
   margin: 0;
 }
+.jstate-fail {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.jstate-fail p {
+  flex: 1;
+  min-width: 0;
+}
+.jstate-fail .btn {
+  flex: none;
+}
 
 .jrows {
   margin: 0 0 8px;
