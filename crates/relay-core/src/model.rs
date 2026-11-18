@@ -694,6 +694,145 @@ pub struct Setting {
     pub value: String,
 }
 
+// ---------------------------------------------------------------------------
+// Slack capture (PLAN 3.1)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SlackPeer {
+    pub id: String,
+    pub user_id: String,
+    pub name: Option<String>,
+    pub is_bot: bool,
+    pub excluded: bool,
+    pub last_message_at: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SlackEpisode {
+    pub id: String,
+    pub peer_id: String,
+    /// `open`, `waiting`, `closed`, `analyzed` or `needs_review`.
+    pub state: String,
+    pub started_at: String,
+    pub last_message_at: String,
+    pub closed_at: Option<String>,
+    pub summary: Option<String>,
+    pub jev_json: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SlackMessage {
+    pub id: String,
+    pub episode_id: String,
+    pub peer_id: String,
+    pub channel_id: String,
+    pub ts: String,
+    pub thread_ts: Option<String>,
+    /// `in` (from the peer) or `out` (from the user).
+    pub direction: String,
+    pub user_id: Option<String>,
+    pub text: String,
+    pub permalink: Option<String>,
+    pub edited_at: Option<String>,
+    pub deleted: bool,
+    /// Part of the 14-day backfill; JEV runs in shadow mode for these.
+    pub historical: bool,
+    pub created_at: String,
+}
+
+/// A list row: the episode plus what the UI needs without loading every message.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EpisodeSummary {
+    pub episode: SlackEpisode,
+    pub peer_name: Option<String>,
+    pub peer_user_id: String,
+    pub message_count: usize,
+    /// The newest message text, capped for the list.
+    pub preview: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EpisodeDetail {
+    pub episode: SlackEpisode,
+    pub peer: SlackPeer,
+    pub messages: Vec<SlackMessage>,
+}
+
+/// One message as Slack reports it, before Relay assigns an episode.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RawSlackMessage {
+    pub channel_id: String,
+    pub ts: String,
+    pub thread_ts: Option<String>,
+    pub user_id: Option<String>,
+    pub text: String,
+    pub permalink: Option<String>,
+    pub edited_at: Option<String>,
+    pub deleted: bool,
+    pub historical: bool,
+}
+
+// ---------------------------------------------------------------------------
+// Analysis jobs (PLAN 3.2-3.3)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalysisJob {
+    pub id: String,
+    pub episode_id: String,
+    /// The newest message ts the job covers. One live job per episode watermark.
+    pub watermark: String,
+    /// `screen` or `classify`.
+    pub stage: String,
+    /// `pending`, `running`, `pending_agent`, `done`, `failed`, `superseded` or `shadow`.
+    pub state: String,
+    pub project_id: Option<String>,
+    /// `ignore`, `review`, `change` or `new_task`.
+    pub route: Option<String>,
+    pub jev_json: Option<String>,
+    pub candidates: Vec<String>,
+    pub summary: Option<String>,
+    pub error: Option<String>,
+    pub superseded_by: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub started_at: Option<String>,
+    pub completed_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NewJob {
+    pub episode_id: String,
+    pub watermark: String,
+    pub stage: String,
+    pub project_id: Option<String>,
+    pub route: Option<String>,
+    pub jev_json: Option<String>,
+    pub candidates: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct JobOp {
+    pub id: String,
+    pub job_id: String,
+    pub op_index: i64,
+    pub kind: String,
+    pub result_json: String,
+    pub created_at: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

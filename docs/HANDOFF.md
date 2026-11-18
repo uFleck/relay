@@ -60,6 +60,15 @@ Manual checks still needed on Windows:
 4. Hover buttons work on the first click without taking focus.
 5. MCP settings sheet is live and verified (green state, URLs, token copy, snippets); no manual check left there.
 
+## Release (live)
+
+- Repo: <https://github.com/uFleck/relay>, **public** (the updater downloads assets without a token).
+- `Production` environment with `TAURI_SIGNING_PRIVATE_KEY` and `_PASSWORD`; key at `%USERPROFILE%\.relay\signing.key`.
+- Cut releases locally: `pwsh scripts/release.ps1 -Version X.Y.Z -SkipInstall` after `version.ps1`, the bump commit and the tag.
+- Measured: v0.1.0 **128.4 s**, v0.1.1 **145.4 s** total incl. upload (build gate 123.8 s / 140.9 s).
+- Updater validated on a real install: 0.1.0 → detected 0.1.1 → signature verified → restart → 0.1.1.
+- The CI workflow is **dispatch-only** (no `relay-release` runner exists); a tag push must not queue a job.
+
 ## Next packages
 
 1. **Slack Socket Mode** (P2): app/user tokens, DM events, episode segmentation, catch-up polling, fixtures/tests. No UI until capture works.
