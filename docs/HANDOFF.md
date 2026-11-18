@@ -69,6 +69,18 @@ Manual checks still needed on Windows:
 - Updater validated on a real install: 0.1.0 → detected 0.1.1 → signature verified → restart → 0.1.1.
 - The CI workflow is **dispatch-only** (no `relay-release` runner exists); a tag push must not queue a job.
 
+The local Slack/JEV loop is real as of `f5ca859`: capture → JEV → job → headless OpenCode reviewer → task. All commits are local except `master` and `v0.1.0`/`v0.1.1` on `origin`.
+
+## Slack and JEV (2026-11-17)
+
+- Settings → Slack: user token (`xoxp-`) + app token (`xapp-`), keyring-backed; `docs/SLACK_SETUP.md` has the exact app/scopes.
+- Capture is Socket Mode first, with a 14-day backfill on the first connect (marked `historical`, JEV in shadow mode).
+- Inbox lists episodes with a transcript sheet and **Analyze now**; Review shows "From Slack" jobs.
+- JEV: two real calls per episode (screen + classify), middle band rescreens at close instead of queuing.
+- A new-task/change route starts `src-tauri/src/analyst.rs`: one `opencode run --agent relay-analyst` at a time, isolated config, 180s timeout, Job Object kill, logs in `%APPDATA%\dev.relay.app\analyst\`.
+- Live evidence (simulated DM, real JEV/OpenCode): `is_new_task` 0.89, `complete` 0.90 → route `new_task` → reviewer created "Verify the RC build" and called `jobs_complete`. Test data was cleared afterwards.
+- Still untested against a real Slack workspace: the socket, token approval and event delivery need the two tokens.
+
 ## Next packages
 
 1. **Slack Socket Mode** (P2): app/user tokens, DM events, episode segmentation, catch-up polling, fixtures/tests. No UI until capture works.
