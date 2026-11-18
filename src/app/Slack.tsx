@@ -40,8 +40,9 @@ import { Checkbox, Select } from "../ui/controls";
 const SLACK_APPS = "https://api.slack.com/apps";
 
 /** Loads `load` now, on every `relay://change` and whenever the window regains focus. A reply that
-    arrives after a newer request started is dropped. */
-export function useLive<T>(load: () => Promise<T>, deps: React.DependencyList) {
+    arrives after a newer request started is dropped. `onChange: false` skips `relay://change`, for
+    data the store does not hold (git state). */
+export function useLive<T>(load: () => Promise<T>, deps: React.DependencyList, { onChange = true } = {}) {
   const [state, setState] = useState<{ data: T | undefined; error: string | null }>({ data: undefined, error: null });
   const seq = useRef(0);
   const reload = useCallback(load, deps);
@@ -56,14 +57,14 @@ export function useLive<T>(load: () => Promise<T>, deps: React.DependencyList) {
   }, [reload]);
   useEffect(() => {
     void run();
-    const off = onEvent("relay://change", () => void run());
+    const off = onChange ? onEvent("relay://change", () => void run()) : () => {};
     const onFocus = () => void run();
     window.addEventListener("focus", onFocus);
     return () => {
       off();
       window.removeEventListener("focus", onFocus);
     };
-  }, [run]);
+  }, [run, onChange]);
   const mutate = useCallback((fn: (data: T | undefined) => T) => {
     seq.current++;
     setState((s) => ({ data: fn(s.data), error: null }));
