@@ -330,9 +330,13 @@ async fn poll_once(app: &AppHandle) -> Result<usize, String> {
     let mut creds = credentials(false).await;
     let mut errors = Vec::new();
     let mut synced = 0;
+    let mut discovered = 0;
     // Before the early return below: a fresh repo has no PR links yet.
     match discover(&store, &mut creds).await {
-        Ok(created) => synced += created,
+        Ok(created) => {
+            synced += created;
+            discovered = created;
+        }
         Err(error) => errors.push(error),
     }
     let links = store
@@ -350,6 +354,9 @@ async fn poll_once(app: &AppHandle) -> Result<usize, String> {
     }
     if synced > 0 {
         let _ = app.emit("relay://change", ());
+    }
+    if discovered > 0 {
+        crate::slack::reanalyze_in_background(app.clone());
     }
     if errors.is_empty() {
         Ok(synced)

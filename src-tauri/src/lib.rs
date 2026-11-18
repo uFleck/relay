@@ -281,6 +281,8 @@ pub fn run() {
             slack::episodes_list,
             slack::episode_get,
             slack::episode_analyze,
+            slack::slack_reanalyze,
+            slack::slack_reanalyze_recent,
             slack::jobs_list,
             slack::jev_status,
             slack::jev_set_key,

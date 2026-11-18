@@ -223,7 +223,8 @@ pub async fn sync(app: &AppHandle) -> Result<SlackSyncReport, String> {
     };
     if state.jev().is_some() {
         for (episode_id, historical) in outcome.episodes.into_iter().take(super::CATCHUP_ANALYSES) {
-            match super::analyze(app, &state, &episode_id, historical).await {
+            match super::analyze(app, &state, &episode_id, historical, super::Existing::Keep).await
+            {
                 Ok(_) => report.analyzed += 1,
                 Err(error) => {
                     report.error.get_or_insert(error);

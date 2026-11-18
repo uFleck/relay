@@ -212,6 +212,9 @@ pub async fn run(app: &AppHandle, store: &Store) -> Result<SyncResult, String> {
         *last = Some(outcome.clone());
     }
     let _ = app.emit("relay://change", ());
+    if outcome.as_ref().is_ok_and(|result| result.created > 0) {
+        crate::slack::reanalyze_in_background(app.clone());
+    }
     outcome
 }
 
