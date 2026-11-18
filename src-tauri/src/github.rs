@@ -54,7 +54,14 @@ pub fn start(app: AppHandle) {
             let state = app.state::<GithubState>();
             let status = state.set_error(result.err());
             let _ = app.emit("github://status", &status);
-            tokio::time::sleep(POLL_EVERY).await;
+            // Without a token the public API allows 60 calls/hour; slow down instead of
+            // burning the limit on every poll.
+            let pause = if secrets::read(TOKEN_KEY).is_some() {
+                POLL_EVERY
+            } else {
+                Duration::from_secs(1800)
+            };
+            tokio::time::sleep(pause).await;
         }
     });
 }
@@ -69,8 +76,10 @@ async fn poll_once(app: &AppHandle) -> Result<usize, String> {
     }
     let client = GithubClient::new(secrets::read(TOKEN_KEY)).map_err(|error| error.to_string())?;
     let mut updated = 0;
+    let mut errors: Vec<String> = Vec::new();
     for link in links {
         let Some((owner, repo, number)) = parse_pr_url(&link.url) else {
+            errors.push(format!("{} is not a GitHub pull request", link.url));
             continue;
         };
         match client.pull_request(&owner, &repo, number).await {
@@ -95,13 +104,23 @@ async fn poll_once(app: &AppHandle) -> Result<usize, String> {
                     .map_err(|error| error.to_string())?;
                 updated += 1;
             }
-            Err(error) => return Err(format!("PR {}: {error}", link.url)),
+            // One unreachable PR must not stop the others.
+            Err(error) => errors.push(format!("PR {}: {error}", link.url)),
         }
     }
     if updated > 0 {
         let _ = app.emit("relay://change", ());
     }
-    Ok(updated)
+    if errors.is_empty() {
+        Ok(updated)
+    } else if updated > 0 {
+        let state = app.state::<GithubState>();
+        let status = state.set_error(Some(errors.join("; ")));
+        let _ = app.emit("github://status", &status);
+        Ok(updated)
+    } else {
+        Err(errors.join("; "))
+    }
 }
 
 fn parse_pr_url(url: &str) -> Option<(String, String, u64)> {

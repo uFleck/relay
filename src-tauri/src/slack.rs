@@ -61,6 +61,9 @@ struct Inner {
     status: SlackStatus,
     stop: Option<watch::Sender<bool>>,
     names: HashMap<String, String>,
+    /// DM channel -> the peer, so a message from the account owner is still attributed
+    /// to the conversation and stored as outbound.
+    channels: HashMap<String, String>,
 }
 
 pub struct SlackState {
@@ -78,6 +81,7 @@ impl SlackState {
                 status: SlackStatus::default(),
                 stop: None,
                 names: HashMap::new(),
+                channels: HashMap::new(),
             }),
             jev: Mutex::new(jev.map(Arc::new)),
         }
@@ -121,6 +125,23 @@ impl SlackState {
             .insert(user_id.to_string(), name.to_string());
     }
 
+    fn peer_for(&self, channel: &str) -> Option<String> {
+        self.inner
+            .lock()
+            .expect("slack state")
+            .channels
+            .get(channel)
+            .cloned()
+    }
+
+    fn remember_channel(&self, channel: &str, peer: &str) {
+        self.inner
+            .lock()
+            .expect("slack state")
+            .channels
+            .insert(channel.to_string(), peer.to_string());
+    }
+
     fn jev(&self) -> Option<Arc<JevClient>> {
         self.jev.lock().expect("jev state").clone()
     }
@@ -147,6 +168,21 @@ impl SlackState {
 pub fn start(app: AppHandle, store: Arc<Store>) {
     let state = SlackState::new(store);
     app.manage(state);
+
+    // Retention and episode closing. Neither had a caller before the review.
+    let retention = app.clone();
+    tauri::async_runtime::spawn(async move {
+        loop {
+            let store = retention.state::<Arc<Store>>().inner().clone();
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|duration| duration.as_secs() as i64)
+                .unwrap_or(0);
+            let _ = store.prune_slack_messages(now - 30 * 86_400);
+            let _ = store.close_stale_slack_episodes(90);
+            tokio::time::sleep(Duration::from_secs(6 * 3600)).await;
+        }
+    });
 
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -351,6 +387,9 @@ async fn catch_up(
     stop: watch::Receiver<bool>,
 ) {
     let state = app.state::<SlackState>();
+    if paused(&app) {
+        return;
+    }
     let dms = match client.list_dms().await {
         Ok(dms) => dms,
         Err(error) => {
@@ -362,9 +401,10 @@ async fn catch_up(
 
     let mut changed: Vec<(String, bool)> = Vec::new();
     for dm in dms {
-        if *stop.borrow() {
+        if *stop.borrow() || paused(&app) {
             return;
         }
+        state.remember_channel(&dm.id, &dm.user_id);
         let cursor = state.store.slack_channel_cursor(&dm.id).unwrap_or(None);
         let historical = cursor.is_none();
         let oldest = cursor
@@ -424,7 +464,21 @@ async fn capture(
     client: &SlackClient,
     message: &RawSlackMessage,
 ) -> Option<String> {
-    let peer_id = message.user_id.clone()?;
+    let channel = message.channel_id.as_str();
+    let peer_id = match state.peer_for(channel) {
+        Some(peer) => peer,
+        None => match client.dm_peer(channel).await {
+            Ok(Some(peer)) => {
+                state.remember_channel(channel, &peer);
+                peer
+            }
+            Ok(None) => return None,
+            Err(error) => {
+                eprintln!("relay: conversations.info {channel}: {error}");
+                return None;
+            }
+        },
+    };
     let name = resolve_name(state, client, &peer_id).await;
     match state
         .store
@@ -586,7 +640,7 @@ async fn analyze(
         _ => None,
     };
 
-    let job = state
+    let (job, inserted) = state
         .store
         .create_job(NewJob {
             conversation_id: conversation_id.to_string(),
@@ -598,6 +652,10 @@ async fn analyze(
             candidates: candidates.clone(),
         })
         .map_err(|error| error.to_string())?;
+    if !inserted {
+        // A replay of the same watermark must not reset a finished job or rerun the reviewer.
+        return Ok(Some(job));
+    }
 
     let (job_state, summary) = if shadow {
         ("shadow", "backfill: answers stored, no action".to_string())
@@ -950,6 +1008,17 @@ pub fn slack_clear_capture(app: AppHandle, state: State<'_, SlackState>) -> Resu
         .store
         .clear_slack_capture()
         .map_err(|error| error.to_string())?;
+    // Reviewer logs contain DM text; clearing capture must clear them too.
+    if let Ok(dir) = app.path().app_data_dir() {
+        if let Ok(entries) = std::fs::read_dir(dir.join("analyst")) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with("run-") && name.ends_with(".log") {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+        }
+    }
     let _ = app.emit("relay://change", ());
     Ok(deleted)
 }
@@ -965,10 +1034,19 @@ pub fn job_retry(
         .store
         .get_job(&id)
         .map_err(|error| error.to_string())?;
-    if !matches!(job.state.as_str(), "failed" | "pending_agent" | "pending") {
+    if !matches!(job.state.as_str(), "failed" | "pending_agent") {
         return Err(format!(
-            "job {id} is {}; only failed or queued jobs retry",
+            "job {id} is {}; only failed or queued agent jobs retry (a review job needs a human)",
             job.state
+        ));
+    }
+    if state
+        .store
+        .job_has_ops(&id)
+        .map_err(|error| error.to_string())?
+    {
+        return Err(format!(
+            "job {id} already wrote; resume or inspect it instead of rerunning"
         ));
     }
     let job = state

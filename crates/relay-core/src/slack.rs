@@ -219,6 +219,21 @@ impl SlackClient {
         Ok(out)
     }
 
+    /// The peer of a 1:1 DM channel. Slack reports it as `channel.user`.
+    pub async fn dm_peer(&self, channel: &str) -> Result<Option<String>, SlackError> {
+        let value = self
+            .post(
+                "conversations.info",
+                &self.user_token,
+                json!({"channel": channel}),
+            )
+            .await?;
+        Ok(value
+            .pointer("/channel/user")
+            .and_then(Value::as_str)
+            .map(str::to_string))
+    }
+
     /// The display name for a user id, when the workspace exposes it.
     pub async fn user_name(&self, user_id: &str) -> Result<Option<String>, SlackError> {
         let value = self

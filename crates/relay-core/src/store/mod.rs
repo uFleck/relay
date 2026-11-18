@@ -1460,11 +1460,13 @@ impl Store {
         links_for_task(&conn, task_id)
     }
 
-    /// Every link of one kind (the PR poller walks `kind = "pr"`).
+    /// Every link of one kind on an active task (the PR poller walks `kind = "pr"`).
     pub fn list_links_by_kind(&self, kind: &str) -> Result<Vec<TaskLink>, StoreError> {
         let conn = self.conn();
         let mut stmt = conn.prepare(&format!(
-            "SELECT {LINK_COLUMNS} FROM task_links WHERE kind = ?1
+            "SELECT {LINK_COLUMNS} FROM task_links
+             WHERE kind = ?1
+               AND task_id IN (SELECT id FROM tasks WHERE archived = 0)
              ORDER BY COALESCE(last_synced_at, '') LIMIT 500"
         ))?;
         let rows = stmt.query_map(params![kind], link_from_row)?;
@@ -2147,10 +2149,10 @@ impl Store {
             .query_row(
                 &format!(
                     "SELECT {EPISODE_COLUMNS} FROM conversations
-                     WHERE peer_id = ?1 AND state IN ('open', 'waiting')
+                     WHERE channel_id = ?1 AND state IN ('open', 'waiting')
                      ORDER BY last_message_at DESC LIMIT 1"
                 ),
-                params![peer.id],
+                params![channel_id],
                 slack_episode_from_row,
             )
             .optional()?;
@@ -2361,13 +2363,15 @@ impl Store {
         Ok(changed)
     }
 
-    /// Retention: deletes captured messages older than `before` (RFC 3339). Episodes stay,
-    /// and task changes keep their own excerpt and permalink.
-    pub fn prune_slack_messages(&self, before: &str) -> Result<usize, StoreError> {
+    /// Retention: deletes captured messages whose Slack ts is before `before_seconds`
+    /// (Unix seconds). Using `ts` rather than capture time means a 14-day backfill does
+    /// not reset the clock. Episodes stay, and task changes keep their excerpt and
+    /// permalink.
+    pub fn prune_slack_messages(&self, before_seconds: i64) -> Result<usize, StoreError> {
         let conn = self.conn();
         let deleted = conn.execute(
-            "DELETE FROM messages WHERE created_at <> '' AND created_at < ?1",
-            params![before],
+            "DELETE FROM messages WHERE CAST(ts AS REAL) < ?1",
+            params![before_seconds as f64],
         )?;
         Ok(deleted)
     }
@@ -2388,9 +2392,10 @@ impl Store {
     // Analysis jobs (PLAN 3.2-3.3)
     // -----------------------------------------------------------------------
 
-    /// Creates the job for a conversation watermark, or returns the existing one. Any other
+    /// Creates the job for a conversation watermark and returns it with `true`, or returns
+    /// the existing job with `false` (a replay must not restart the reviewer). Any other
     /// live job for the conversation is marked `superseded`.
-    pub fn create_job(&self, new: NewJob) -> Result<AnalysisJob, StoreError> {
+    pub fn create_job(&self, new: NewJob) -> Result<(AnalysisJob, bool), StoreError> {
         if new.conversation_id.trim().is_empty() || new.watermark.trim().is_empty() {
             return Err(StoreError::InvalidInput(
                 "job conversation id and watermark are required".into(),
@@ -2426,7 +2431,7 @@ impl Store {
             .optional()?;
         if let Some(job) = existing {
             tx.commit()?;
-            return Ok(job);
+            return Ok((job, false));
         }
 
         let id = new_id();
@@ -2461,7 +2466,7 @@ impl Store {
             job_from_row,
         )?;
         tx.commit()?;
-        Ok(job)
+        Ok((job, true))
     }
 
     pub fn get_job(&self, id: &str) -> Result<AnalysisJob, StoreError> {
@@ -2587,6 +2592,17 @@ impl Store {
             )
             .optional()?;
         Ok(op)
+    }
+
+    /// True when the job already recorded a write; a retry must resume it, not repeat it.
+    pub fn job_has_ops(&self, job_id: &str) -> Result<bool, StoreError> {
+        let conn = self.conn();
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM job_ops WHERE job_id = ?1",
+            params![job_id],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
     }
 
     /// Adds a task the reviewer created for this job to its candidate list, so a later
@@ -4836,20 +4852,23 @@ mod tests {
     fn jobs_are_one_per_watermark_and_supersede_the_older_live_job() {
         let store = Store::open_in_memory().unwrap();
         let conversation = conversation(&store);
-        let first = store
+        let (first, inserted) = store
             .create_job(new_job(&conversation, "1700000000.000100"))
             .unwrap();
+        assert!(inserted);
         assert_eq!(first.state, "pending");
         assert_eq!(first.candidates, vec!["T1", "T2"]);
 
-        let replay = store
+        let (replay, inserted) = store
             .create_job(new_job(&conversation, "1700000000.000100"))
             .unwrap();
+        assert!(!inserted, "a replay must not count as a new job");
         assert_eq!(replay.id, first.id, "a replay returns the same job");
 
-        let second = store
+        let (second, inserted) = store
             .create_job(new_job(&conversation, "1700000600.000100"))
             .unwrap();
+        assert!(inserted);
         let superseded = store.get_job(&first.id).unwrap();
         assert_eq!(superseded.state, "superseded");
         assert_eq!(
@@ -4881,9 +4900,10 @@ mod tests {
     fn job_ops_replay_the_first_result() {
         let store = Store::open_in_memory().unwrap();
         let conversation = conversation(&store);
-        let job = store
+        let (job, inserted) = store
             .create_job(new_job(&conversation, "1700000000.000100"))
             .unwrap();
+        assert!(inserted);
         let (first, fresh) = store
             .record_job_op(&job.id, 0, "tasks_create", r#"{"id":"T1"}"#)
             .unwrap();

@@ -102,6 +102,7 @@ fn run(app: &AppHandle, job_id: &str) -> Result<(), String> {
     command
         .arg("/C")
         .arg("opencode")
+        .arg("--standalone")
         .arg("run")
         .arg("--agent")
         .arg("relay-analyst")
@@ -116,6 +117,9 @@ fn run(app: &AppHandle, job_id: &str) -> Result<(), String> {
         .arg(prompt(job_id))
         .current_dir(&dir)
         .env("OPENCODE_CONFIG", &config)
+        // A private server plus an empty config home: OpenCode must not merge the user's
+        // global config (which loads Executor and other MCP servers) into the reviewer.
+        .env("XDG_CONFIG_HOME", dir.join("config"))
         .stdin(Stdio::null())
         .stdout(Stdio::from(log))
         .stderr(Stdio::from(log_err));
@@ -161,6 +165,16 @@ fn run(app: &AppHandle, job_id: &str) -> Result<(), String> {
             log_path.display()
         ));
     }
+    // Tripwire: the reviewer must never reach Executor or another app's MCP server.
+    let log_text = fs::read_to_string(&log_path).unwrap_or_default();
+    for tool in ["executor", "hopper", "spawner"] {
+        if log_text.contains(tool) {
+            return Err(format!(
+                "the reviewer reached the {tool} MCP server; its config is not isolated (log: {})",
+                log_path.display()
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -174,25 +188,32 @@ fn config_json(token: &str) -> String {
     let config = json!({
         "$schema": "https://opencode.ai/config.json",
         "mcp": {
-            "relay-analyst": {
-                "type": "remote",
-                "url": mcp::analyst_url(mcp::DEFAULT_PORT),
-                "headers": { "Authorization": format!("Bearer {token}") },
-                "enabled": true
+            "servers": {
+                "relay-analyst": {
+                    "type": "remote",
+                    "url": mcp::analyst_url(mcp::DEFAULT_PORT),
+                    "headers": { "Authorization": format!("Bearer {token}") }
+                }
             }
         },
-        "agent": {
+        "agents": {
             "relay-analyst": {
                 "description": "Relay's Slack reviewer",
                 "mode": "primary",
                 "model": MODEL,
-                "prompt": crate::mcp::analyst_instructions(),
-                "tools": {
-                    "bash": false,
-                    "edit": false,
-                    "write": false,
-                    "webfetch": false
-                }
+                "system": crate::mcp::analyst_instructions(),
+                "permissions": [
+                    { "action": "relay-analyst_*", "resource": "*", "effect": "allow" },
+                    { "action": "relay-analyst:*", "resource": "*", "effect": "allow" },
+                    { "action": "shell", "resource": "*", "effect": "deny" },
+                    { "action": "edit", "resource": "*", "effect": "deny" },
+                    { "action": "read", "resource": "*", "effect": "deny" },
+                    { "action": "glob", "resource": "*", "effect": "deny" },
+                    { "action": "grep", "resource": "*", "effect": "deny" },
+                    { "action": "webfetch", "resource": "*", "effect": "deny" },
+                    { "action": "websearch", "resource": "*", "effect": "deny" },
+                    { "action": "subagent", "resource": "*", "effect": "deny" }
+                ]
             }
         }
     });

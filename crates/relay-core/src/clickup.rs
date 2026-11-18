@@ -85,6 +85,7 @@ impl ClickUpClient {
         include_closed: bool,
     ) -> Result<Vec<ClickUpTask>, ClickUpError> {
         let mut out = Vec::new();
+        let list_id = encode_segment(list_id);
         for page in 0..10 {
             let path = format!(
                 "/list/{list_id}/task?include_closed={include_closed}&subtasks=false&page={page}"
@@ -103,12 +104,19 @@ impl ClickUpClient {
     }
 
     async fn get(&self, path: &str) -> Result<Value, ClickUpError> {
-        let response = self
-            .http
-            .get(format!("{}{}", self.base, path))
-            .header("Authorization", &self.token)
-            .send()
-            .await?;
+        let mut response = self.send(path).await?;
+        if response.status().as_u16() == 429 {
+            // ClickUp documents Retry-After in seconds; honour one retry, capped.
+            let wait = response
+                .headers()
+                .get("retry-after")
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(5)
+                .min(30);
+            tokio::time::sleep(std::time::Duration::from_secs(wait)).await;
+            response = self.send(path).await?;
+        }
         if !response.status().is_success() {
             let status = response.status().as_u16();
             let message = response
@@ -122,6 +130,27 @@ impl ClickUpClient {
         }
         Ok(response.json().await?)
     }
+
+    async fn send(&self, path: &str) -> Result<reqwest::Response, ClickUpError> {
+        Ok(self
+            .http
+            .get(format!("{}{}", self.base, path))
+            .header("Authorization", &self.token)
+            .send()
+            .await?)
+    }
+}
+
+fn encode_segment(value: &str) -> String {
+    let mut out = String::new();
+    for byte in value.trim().bytes() {
+        if byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_' {
+            out.push(byte as char);
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
 }
 
 fn task_from(value: &Value) -> Option<ClickUpTask> {

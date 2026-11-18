@@ -152,7 +152,7 @@ pub async fn github_import_issues(
 
     let mut count = ImportCount::default();
     for issue in issues {
-        let external_id = issue.number.to_string();
+        let external_id = format!("{}/{}#{}", owner.trim(), repo.trim(), issue.number);
         if store
             .find_link("github", Some(&external_id), &issue.url)
             .map_err(|error| error.to_string())?

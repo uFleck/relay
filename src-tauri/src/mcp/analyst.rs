@@ -206,8 +206,28 @@ fn require_candidate(job: &AnalysisJob, task_id: &str) -> Result<(), ToolError> 
     }
 }
 
+/// Writes are only accepted while the reviewer owns the job.
+fn require_running(job: &AnalysisJob) -> Result<(), ToolError> {
+    if job.state == "running" {
+        Ok(())
+    } else {
+        Err(ToolError::new(
+            "job_not_running",
+            format!(
+                "job {} is {}; the reviewer may only write while it is running",
+                job.id, job.state
+            ),
+        ))
+    }
+}
+
 /// The op slot for this key, plus the stored result when the write already happened.
-fn op_slot(store: &Store, job_id: &str, key: &str) -> Result<(i64, Option<Value>), ToolError> {
+fn op_slot(
+    store: &Store,
+    job_id: &str,
+    key: &str,
+    tool_name: &str,
+) -> Result<(i64, Option<Value>), ToolError> {
     let (prefix, index) = key.rsplit_once(':').ok_or_else(|| {
         ToolError::new("invalid_args", "idempotencyKey must be <jobId>:<opIndex>")
     })?;
@@ -223,15 +243,29 @@ fn op_slot(store: &Store, job_id: &str, key: &str) -> Result<(i64, Option<Value>
             "the op index in idempotencyKey must be an integer",
         )
     })?;
-    let existing = store
-        .job_op(job_id, index)?
-        .and_then(|op| serde_json::from_str::<Value>(&op.result_json).ok());
+    if index < 0 {
+        return Err(ToolError::new(
+            "invalid_args",
+            "the op index in idempotencyKey cannot be negative",
+        ));
+    }
+    let existing = store.job_op(job_id, index)?;
+    if let Some(op) = &existing {
+        if op.tool != tool_name {
+            return Err(ToolError::new(
+                "forbidden",
+                format!("idempotencyKey was used by {} before", op.tool),
+            ));
+        }
+    }
+    let existing = existing.and_then(|op| serde_json::from_str::<Value>(&op.result_json).ok());
     Ok((index, existing))
 }
 
 fn tasks_create(store: &Store, args: CreateArgs) -> ToolResult {
     let job = load_job(store, &args.job_id)?;
-    let (index, existing) = op_slot(store, &job.id, &args.idempotency_key)?;
+    require_running(&job)?;
+    let (index, existing) = op_slot(store, &job.id, &args.idempotency_key, "tasks_create")?;
     if let Some(result) = existing {
         return Ok(result);
     }
@@ -248,8 +282,14 @@ fn tasks_create(store: &Store, args: CreateArgs) -> ToolResult {
 
 fn tasks_add_requirement(store: &Store, args: RequirementArgs) -> ToolResult {
     let job = load_job(store, &args.job_id)?;
+    require_running(&job)?;
     require_candidate(&job, &args.task_id)?;
-    let (index, existing) = op_slot(store, &job.id, &args.idempotency_key)?;
+    let (index, existing) = op_slot(
+        store,
+        &job.id,
+        &args.idempotency_key,
+        "tasks_add_requirement",
+    )?;
     if let Some(result) = existing {
         return Ok(result);
     }
@@ -266,8 +306,9 @@ fn tasks_add_requirement(store: &Store, args: RequirementArgs) -> ToolResult {
 
 fn proposals_submit(store: &Store, args: ProposalArgs) -> ToolResult {
     let job = load_job(store, &args.job_id)?;
+    require_running(&job)?;
     require_candidate(&job, &args.task_id)?;
-    let (index, existing) = op_slot(store, &job.id, &args.idempotency_key)?;
+    let (index, existing) = op_slot(store, &job.id, &args.idempotency_key, "proposals_submit")?;
     if let Some(result) = existing {
         return Ok(result);
     }
@@ -312,6 +353,7 @@ pub fn call(store: &Store, name: &str, args: Value) -> Option<ToolResult> {
         }),
         "jobs_complete" => parse::<CompleteArgs>(args).and_then(|a| {
             let job = load_job(store, &a.job_id)?;
+            require_running(&job)?;
             let done = store.set_job_status(&job.id, "done", a.summary.as_deref(), None)?;
             ok(done)
         }),

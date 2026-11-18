@@ -272,7 +272,7 @@ async fn analyst_jobs_are_scoped_idempotent_and_complete() {
         .unwrap()
         .unwrap()
         .episode_id;
-    let job = h
+    let (job, _) = h
         .store
         .create_job(relay_core::model::NewJob {
             conversation_id: episode.clone(),
@@ -285,6 +285,9 @@ async fn analyst_jobs_are_scoped_idempotent_and_complete() {
         })
         .unwrap();
     let job_id = job.id.clone();
+    h.store
+        .set_job_status(&job_id, "running", None, None)
+        .unwrap();
 
     let (err, v) = h.tool(ANALYST, "jobs_get", json!({"jobId": job_id})).await;
     assert!(!err, "{v}");
