@@ -73,6 +73,7 @@ Then state the commit reviewed and any follow-up package that should be opened.
 | 2026-11-17 | [JEV client + routing](2026-11-17-jev-client.md) | `6b2bad9` | DeepSeek implementation sub-agent | Complete; Opus review pending |
 | 2026-11-17 | [Core regression tests + claim busy handling](2026-11-17-core-regressions.md) | `70be4a4` | DeepSeek implementation sub-agent | Complete; Opus review pending |
 | 2026-11-17 | [Release hardening](2026-11-17-release-hardening.md) | `9b9492d` | DeepSeek implementation sub-agent | Complete; reset incident noted; Opus review pending |
+| 2026-11-17 | [Main window UI + hover entry](2026-11-17-ui.md) | `c2a5df3` | Opus 5.5 | Self-reviewed; user review pending |
 | 2026-11-17 | [Agent MCP endpoint + analyst boundary](2026-11-17-mcp-agent.md) | `3eccbeb` | Opus 5.5 | Self-reviewed; user review pending |
 
 The release audit is a section of the scaffold record because it audits the
