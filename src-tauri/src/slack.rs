@@ -179,7 +179,15 @@ pub fn start(app: AppHandle, store: Arc<Store>) {
                 .map(|duration| duration.as_secs() as i64)
                 .unwrap_or(0);
             let _ = store.prune_slack_messages(now - 30 * 86_400);
-            let _ = store.close_stale_slack_episodes(90);
+            let closed = store.close_stale_slack_episodes(90).unwrap_or_default();
+            let state = retention.state::<SlackState>();
+            if state.jev().is_some() {
+                for id in closed {
+                    // The plan's "rescreen at episode close": middle-band episodes get a
+                    // second look, and a replay of the same watermark is a no-op.
+                    let _ = analyze(&retention, &state, &id, false).await;
+                }
+            }
             tokio::time::sleep(Duration::from_secs(6 * 3600)).await;
         }
     });
@@ -410,15 +418,31 @@ async fn catch_up(
         let oldest = cursor
             .clone()
             .unwrap_or_else(|| slack_ts_days_ago(BACKFILL_DAYS));
-        let messages = match client.history(&dm.id, Some(&oldest), 200).await {
-            Ok(messages) => messages,
-            Err(error) => {
-                let status =
-                    state.set_error(Some(format!("conversations.history failed: {error}")));
-                publish(&app, &status);
-                continue;
+        // A long offline gap can exceed one page; walk `oldest` forward until a short page.
+        let mut messages = Vec::new();
+        let mut oldest = oldest;
+        for _ in 0..10 {
+            match client.history(&dm.id, Some(&oldest), 200).await {
+                Ok(batch) => {
+                    if batch.is_empty() {
+                        break;
+                    }
+                    let short = batch.len() < 200;
+                    let newest = batch.last().map(|message| message.ts.clone());
+                    messages.extend(batch);
+                    match newest {
+                        Some(ts) if ts != oldest && !short => oldest = ts,
+                        _ => break,
+                    }
+                }
+                Err(error) => {
+                    let status =
+                        state.set_error(Some(format!("conversations.history failed: {error}")));
+                    publish(&app, &status);
+                    break;
+                }
             }
-        };
+        }
         if messages.is_empty() {
             continue;
         }

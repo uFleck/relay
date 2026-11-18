@@ -2349,18 +2349,31 @@ impl Store {
         Ok(episode)
     }
 
-    /// Closes every open episode whose last message is older than `gap_minutes`.
-    pub fn close_stale_slack_episodes(&self, gap_minutes: i64) -> Result<usize, StoreError> {
+    /// Closes every open episode whose last message is older than `gap_minutes` and returns
+    /// their ids, so the caller can rescreen them at close.
+    pub fn close_stale_slack_episodes(&self, gap_minutes: i64) -> Result<Vec<String>, StoreError> {
         let cutoff = model::format_time(
             time::OffsetDateTime::now_utc() - time::Duration::minutes(gap_minutes),
         );
         let conn = self.conn();
-        let changed = conn.execute(
+        let mut stmt = conn.prepare(
+            "SELECT id FROM conversations
+             WHERE state IN ('open', 'waiting') AND last_message_at < ?1",
+        )?;
+        let rows = stmt.query_map(params![cutoff], |row| row.get::<_, String>(0))?;
+        let mut ids = Vec::new();
+        for row in rows {
+            ids.push(row?);
+        }
+        if ids.is_empty() {
+            return Ok(ids);
+        }
+        conn.execute(
             "UPDATE conversations SET state = 'closed', closed_at = ?1
              WHERE state IN ('open', 'waiting') AND last_message_at < ?2",
             params![now(), cutoff],
         )?;
-        Ok(changed)
+        Ok(ids)
     }
 
     /// Retention: deletes captured messages whose Slack ts is before `before_seconds`
@@ -4803,6 +4816,34 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(out.direction, "out");
+    }
+
+    #[test]
+    fn a_deleted_message_is_marked_not_removed() {
+        let store = Store::open_in_memory().unwrap();
+        let first = store
+            .capture_slack_message(
+                "U1",
+                Some("Alice"),
+                &raw_message("1700000000.000100", "U1", "please do it"),
+                90,
+            )
+            .unwrap()
+            .unwrap();
+        let mut deleted = raw_message("1700000000.000100", "U1", "");
+        deleted.deleted = true;
+        store
+            .capture_slack_message("U1", Some("Alice"), &deleted, 90)
+            .unwrap()
+            .unwrap();
+        let detail = store.get_slack_episode(&first.episode_id).unwrap();
+        assert_eq!(
+            detail.messages.len(),
+            1,
+            "a deletion is an update, not a new row"
+        );
+        assert!(detail.messages[0].deleted);
+        assert!(detail.messages[0].text.is_empty());
     }
 
     #[test]
