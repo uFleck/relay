@@ -152,39 +152,51 @@ export function GithubSettings() {
   );
 }
 
-/* ── Settings → GitHub → Repositories folder ── */
+/* ── Settings → GitHub → Repositories folders ── */
 
-const FOLDER_KEY = "relay.reposFolder";
+const FOLDERS_KEY = "relay.reposFolders";
+const OLD_FOLDER_KEY = "relay.reposFolder";
 
-function rememberedFolder(): string | null {
+function rememberedFolders(): string[] {
   try {
-    return localStorage.getItem(FOLDER_KEY);
+    const saved = localStorage.getItem(FOLDERS_KEY);
+    if (saved) {
+      const parsed: unknown = JSON.parse(saved);
+      if (Array.isArray(parsed)) return parsed.filter((f): f is string => typeof f === "string");
+    }
+    const old = localStorage.getItem(OLD_FOLDER_KEY);
+    return old ? [old] : [];
   } catch {
-    return null;
+    return [];
   }
 }
 
-function rememberFolder(folder: string) {
+function rememberFolders(folders: string[]) {
   try {
-    localStorage.setItem(FOLDER_KEY, folder);
+    localStorage.setItem(FOLDERS_KEY, JSON.stringify(folders));
+    localStorage.removeItem(OLD_FOLDER_KEY);
   } catch {
     /* a convenience only */
   }
 }
 
+const trimSlash = (path: string) => path.replace(/[\\/]+$/, "").toLowerCase();
+const samePath = (a: string, b: string) => trimSlash(a) === trimSlash(b);
+
 function RepoFolder() {
-  const [folder, setFolder] = useState<string | null>(rememberedFolder);
+  const [folders, setFolders] = useState<string[]>(rememberedFolders);
   const [found, setFound] = useState<RepoCandidate[] | null>(null);
   const [scanning, setScanning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const imp = useRun();
 
-  async function scan(path: string) {
-    setScanning(true);
+  async function scan(paths: string[]) {
     setError(null);
     setFound(null);
+    if (paths.length === 0) return;
+    setScanning(true);
     try {
-      setFound(await reposScan(path));
+      setFound(await reposScan(paths));
     } catch (err) {
       setError(errorText(err));
     } finally {
@@ -192,7 +204,13 @@ function RepoFolder() {
     }
   }
 
-  async function choose() {
+  function update(next: string[]) {
+    setFolders(next);
+    rememberFolders(next);
+    void scan(next);
+  }
+
+  async function add() {
     if (!inTauri) {
       setError("Choosing a folder works in the desktop app.");
       return;
@@ -201,41 +219,56 @@ function RepoFolder() {
     let picked: string | null;
     try {
       const { open } = await import("@tauri-apps/plugin-dialog");
-      picked = await open({ directory: true, multiple: false, title: "Folder with your repositories", defaultPath: folder ?? undefined });
+      picked = await open({ directory: true, multiple: false, title: "Folder that holds your clones", defaultPath: folders[0] });
     } catch (err) {
       setError(errorText(err));
       return;
     }
     if (!picked) return;
-    setFolder(picked);
-    rememberFolder(picked);
-    await scan(picked);
+    update(folders.some((f) => samePath(f, picked)) ? folders : [...folders, picked]);
   }
 
   const fresh = found?.filter((c) => !c.projectId).length ?? 0;
   const importAll = () => {
-    if (!folder) return;
+    if (folders.length === 0) return;
     void imp.start(async () => {
-      const count = await reposImport(folder);
-      await scan(folder);
+      const count = await reposImport(folders);
+      await scan(folders);
       return count;
     });
   };
 
   return (
     <>
-      <h3 className="sub">Repositories folder</h3>
-      <div className="repo">
-        <span className={`mono ellip${folder ? "" : " meta"}`} title={folder ?? undefined}>
-          {folder ?? "No folder chosen"}
-        </span>
-        <span className="push" />
-        <button type="button" className="btn" disabled={scanning || imp.busy} onClick={() => void choose()}>
+      <h3 className="sub">Repositories folders</h3>
+      {folders.length === 0 && <p className="empty">No folder chosen.</p>}
+      {folders.length > 0 && (
+        <ul className="repo-list">
+          {folders.map((f) => (
+            <li key={f} className="repo">
+              <span className="mono ellip" title={f}>
+                {f}
+              </span>
+              <span className="push" />
+              <button
+                type="button"
+                className="btn"
+                disabled={scanning || imp.busy}
+                onClick={() => update(folders.filter((other) => other !== f))}
+              >
+                Remove
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="setrow">
+        <button type="button" className="btn" disabled={scanning || imp.busy} onClick={() => void add()}>
           {scanning && <Spinner />}
-          Choose folder…
+          Add folder…
         </button>
-        {folder && !found && !scanning && (
-          <button type="button" className="btn" onClick={() => void scan(folder)}>
+        {folders.length > 0 && !found && !scanning && (
+          <button type="button" className="btn" onClick={() => void scan(folders)}>
             Scan
           </button>
         )}
@@ -245,7 +278,7 @@ function RepoFolder() {
           {error}
         </p>
       )}
-      {found && found.length === 0 && <p className="empty">No clones with a GitHub origin in this folder.</p>}
+      {found && found.length === 0 && <p className="empty">No clones with a GitHub origin in these folders.</p>}
       {found && found.length > 0 && (
         <>
           <ul className="repo-list">
@@ -272,8 +305,9 @@ function RepoFolder() {
         </>
       )}
       <p className="mcp-note">
-        Each clone becomes a project. Pull requests you authored or were asked to review in these repositories become tasks
-        automatically every 3 minutes, using your gh session or token.
+        Pick the folder that holds your clones, such as C:\umbler; it need not be a repository itself. Relay looks at the
+        folder and its direct subfolders. Each clone becomes a project. Pull requests you authored or were asked to review
+        in these repositories become tasks automatically every 3 minutes, using your gh session or token.
       </p>
     </>
   );

@@ -192,15 +192,30 @@ pub async fn github_import_issues(
     Ok(count)
 }
 
+/// Blank entries are dropped; a folder that is gone fails the whole scan with its path.
+fn scan_roots(folders: &[String]) -> Result<Vec<RepoCandidate>, String> {
+    let roots: Vec<&Path> = folders
+        .iter()
+        .map(|folder| Path::new(folder.trim()))
+        .filter(|root| !root.as_os_str().is_empty())
+        .collect();
+    for root in &roots {
+        if !root.is_dir() {
+            return Err(format!("{} is not a folder", root.display()));
+        }
+    }
+    repos::scan_folders(&roots).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub async fn repos_scan(
     store: State<'_, Arc<Store>>,
-    folder: String,
+    folders: Vec<String>,
 ) -> Result<Vec<RepoCandidate>, String> {
     let store = store.inner().clone();
     // One `git` call per subfolder; not on the async threads.
     tauri::async_runtime::spawn_blocking(move || {
-        let found = repos::scan_folder(Path::new(folder.trim())).map_err(|e| e.to_string())?;
+        let found = scan_roots(&folders)?;
         repos::annotate_projects(&store, found).map_err(|e| e.to_string())
     })
     .await
@@ -211,11 +226,11 @@ pub async fn repos_scan(
 pub async fn repos_import(
     app: AppHandle,
     store: State<'_, Arc<Store>>,
-    folder: String,
+    folders: Vec<String>,
 ) -> Result<ImportCount, String> {
     let store = store.inner().clone();
     let count = tauri::async_runtime::spawn_blocking(move || {
-        let found = repos::scan_folder(Path::new(folder.trim())).map_err(|e| e.to_string())?;
+        let found = scan_roots(&folders)?;
         repos::import_repos(&store, &found).map_err(|e| e.to_string())
     })
     .await

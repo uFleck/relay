@@ -434,9 +434,9 @@ export const clickupSyncNow = () =>
 export const githubImportIssues = (args: { projectId: string; owner: string; repo: string }) =>
   call<ImportCount>("github_import_issues", args, () => emptyImport);
 
-export const reposScan = (folder: string) => call<RepoCandidate[]>("repos_scan", { folder }, () => []);
+export const reposScan = (folders: string[]) => call<RepoCandidate[]>("repos_scan", { folders }, () => []);
 
-export const reposImport = (folder: string) => call<ImportCount>("repos_import", { folder }, () => emptyImport);
+export const reposImport = (folders: string[]) => call<ImportCount>("repos_import", { folders }, () => emptyImport);
 
 interface Events {
   /** A route string for the main window. */

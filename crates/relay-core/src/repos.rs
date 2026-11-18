@@ -88,11 +88,20 @@ pub fn origin_repo(path: &Path) -> Option<GithubRepo> {
 /// `root` itself and its immediate subdirectories that are git checkouts with a GitHub
 /// `origin`, sorted by path. `project_id` is left empty.
 pub fn scan_folder(root: &Path) -> Result<Vec<RepoCandidate>, GitError> {
-    let mut dirs = vec![root.to_path_buf()];
-    for entry in std::fs::read_dir(root)? {
-        let path = entry?.path();
-        if path.is_dir() {
-            dirs.push(path);
+    scan_folders(&[root])
+}
+
+/// [`scan_folder`] over several roots, keeping one checkout per repo across all of them.
+pub fn scan_folders<P: AsRef<Path>>(roots: &[P]) -> Result<Vec<RepoCandidate>, GitError> {
+    let mut dirs = Vec::new();
+    for root in roots {
+        let root = root.as_ref();
+        dirs.push(root.to_path_buf());
+        for entry in std::fs::read_dir(root)? {
+            let path = entry?.path();
+            if path.is_dir() {
+                dirs.push(path);
+            }
         }
     }
     let mut found: Vec<RepoCandidate> = dirs
@@ -437,6 +446,30 @@ mod tests {
         for c in scan_folder(Path::new(&root)).unwrap() {
             println!("{} {}/{}", c.path, c.repo.owner, c.repo.name);
         }
+    }
+
+    #[test]
+    fn scan_of_several_folders_merges_them_and_keeps_one_checkout_per_repo() {
+        let work = temp_dir("scan-work");
+        let side = temp_dir("scan-side");
+        init_repo(&work.join("bill"), Some("https://github.com/umbler/bill"));
+        init_repo(&side.join("relay"), Some("https://github.com/ufleck/relay"));
+        init_repo(
+            &side.join("bill-worktree-copy"),
+            Some("https://github.com/umbler/bill"),
+        );
+
+        let found = scan_folders(&[&work, &side]).unwrap();
+        let names: Vec<_> = found
+            .iter()
+            .map(|c| format!("{}/{}", c.repo.owner, c.repo.name))
+            .collect();
+        assert_eq!(names.len(), 2);
+        assert!(names.contains(&"umbler/bill".to_string()));
+        assert!(names.contains(&"ufleck/relay".to_string()));
+        assert!(scan_folders(&[work.as_path(), Path::new("Z:\relay-does-not-exist")]).is_err());
+        fs::remove_dir_all(&work).ok();
+        fs::remove_dir_all(&side).ok();
     }
 
     #[test]
