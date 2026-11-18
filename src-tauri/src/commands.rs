@@ -5,6 +5,7 @@ use relay_core::model::ProposalDecision;
 use relay_core::store::{Store, StoreError};
 use relay_core::view::Snapshot;
 use serde::Serialize;
+use std::sync::Arc;
 use tauri::{AppHandle, State};
 
 /// The IPC error shape the UI logs. `kind` is a stable code; `message` is for humans.
@@ -44,7 +45,10 @@ impl From<StoreError> for CommandError {
 
 /// The snapshot behind `getSnapshot()` in `src/ipc.ts`.
 #[tauri::command]
-pub fn relay_snapshot(app: AppHandle, store: State<'_, Store>) -> Result<Snapshot, CommandError> {
+pub fn relay_snapshot(
+    app: AppHandle,
+    store: State<'_, Arc<Store>>,
+) -> Result<Snapshot, CommandError> {
     let version = app.package_info().version.to_string();
     // Sync sources and update state are wired later; the caller supplies none for now.
     Ok(store.ui_snapshot(&version, Vec::new())?)
@@ -56,7 +60,7 @@ pub fn ack_change(
     task_id: String,
     change_id: String,
     rev: i64,
-    store: State<'_, Store>,
+    store: State<'_, Arc<Store>>,
 ) -> Result<(), CommandError> {
     let task = store.get_task(&task_id)?;
     if task.rev != rev {
@@ -72,7 +76,7 @@ pub fn decide_proposal(
     proposal_id: String,
     decision: String,
     rev: i64,
-    store: State<'_, Store>,
+    store: State<'_, Arc<Store>>,
 ) -> Result<(), CommandError> {
     let decision = match decision.as_str() {
         "approve" => ProposalDecision::Approve,

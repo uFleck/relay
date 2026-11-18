@@ -3,11 +3,13 @@
 
 mod commands;
 mod hover;
+mod mcp;
 
 use hover::HoverState;
 use relay_core::model::NewProject;
 use relay_core::store::Store;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, RunEvent, WindowEvent, Wry};
@@ -233,6 +235,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(HoverState::default())
+        .manage(mcp::McpState::default())
         .invoke_handler(tauri::generate_handler![
             show_main_window,
             open_main,
@@ -242,6 +245,7 @@ pub fn run() {
             commands::relay_snapshot,
             commands::ack_change,
             commands::decide_proposal,
+            mcp::mcp_status,
             hover::hover_place,
             hover::hover_drag,
             hover::hover_pointer,
@@ -284,7 +288,9 @@ pub fn run() {
                     "Inbox", "inbox", None,
                 ))?;
             }
-            app.manage(store);
+            let store = Arc::new(store);
+            app.manage(store.clone());
+            mcp::start(app.handle().clone(), store, &dir);
 
             build_tray(app.handle())?;
             register_hotkey(app.handle());
