@@ -1,11 +1,13 @@
 //! ClickUp and GitHub Issues import (PLAN 3.6). One-shot, link-only: every imported task
 //! keeps a link to its source and the next import skips it. Nothing is pushed back.
 
+use std::path::Path;
 use std::sync::Arc;
 
 use relay_core::clickup::ClickUpClient;
 use relay_core::github::GithubClient;
 use relay_core::model::{NewLink, NewTask, StatusCategory, from_unix_millis, now};
+use relay_core::repos::{self, RepoCandidate};
 use relay_core::store::Store;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
@@ -198,4 +200,40 @@ pub async fn github_import_issues(
     }
     let _ = app.emit("relay://change", ());
     Ok(count)
+}
+
+#[tauri::command]
+pub async fn repos_scan(
+    store: State<'_, Arc<Store>>,
+    folder: String,
+) -> Result<Vec<RepoCandidate>, String> {
+    let store = store.inner().clone();
+    // One `git` call per subfolder; not on the async threads.
+    tauri::async_runtime::spawn_blocking(move || {
+        let found = repos::scan_folder(Path::new(folder.trim())).map_err(|e| e.to_string())?;
+        repos::annotate_projects(&store, found).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn repos_import(
+    app: AppHandle,
+    store: State<'_, Arc<Store>>,
+    folder: String,
+) -> Result<ImportCount, String> {
+    let store = store.inner().clone();
+    let count = tauri::async_runtime::spawn_blocking(move || {
+        let found = repos::scan_folder(Path::new(folder.trim())).map_err(|e| e.to_string())?;
+        repos::import_repos(&store, &found).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())??;
+    let _ = app.emit("relay://change", ());
+    crate::github::sync_in_background(app);
+    Ok(ImportCount {
+        imported: count.imported,
+        skipped: count.skipped,
+    })
 }

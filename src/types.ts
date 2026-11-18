@@ -165,3 +165,10 @@ export interface Snapshot {
 
 export type HoverMode = "tab" | "open";
 export type HoverEdge = "left" | "right";
+
+/** A local clone with a GitHub `origin`; `projectId` is set when a project already uses the path. */
+export interface RepoCandidate {
+  path: string;
+  repo: { owner: string; name: string };
+  projectId: string | null;
+}

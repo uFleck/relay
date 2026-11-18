@@ -96,7 +96,7 @@ export function ClickupSettings() {
 
 type Run = { kind: "busy" } | { kind: "done"; count: ImportCount } | { kind: "error"; text: string } | null;
 
-function RunResult({ run }: { run: Run }) {
+export function RunResult({ run }: { run: Run }) {
   if (run?.kind === "done") {
     return (
       <span className="meta" role="status">
@@ -115,7 +115,7 @@ function RunResult({ run }: { run: Run }) {
 }
 
 /** Runs one import and keeps its outcome; refuses overlapping runs. */
-function useRun() {
+export function useRun() {
   const [run, setRun] = useState<Run>(null);
   async function start(go: () => Promise<ImportCount>) {
     if (run?.kind === "busy") return;

@@ -69,7 +69,7 @@ pub fn state(repo: &Path) -> Result<GitState, GitError> {
     })
 }
 
-fn run(repo: &Path, command: &'static str, args: &[&str]) -> Result<String, GitError> {
+pub(crate) fn run(repo: &Path, command: &'static str, args: &[&str]) -> Result<String, GitError> {
     let output = Command::new("git")
         .arg("-C")
         .arg(repo)

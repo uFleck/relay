@@ -1,7 +1,7 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { emit, listen } from "@tauri-apps/api/event";
 import { mockSnapshot } from "./data/mock";
-import type { ProposalDecision, Snapshot } from "./types";
+import type { ProposalDecision, RepoCandidate, Snapshot } from "./types";
 
 /* Typed wrappers over the Rust commands. Outside Tauri (pnpm dev in a browser), or while a command
    is not registered yet, each call resolves to its fallback so the UI keeps working on mock data.
@@ -374,6 +374,10 @@ export const clickupImport = (args: { projectId: string; listId: string; include
 
 export const githubImportIssues = (args: { projectId: string; owner: string; repo: string }) =>
   call<ImportCount>("github_import_issues", args, () => emptyImport);
+
+export const reposScan = (folder: string) => call<RepoCandidate[]>("repos_scan", { folder }, () => []);
+
+export const reposImport = (folder: string) => call<ImportCount>("repos_import", { folder }, () => emptyImport);
 
 interface Events {
   /** A route string for the main window. */

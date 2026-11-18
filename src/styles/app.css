@@ -1331,6 +1331,12 @@ h3.sub {
   flex: none;
 }
 
+.repo-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
 .ctx-git {
   display: flex;
   align-items: center;

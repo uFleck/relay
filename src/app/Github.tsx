@@ -10,12 +10,15 @@ import {
   onEvent,
   projectGitState,
   projectSetRepo,
+  reposImport,
+  reposScan,
   syncPrsNow,
   type GitState,
   type GithubStatus,
 } from "../ipc";
 import { plural } from "../model";
-import type { Project, Task } from "../types";
+import type { Project, RepoCandidate, Task } from "../types";
+import { RunResult, useRun } from "./Import";
 import { Spinner, useLive } from "./Slack";
 
 /* GitHub and git context: the Settings section, each project's checkout on Projects and the task
@@ -144,6 +147,134 @@ export function GithubSettings() {
           {synced.text}
         </p>
       )}
+      <RepoFolder />
+    </>
+  );
+}
+
+/* ── Settings → GitHub → Repositories folder ── */
+
+const FOLDER_KEY = "relay.reposFolder";
+
+function rememberedFolder(): string | null {
+  try {
+    return localStorage.getItem(FOLDER_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function rememberFolder(folder: string) {
+  try {
+    localStorage.setItem(FOLDER_KEY, folder);
+  } catch {
+    /* a convenience only */
+  }
+}
+
+function RepoFolder() {
+  const [folder, setFolder] = useState<string | null>(rememberedFolder);
+  const [found, setFound] = useState<RepoCandidate[] | null>(null);
+  const [scanning, setScanning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const imp = useRun();
+
+  async function scan(path: string) {
+    setScanning(true);
+    setError(null);
+    setFound(null);
+    try {
+      setFound(await reposScan(path));
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setScanning(false);
+    }
+  }
+
+  async function choose() {
+    if (!inTauri) {
+      setError("Choosing a folder works in the desktop app.");
+      return;
+    }
+    setError(null);
+    let picked: string | null;
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      picked = await open({ directory: true, multiple: false, title: "Folder with your repositories", defaultPath: folder ?? undefined });
+    } catch (err) {
+      setError(errorText(err));
+      return;
+    }
+    if (!picked) return;
+    setFolder(picked);
+    rememberFolder(picked);
+    await scan(picked);
+  }
+
+  const fresh = found?.filter((c) => !c.projectId).length ?? 0;
+  const importAll = () => {
+    if (!folder) return;
+    void imp.start(async () => {
+      const count = await reposImport(folder);
+      await scan(folder);
+      return count;
+    });
+  };
+
+  return (
+    <>
+      <h3 className="sub">Repositories folder</h3>
+      <div className="repo">
+        <span className={`mono ellip${folder ? "" : " meta"}`} title={folder ?? undefined}>
+          {folder ?? "No folder chosen"}
+        </span>
+        <span className="push" />
+        <button type="button" className="btn" disabled={scanning || imp.busy} onClick={() => void choose()}>
+          {scanning && <Spinner />}
+          Choose folder…
+        </button>
+        {folder && !found && !scanning && (
+          <button type="button" className="btn" onClick={() => void scan(folder)}>
+            Scan
+          </button>
+        )}
+      </div>
+      {error && (
+        <p className="mcp-err" role="alert">
+          {error}
+        </p>
+      )}
+      {found && found.length === 0 && <p className="empty">No clones with a GitHub origin in this folder.</p>}
+      {found && found.length > 0 && (
+        <>
+          <ul className="repo-list">
+            {found.map((c) => (
+              <li key={c.path} className="repo">
+                <b>
+                  {c.repo.owner}/{c.repo.name}
+                </b>
+                <span className="mono ellip meta" title={c.path}>
+                  {c.path}
+                </span>
+                <span className="push" />
+                {c.projectId && <span className="meta">project</span>}
+              </li>
+            ))}
+          </ul>
+          <div className="setrow">
+            <button type="button" className="btn pri" disabled={imp.busy || fresh === 0} onClick={importAll}>
+              {imp.busy && <Spinner />}
+              {imp.busy ? "Importing…" : `Import ${plural(fresh, "repo")}`}
+            </button>
+            <RunResult run={imp.run} />
+          </div>
+        </>
+      )}
+      <p className="mcp-note">
+        Each clone becomes a project. Pull requests you authored or were asked to review in these repositories become tasks
+        automatically every 3 minutes, using your gh session or token.
+      </p>
     </>
   );
 }

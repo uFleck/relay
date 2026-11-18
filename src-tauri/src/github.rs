@@ -9,8 +9,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use relay_core::git::{self, GitState};
-use relay_core::github::{GithubClient, GithubError};
+use relay_core::github::{FoundPull, GithubClient, GithubError};
 use relay_core::model::TaskLink;
+use relay_core::repos;
 use relay_core::store::Store;
 use relay_core::view::{SyncSource, SyncState};
 use serde::Serialize;
@@ -296,32 +297,76 @@ async fn poll_links(
     Ok(out)
 }
 
+async fn search_pulls(creds: &Credentials) -> Result<Vec<FoundPull>, GithubError> {
+    GithubClient::new(creds.token.clone())?
+        .search_my_pulls()
+        .await
+}
+
+/// Turns open PRs you authored or were asked to review, in repos that have a project,
+/// into tasks. Skipped without a token: the search endpoint needs `@me` to mean someone.
+async fn discover(store: &Arc<Store>, creds: &mut Credentials) -> Result<usize, String> {
+    if creds.token.is_none() {
+        return Ok(0);
+    }
+    let mut search = search_pulls(creds).await;
+    if creds.source == AuthSource::Gh
+        && matches!(search, Err(GithubError::Status { status: 401, .. }))
+    {
+        *creds = credentials(true).await;
+        search = search_pulls(creds).await;
+    }
+    let found = search.map_err(|error| format!("PR discovery: {error}"))?;
+    let store = store.clone();
+    // `discover_pull_tasks` runs `git` for every project, so keep it off the async threads.
+    tauri::async_runtime::spawn_blocking(move || repos::discover_pull_tasks(&store, &found))
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(|error| format!("PR discovery: {error}"))
+}
+
 async fn poll_once(app: &AppHandle) -> Result<usize, String> {
     let store = app.state::<Arc<Store>>().inner().clone();
+    let mut creds = credentials(false).await;
+    let mut errors = Vec::new();
+    let mut synced = 0;
+    // Before the early return below: a fresh repo has no PR links yet.
+    match discover(&store, &mut creds).await {
+        Ok(created) => synced += created,
+        Err(error) => errors.push(error),
+    }
     let links = store
         .list_links_by_kind("pr")
         .map_err(|error| error.to_string())?;
-    if links.is_empty() {
-        return Ok(0);
+    if !links.is_empty() {
+        let mut out = poll_links(&store, &creds, &links).await?;
+        // The cached `gh` token went stale (logout, rotation): ask `gh` again, once.
+        if out.unauthorized && creds.source == AuthSource::Gh {
+            creds = credentials(true).await;
+            out = poll_links(&store, &creds, &links).await?;
+        }
+        synced += out.updated;
+        errors.extend(out.errors);
     }
-    let mut creds = credentials(false).await;
-    let mut out = poll_links(&store, &creds, &links).await?;
-    // The cached `gh` token went stale (logout, rotation): ask `gh` again, once.
-    if out.unauthorized && creds.source == AuthSource::Gh {
-        creds = credentials(true).await;
-        out = poll_links(&store, &creds, &links).await?;
-    }
-    if out.updated > 0 {
+    if synced > 0 {
         let _ = app.emit("relay://change", ());
     }
-    if out.errors.is_empty() {
-        Ok(out.updated)
-    } else if out.updated > 0 {
-        publish(app, &creds, Some(out.errors.join("; ")));
-        Ok(out.updated)
+    if errors.is_empty() {
+        Ok(synced)
+    } else if synced > 0 {
+        publish(app, &creds, Some(errors.join("; ")));
+        Ok(synced)
     } else {
-        Err(out.errors.join("; "))
+        Err(errors.join("; "))
     }
+}
+
+/// One discovery and poll outside the schedule, for after a folder import.
+pub fn sync_in_background(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let result = poll_once(&app).await;
+        refresh_status(&app, result.err()).await;
+    });
 }
 
 fn parse_pr_url(url: &str) -> Option<(String, String, u64)> {
