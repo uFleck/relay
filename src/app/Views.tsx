@@ -1,16 +1,16 @@
 import { useState } from "react";
 import { Icon } from "../components/Icon";
-import { ProjectChip } from "../components/bits";
 import { ProposalCard } from "../components/ProposalCard";
 import type { HoverFlags, McpStatus, SlackStatus } from "../ipc";
 import { claimState, clock, elapsed, liveClaims, plural, statusOf, useNow } from "../model";
-import type { Proposal, ProposalDecision, Snapshot, Task } from "../types";
+import type { Proposal, ProposalDecision, Snapshot, StatusCategory, Task } from "../types";
 import { checkForUpdates, downloadUpdate, installUpdate, type UpdateState } from "../updater";
 import { GithubSettings, ProjectRepo } from "./Github";
-import { ClickupSettings, ProjectImport } from "./Import";
+import { ClickupSettings, ImportPanel } from "./Import";
 import { McpSetup } from "./McpSetup";
 import { FromSlack, JevSettings, SlackSettings } from "./Slack";
 import { TaskGroups } from "./Today";
+import { Switch } from "../ui/controls";
 
 /* The rail's views besides Today. Each reads the same snapshot; none invents data the snapshot lacks. */
 
@@ -38,40 +38,163 @@ interface ProjectsProps {
   snap: Snapshot;
   selectedId: string | null;
   onSelect: (id: string) => void;
+  /** The selected task, drawn in place under its row. */
+  renderTask: (task: Task) => React.ReactNode;
 }
 
-export function ProjectsView({ snap, selectedId, onSelect }: ProjectsProps) {
+/** Category order for the mini bars and counts; done sits last. */
+const MIX: StatusCategory[] = ["active", "review", "merged", "waiting", "deploying", "blocked", "todo", "done"];
+
+/** One project in focus: the list on the left, its repo and import sources as tiles, its tasks below. */
+export function ProjectsView({ snap, selectedId, onSelect, renderTask }: ProjectsProps) {
+  const selectedProject = snap.tasks.find((t) => t.id === selectedId)?.projectId;
+  const [picked, setPicked] = useState<string | null>(null);
+  const [tab, setTab] = useState<"tasks" | "import">("tasks");
+  const current = snap.projects.find((p) => p.id === (picked ?? selectedProject)) ?? snap.projects[0];
+
+  if (!current) {
+    return (
+      <section className="main">
+        <Head title="Projects" sub="0 projects" />
+        <Blank title="No projects">Projects come from Relay's database; none exist yet.</Blank>
+      </section>
+    );
+  }
+
+  const mixOf = (projectId: string) => {
+    const counts = new Map<StatusCategory, number>();
+    for (const t of snap.tasks) {
+      if (t.projectId !== projectId) continue;
+      const cat = statusOf(snap, t).category;
+      counts.set(cat, (counts.get(cat) ?? 0) + 1);
+    }
+    return counts;
+  };
+  const mix = mixOf(current.id);
+  const n = (cat: StatusCategory) => mix.get(cat) ?? 0;
+  const total = [...mix.values()].reduce((a, b) => a + b, 0);
+  const tasks = snap.tasks.filter((t) => t.projectId === current.id);
+  const linked = (kind: "clickup" | "github") => tasks.filter((t) => t.links.some((l) => l.kind === kind)).length;
+  const sources = [
+    { name: "ClickUp", count: linked("clickup") },
+    { name: "GitHub", count: linked("github") },
+  ].filter((s) => s.count > 0);
+  const pick = (id: string) => {
+    setPicked(id);
+    setTab("tasks");
+  };
+
   return (
-    <section className="main">
-      <Head title="Projects" sub={plural(snap.projects.length, "project")} />
-      <div className="scroll">
-        {snap.projects.length === 0 && <Blank title="No projects">Projects come from Relay's database; none exist yet.</Blank>}
+    <section className="main ws">
+      <nav className="ws-side" aria-label="Projects">
+        <h1>Projects</h1>
         {snap.projects.map((p) => {
-          const tasks = snap.tasks.filter((t) => t.projectId === p.id);
-          const by = (cat: string) => tasks.filter((t) => statusOf(snap, t).category === cat).length;
-          const open = tasks.length - by("done");
+          const m = mixOf(p.id);
+          const all = [...m.values()].reduce((a, b) => a + b, 0);
+          const open = all - (m.get("done") ?? 0);
           return (
-            <section className="psec" key={p.id} aria-label={p.name}>
-              <div className="ph">
-                <ProjectChip project={p} />
-                <span className="meta">
-                  {plural(open, "open task")} · {by("active")} in progress · {by("blocked")} blocked · {by("done")} done
-                </span>
-              </div>
-              <ProjectRepo project={p} />
-              <ProjectImport project={p} />
-              <TaskGroups
-                snapshot={{ ...snap, tasks }}
-                query=""
-                selectedId={selectedId}
-                onSelect={onSelect}
-                empty={tasks.length ? "Every task in this project is done." : "No tasks in this project yet."}
-              />
-            </section>
+            <button
+              type="button"
+              key={p.id}
+              className="ws-pj"
+              aria-current={p.id === current.id}
+              style={{ "--pc": `var(${p.colorVar})` } as React.CSSProperties}
+              onClick={() => pick(p.id)}
+            >
+              <i className="sw" />
+              <b>{p.name}</b>
+              <span className="meta">{all ? `${open} open` : "empty"}</span>
+              <span className="mb">
+                {MIX.filter((c) => m.get(c)).map((c) => (
+                  <i key={c} style={{ flex: m.get(c), background: `var(--c-${c})` }} />
+                ))}
+              </span>
+            </button>
           );
         })}
+      </nav>
+
+      <div className="ws-main" style={{ "--pc": `var(${current.colorVar})` } as React.CSSProperties}>
+        <header className="ws-head">
+          <div className="ws-title">
+            <i className="sw" />
+            <h2>{current.name}</h2>
+          </div>
+          <div className="ws-chips">
+            <Chip cat="todo" n={total - n("done")} label="open" />
+            <Chip cat="active" n={n("active")} label="in progress" />
+            <Chip cat="blocked" n={n("blocked")} label="blocked" />
+            <Chip cat="done" n={n("done")} label="done" />
+          </div>
+          <div className="ws-tiles">
+            <div className="ws-tile">
+              <div className="k">Repository</div>
+              <ProjectRepo key={current.id} project={current} />
+            </div>
+            <div className="ws-tile">
+              <div className="k">
+                Import sources
+                <span className="push" />
+                <button type="button" className="btn ghost" onClick={() => setTab("import")}>
+                  Import…
+                </button>
+              </div>
+              {sources.length ? (
+                sources.map((s) => (
+                  <div className="src" key={s.name}>
+                    <i className="dot sync-ok" />
+                    <b>{s.name}</b>
+                    <span className="meta">{plural(s.count, "linked task")}</span>
+                  </div>
+                ))
+              ) : (
+                <div className="meta">Nothing imported yet.</div>
+              )}
+            </div>
+          </div>
+          <div className="ws-tabs" role="tablist">
+            <button type="button" role="tab" aria-selected={tab === "tasks"} onClick={() => setTab("tasks")}>
+              Tasks
+            </button>
+            <button type="button" role="tab" aria-selected={tab === "import"} onClick={() => setTab("import")}>
+              Import
+            </button>
+          </div>
+        </header>
+        <div className="scroll">
+          {tab === "import" ? (
+            <ImportPanel key={current.id} project={current} />
+          ) : total === 0 ? (
+            <div className="ws-empty">
+              <b>{current.name} has no tasks yet</b>
+              <p>Link the repository so agents can claim work here, import a ClickUp list or GitHub issues, or approve a Slack proposal for this project.</p>
+              <button type="button" className="btn pri" onClick={() => setTab("import")}>
+                Import…
+              </button>
+            </div>
+          ) : (
+            <TaskGroups
+              snapshot={{ ...snap, tasks }}
+              query=""
+              selectedId={selectedId}
+              onSelect={onSelect}
+              renderSelected={renderTask}
+              empty="Every task in this project is done."
+            />
+          )}
+        </div>
       </div>
     </section>
+  );
+}
+
+function Chip({ cat, n, label }: { cat: StatusCategory; n: number; label: string }) {
+  return (
+    <span className="chipc">
+      <span className="dot" style={{ "--c": `var(--c-${cat})` } as React.CSSProperties} />
+      <b>{n}</b>
+      {label}
+    </span>
   );
 }
 
@@ -248,16 +371,14 @@ export function SettingsView({ snap, update, flags, onFlag, mcp, onMcpRetry, sla
           <p className="empty">Hover settings are available in the desktop app.</p>
         ) : (
           <>
-            <label className="setrow">
+            <Switch className="setrow" checked={flags.dnd} disabled={saving === "dnd"} onChange={() => void toggle("dnd")}>
               <span>Do not disturb · stops pulses, keeps the badge</span>
               <span className="push" />
-              <input type="checkbox" checked={flags.dnd} disabled={saving === "dnd"} onChange={() => void toggle("dnd")} />
-            </label>
-            <label className="setrow">
+            </Switch>
+            <Switch className="setrow" checked={flags.paused} disabled={saving === "paused"} onChange={() => void toggle("paused")}>
               <span>Pause capture</span>
               <span className="push" />
-              <input type="checkbox" checked={flags.paused} disabled={saving === "paused"} onChange={() => void toggle("paused")} />
-            </label>
+            </Switch>
           </>
         )}
 

@@ -10,10 +10,11 @@
   --row-h: 34px;
   --strip-h: 40px;
 
-  --tab-w: 52px;
-  --tab-h: 64px;
+  --tab-w: 34px;
+  --tab-h: 112px;
   --hov-w: 400px;
   --hov-h: 540px;
+  --r-cap: 12px;
 
   --c-active: var(--accent);
   --c-review: var(--warn);

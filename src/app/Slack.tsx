@@ -32,6 +32,7 @@ import {
 } from "../ipc";
 import { elapsed, plural, useNow } from "../model";
 import type { SyncState } from "../types";
+import { Checkbox, Select } from "../ui/controls";
 
 /* Slack capture and JEV: the Settings sections, the Inbox episode list, the transcript sheet and the
    Review view's "From Slack" block. Nothing here sees a token after it is sent to Rust. */
@@ -419,15 +420,15 @@ function TransportPicker({
     <div className="setrow">
       <label htmlFor="slack-transport">Transport</label>
       <span className="push" />
-      <select
+      <Select
         id="slack-transport"
-        className="inp"
         value={value}
-        onChange={(e) => onChange(e.target.value as "claude" | "token")}
-      >
-        <option value="claude">Claude (claude.ai Slack connector)</option>
-        <option value="token">Slack app token</option>
-      </select>
+        options={[
+          { value: "claude", label: "Claude (claude.ai Slack connector)" },
+          { value: "token", label: "Slack app token" },
+        ]}
+        onChange={onChange}
+      />
     </div>
   );
 }
@@ -468,15 +469,9 @@ function PeerList({ count }: { count: number }) {
               {p.isBot && <span className="tag mut">bot</span>}
               <span className="meta mono">{p.userId}</span>
               <span className="push" />
-              <label className="meta">
-                <input
-                  type="checkbox"
-                  checked={p.excluded}
-                  disabled={pending.has(p.id)}
-                  onChange={(e) => void setExcluded(p.id, e.target.checked)}
-                />{" "}
+              <Checkbox className="meta" checked={p.excluded} disabled={pending.has(p.id)} onChange={(next) => void setExcluded(p.id, next)}>
                 Exclude
-              </label>
+              </Checkbox>
             </li>
           ))}
         </ul>

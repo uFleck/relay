@@ -27,7 +27,7 @@ import {
 } from "./ipc";
 import { liveClaims, todayScope } from "./model";
 import { parseRoute, readLocation, writeLocation, type Route, type View } from "./route";
-import type { Change, Proposal, ProposalDecision, Snapshot } from "./types";
+import type { Change, Proposal, ProposalDecision, Snapshot, Task } from "./types";
 import { startUpdateChecks, useUpdater } from "./updater";
 
 const typing = (el: EventTarget | null) =>
@@ -275,11 +275,27 @@ export default function App() {
   const selected = route.task ? snap.tasks.find((t) => t.id === route.task) : undefined;
   const episode = selected ? null : route.episode;
   const top = snap.proposals[0];
+  // Projects expands the task under its row; every other view opens the column beside the list.
+  const inlineSheet = route.view === "projects";
+  const sheet = (task: Task, inline: boolean) => (
+    <TaskSheet
+      key={task.id}
+      task={task}
+      project={snap.projects.find((p) => p.id === task.projectId)}
+      statuses={snap.statuses}
+      focusChanges={route.focus === "changes"}
+      onClose={closeSheet}
+      onAck={(c) => void ack(task.id, c)}
+      onOpen={(url) => void openExternal(url)}
+      acking={acking}
+      inline={inline}
+    />
+  );
 
   return (
     <div className="win">
       <TitleBar ref={searchRef} query={query} onQuery={setQuery} />
-      <div className={`body${selected || episode ? " with-sheet" : ""}`}>
+      <div className={`body${(selected && !inlineSheet) || episode ? " with-sheet" : ""}`}>
         <Rail
           view={route.view}
           onView={setView}
@@ -317,7 +333,9 @@ export default function App() {
         {route.view === "inbox" && (
           <InboxView slack={slack} openId={episode} onOpen={openEpisode} onSettings={() => setView("settings")} />
         )}
-        {route.view === "projects" && <ProjectsView snap={snap} selectedId={selected?.id ?? null} onSelect={openTask} />}
+        {route.view === "projects" && (
+          <ProjectsView snap={snap} selectedId={selected?.id ?? null} onSelect={openTask} renderTask={(t) => sheet(t, true)} />
+        )}
         {route.view === "agents" && <AgentsView snap={snap} onSelect={openTask} />}
         {route.view === "review" && (
           <ReviewView
@@ -343,19 +361,7 @@ export default function App() {
           />
         )}
 
-        {selected && (
-          <TaskSheet
-            key={selected.id}
-            task={selected}
-            project={snap.projects.find((p) => p.id === selected.projectId)}
-            statuses={snap.statuses}
-            focusChanges={route.focus === "changes"}
-            onClose={closeSheet}
-            onAck={(c) => void ack(selected.id, c)}
-            onOpen={(url) => void openExternal(url)}
-            acking={acking}
-          />
-        )}
+        {selected && !inlineSheet && sheet(selected, false)}
         {episode && <EpisodeSheet key={episode} id={episode} onClose={closeSheet} />}
       </div>
       {notice && (

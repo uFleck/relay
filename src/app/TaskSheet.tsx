@@ -15,10 +15,12 @@ interface Props {
   onOpen: (url: string) => void;
   /** Change ids whose ack is in flight. */
   acking: ReadonlySet<string>;
+  /** Drawn as a card inside a list (Projects) instead of the column beside it. */
+  inline?: boolean;
 }
 
-/** The task detail column. Not a route: `?task=` drives it and Esc closes it. */
-export function TaskSheet({ task, project, statuses, focusChanges, onClose, onAck, onOpen, acking }: Props) {
+/** The task detail column, or a card under its row when `inline`. Not a route: `?task=` drives it and Esc closes it. */
+export function TaskSheet({ task, project, statuses, focusChanges, onClose, onAck, onOpen, acking, inline }: Props) {
   const sheetRef = useRef<HTMLElement>(null);
   const changesRef = useRef<HTMLDivElement>(null);
   const unacked = task.changes.filter(isUnacked).length;
@@ -33,10 +35,11 @@ export function TaskSheet({ task, project, statuses, focusChanges, onClose, onAc
   // Keyboard users land in the sheet; Esc (in App) closes it and returns focus to where it came from.
   useEffect(() => {
     sheetRef.current?.focus({ preventScroll: true });
-  }, [task.id]);
+    if (inline) sheetRef.current?.scrollIntoView({ block: "nearest" });
+  }, [task.id, inline]);
 
   return (
-    <aside ref={sheetRef} className="sheet" tabIndex={-1} aria-label={`Task ${task.title}`}>
+    <aside ref={sheetRef} className={`sheet${inline ? " inline" : ""}`} tabIndex={-1} aria-label={`Task ${task.title}`}>
       <div className="sh-h">
         <div className="sh-top">
           <ProjectChip project={project} />

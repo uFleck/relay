@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { Fragment, memo, type ReactNode } from "react";
 import { Icon } from "../components/Icon";
 import { linkIcon, ProjectChip } from "../components/bits";
 import { claimState, dueLabel, elapsed, headerDate, isUnacked, plural, statusColor, todayScope, useNow } from "../model";
@@ -40,10 +40,12 @@ interface GroupsProps {
   onSelect: (id: string) => void;
   /** Shown when nothing is open and there is no query. */
   empty?: string;
+  /** Drawn under the selected row, for views that expand a task in place instead of opening the side sheet. */
+  renderSelected?: (task: Task) => ReactNode;
 }
 
 /** Groups follow the workflow order; empty groups are hidden; rows carry no status pill. */
-export function TaskGroups({ snapshot, query, selectedId, onSelect, empty }: GroupsProps) {
+export function TaskGroups({ snapshot, query, selectedId, onSelect, empty, renderSelected }: GroupsProps) {
   const q = query.trim().toLowerCase();
   const { tasks } = todayScope(snapshot);
   const visible = q
@@ -76,14 +78,16 @@ export function TaskGroups({ snapshot, query, selectedId, onSelect, empty }: Gro
             {status.name} <span className="n">{rows.length}</span>
           </div>
           {rows.map((t) => (
-            <TaskRow
-              key={t.id}
-              task={t}
-              status={status}
-              project={projects.get(t.projectId)}
-              selected={t.id === selectedId}
-              onSelect={onSelect}
-            />
+            <Fragment key={t.id}>
+              <TaskRow
+                task={t}
+                status={status}
+                project={projects.get(t.projectId)}
+                selected={t.id === selectedId}
+                onSelect={onSelect}
+              />
+              {t.id === selectedId && renderSelected?.(t)}
+            </Fragment>
           ))}
         </div>
       ))}

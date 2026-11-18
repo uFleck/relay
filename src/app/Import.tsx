@@ -17,6 +17,7 @@ import {
 } from "../ipc";
 import type { Project } from "../types";
 import { Spinner, useLive } from "./Slack";
+import { Checkbox, Select } from "../ui/controls";
 
 /* ClickUp and GitHub Issues import: the Settings section for the ClickUp token and the per-project
    panel on Projects. Imports are one-shot and link-only; errors stay inline. */
@@ -156,40 +157,33 @@ function TrackAssigned({ projects }: { projects: Project[] }) {
       <h4 className="sub">Track cards assigned to me</h4>
       <div className="sform">
         <label htmlFor="cu-workspace">Workspace</label>
-        <select
+        <Select
           id="cu-workspace"
-          className="inp"
           value={workspace}
           disabled={busy !== null}
-          onChange={(e) => {
-            setWorkspaceId(e.target.value);
+          options={(workspaces.data ?? []).map((w) => ({ value: w.id, label: w.name }))}
+          onChange={(next) => {
+            setWorkspaceId(next);
             setSpaceId(null);
             setSpaces([]);
           }}
-        >
-          {(workspaces.data ?? []).map((w) => (
-            <option key={w.id} value={w.id}>
-              {w.name}
-            </option>
-          ))}
-        </select>
+        />
         <label htmlFor="cu-space">Space</label>
-        <select id="cu-space" className="inp" value={space} disabled={busy !== null} onChange={(e) => setSpaceId(e.target.value)}>
-          <option value="">All spaces I can see</option>
-          {spaces.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.name}
-            </option>
-          ))}
-        </select>
+        <Select
+          id="cu-space"
+          value={space}
+          disabled={busy !== null}
+          options={[{ value: "", label: "All spaces I can see" }, ...spaces.map((s) => ({ value: s.id, label: s.name }))]}
+          onChange={setSpaceId}
+        />
         <label htmlFor="cu-project">Relay project</label>
-        <select id="cu-project" className="inp" value={project} disabled={busy !== null} onChange={(e) => setProjectId(e.target.value)}>
-          {projects.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
+        <Select
+          id="cu-project"
+          value={project}
+          disabled={busy !== null}
+          options={projects.map((p) => ({ value: p.id, label: p.name }))}
+          onChange={setProjectId}
+        />
         <span />
         <div className="sform-f">
           <button type="button" className="btn pri" disabled={busy !== null || !workspace || !project} onClick={() => void run("save")}>
@@ -260,23 +254,8 @@ export function useRun() {
   return { run, busy: run?.kind === "busy", start };
 }
 
-export function ProjectImport({ project }: { project: Project }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <>
-      <div className="repo">
-        <span className="meta">Import tasks from ClickUp or GitHub Issues</span>
-        <span className="push" />
-        <button type="button" className="btn" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-          {open ? "Hide" : "Import…"}
-        </button>
-      </div>
-      {open && <ImportPanel project={project} />}
-    </>
-  );
-}
-
-function ImportPanel({ project }: { project: Project }) {
+/** The Projects → Import tab: one ClickUp list or one GitHub repo's open issues into `project`. */
+export function ImportPanel({ project }: { project: Project }) {
   const clickup = useLive(clickupStatus, []);
   const [listId, setListId] = useState("");
   const [includeClosed, setIncludeClosed] = useState(false);
@@ -321,10 +300,9 @@ function ImportPanel({ project }: { project: Project }) {
           disabled={cu.busy}
           onChange={(e) => setListId(e.target.value)}
         />
-        <label className="imp-chk">
-          <input type="checkbox" checked={includeClosed} disabled={cu.busy} onChange={(e) => setIncludeClosed(e.target.checked)} />
+        <Checkbox checked={includeClosed} disabled={cu.busy} onChange={setIncludeClosed}>
           Include closed
-        </label>
+        </Checkbox>
         <button type="submit" className="btn pri" disabled={cu.busy || noToken || !listId.trim()}>
           {cu.busy && <Spinner />}
           {cu.busy ? "Importing…" : "Import list"}

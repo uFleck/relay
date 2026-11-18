@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Projects B · Workspace</title>
+<style>
+/* Direction B, "Workspace": one project in focus. A project list with mini status bars on the left;
+   the focused project gets a header card (repo + sources as two tiles) and its tasks below. The
+   selected task expands in place instead of opening a sheet, so the list keeps its full width. */
+:root {
+  --ui: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --disp: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+  --mono: "Cascadia Mono", Consolas, monospace;
+  color-scheme: light;
+  --frame: #fbfbfd; --side: #f3f3f7; --card: #ffffff; --tint: rgba(0,0,0,.04); --tint2: rgba(0,0,0,.065);
+  --line: rgba(0,0,0,.08); --ink: #1b1b20; --ink2: #5a5a66; --ink3: #8b8b97;
+  --acc: #5b5bd6; --acc-soft: rgba(91,91,214,.11); --on-acc: #fff;
+  --warm: #b45309; --warm-soft: rgba(245,158,11,.14); --ok: #16a34a; --err: #dc2626; --stale: #d97706;
+  --c-active: #5b5bd6; --c-review: #e09400; --c-merged: #9b6bf2; --c-waiting: #e2725b; --c-blocked: #dc2626; --c-done: #16a34a; --c-todo: #a3a3ae;
+  --p1: #6366f1; --p2: #10b981; --p3: #f97316; --p4: #a855f7;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  color-scheme: dark;
+  --frame: #1c1c22; --side: #17171c; --card: #24242b; --tint: rgba(255,255,255,.045); --tint2: rgba(255,255,255,.08);
+  --line: rgba(255,255,255,.08); --ink: #f2f2f6; --ink2: #b1b1bf; --ink3: #7f7f8e;
+  --acc: #a5a6ff; --acc-soft: rgba(165,166,255,.15); --on-acc: #15153a;
+  --warm: #fbbf5a; --warm-soft: rgba(251,191,90,.12); --ok: #4ade80; --err: #f87171; --stale: #fbbf24;
+  --c-active: #a5a6ff; --c-review: #fbbf24; --c-merged: #c4a5ff; --c-waiting: #ff9b6a; --c-blocked: #f87171; --c-done: #4ade80; --c-todo: #6b6b78;
+  --p1: #818cf8; --p2: #34d399; --p3: #fb923c; --p4: #c084fc;
+} }
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --frame: #1c1c22; --side: #17171c; --card: #24242b; --tint: rgba(255,255,255,.045); --tint2: rgba(255,255,255,.08);
+  --line: rgba(255,255,255,.08); --ink: #f2f2f6; --ink2: #b1b1bf; --ink3: #7f7f8e;
+  --acc: #a5a6ff; --acc-soft: rgba(165,166,255,.15); --on-acc: #15153a;
+  --warm: #fbbf5a; --warm-soft: rgba(251,191,90,.12); --ok: #4ade80; --err: #f87171; --stale: #fbbf24;
+  --c-active: #a5a6ff; --c-review: #fbbf24; --c-merged: #c4a5ff; --c-waiting: #ff9b6a; --c-blocked: #f87171; --c-done: #4ade80; --c-todo: #6b6b78;
+  --p1: #818cf8; --p2: #34d399; --p3: #fb923c; --p4: #c084fc;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: transparent; color: var(--ink); font: 13px/1.4 var(--ui); padding: 4px 0 24px; }
+button, input { font: inherit; color: inherit; }
+.top { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
+.top h1 { font: 600 19px var(--disp); margin: 0; } .top .sub { color: var(--ink3); font-size: 12px; } .top .sp { flex: 1; }
+.tbtn { border: 0; background: var(--tint2); border-radius: 999px; padding: 5px 12px; cursor: pointer; font-size: 12px; }
+.lede { color: var(--ink2); margin: 0 0 14px; max-width: 900px; }
+.win { border-radius: 10px; overflow: hidden; background: var(--frame); box-shadow: 0 0 0 1px var(--line), 0 10px 30px rgba(0,0,0,.08); display: grid; grid-template-columns: 236px minmax(0, 1fr); height: 720px; }
+.side { background: var(--side); border-right: 1px solid var(--line); padding: 14px 10px; display: flex; flex-direction: column; gap: 2px; overflow: auto; }
+.side h2 { font: 600 18px var(--disp); margin: 0 6px 10px; display: flex; align-items: center; }
+.side h2 button { margin-left: auto; width: 26px; height: 26px; border-radius: 7px; border: 0; background: var(--tint2); cursor: pointer; }
+.pj { border: 0; background: none; text-align: left; padding: 8px 10px; border-radius: 8px; cursor: pointer; display: grid; grid-template-columns: 10px 1fr auto; gap: 2px 8px; align-items: center; }
+.pj:hover { background: var(--tint); }
+.pj[aria-current="true"] { background: var(--card); box-shadow: 0 0 0 1px var(--line), 0 1px 3px rgba(0,0,0,.06); }
+.pj .sw { width: 10px; height: 10px; border-radius: 3px; background: var(--p); }
+.pj b { font-weight: 600; }
+.pj .n { font-size: 12px; color: var(--ink3); }
+.pj .mb { grid-column: 2 / 4; display: flex; height: 4px; border-radius: 2px; overflow: hidden; background: var(--tint2); gap: 1px; }
+.pj .mb i { display: block; }
+.main { display: flex; flex-direction: column; min-width: 0; overflow: auto; }
+.hd { padding: 18px 22px 0; }
+.hd .row1 { display: flex; align-items: center; gap: 10px; }
+.hd .sw { width: 14px; height: 14px; border-radius: 4px; background: var(--p); }
+.hd h3 { margin: 0; font: 600 22px var(--disp); }
+.hd .sp { flex: 1; }
+.stats { display: flex; gap: 6px; margin: 10px 0 12px; flex-wrap: wrap; }
+.chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: 12px; background: var(--tint2); font-size: 12px; color: var(--ink2); }
+.chip b { color: var(--ink); } .chip i { width: 7px; height: 7px; border-radius: 50%; background: var(--c); }
+.tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.tile { background: var(--card); border-radius: 10px; box-shadow: 0 0 0 1px var(--line); padding: 10px 12px; min-width: 0; }
+.tile .k { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink3); margin-bottom: 4px; }
+.tile .k .sp { flex: 1; }
+.tile .v { font: 12px var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tile .g { display: flex; gap: 8px; align-items: center; margin-top: 4px; font-size: 12px; color: var(--ink2); flex-wrap: wrap; }
+.tile .g b { font: 600 12px var(--mono); color: var(--ink); }
+.pill { display: inline-flex; align-items: center; gap: 4px; padding: 0 7px; height: 20px; border-radius: 10px; background: var(--tint2); font-size: 11.5px; }
+.pill.w { background: var(--warm-soft); color: var(--warm); }
+.src { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 12.5px; }
+.src i { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
+.src span { color: var(--ink3); font-size: 12px; margin-left: auto; }
+.btn { height: 26px; border-radius: 6px; border: 0; padding: 0 10px; font: 600 12px var(--ui); cursor: pointer; background: var(--tint2); white-space: nowrap; }
+.btn.pri { background: var(--acc); color: var(--on-acc); }
+.btn.q { background: transparent; color: var(--acc); padding: 0 4px; }
+.tabs { display: flex; gap: 2px; margin: 16px 22px 0; border-bottom: 1px solid var(--line); }
+.tabs button { border: 0; background: none; padding: 7px 10px; font-size: 13px; color: var(--ink2); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.tabs button[aria-selected="true"] { color: var(--ink); font-weight: 600; border-color: var(--acc); }
+.tabs .sp { flex: 1; }
+.tabs input { align-self: center; height: 26px; border-radius: 6px; border: 0; background: var(--tint2); padding: 0 10px; width: 200px; font-size: 12px; }
+.list { padding: 6px 14px 20px; }
+.grp { display: flex; align-items: center; gap: 8px; padding: 12px 8px 4px; font: 600 12px var(--ui); color: var(--ink2); }
+.grp i { width: 8px; height: 8px; border-radius: 50%; background: var(--c); }
+.grp span { color: var(--ink3); font-weight: 400; }
+.task { border-radius: 8px; }
+.task.open { background: var(--card); box-shadow: 0 0 0 1px var(--line), 0 6px 18px rgba(0,0,0,.07); margin: 4px 0 8px; }
+.tr { display: grid; grid-template-columns: 18px minmax(0, 1fr) 26px 120px 64px; gap: 10px; align-items: center; height: 34px; padding: 0 8px; width: 100%; border: 0; background: none; text-align: left; cursor: pointer; border-radius: 8px; }
+.tr:hover { background: var(--tint); }
+.task.open .tr:hover { background: none; }
+.st { width: 16px; height: 16px; border-radius: 5px; border: 1.6px solid var(--c); position: relative; }
+.st.a::after { content: ""; position: absolute; left: 2px; top: 2px; bottom: 2px; width: 5px; border-radius: 2px; background: var(--c); }
+.st.b { background: var(--c); } .st.b::after { content: "!"; position: absolute; inset: 0; display: grid; place-items: center; color: #fff; font: 700 10px var(--ui); }
+.st.r::after { content: ""; position: absolute; inset: 3px; border-radius: 2px; background: color-mix(in srgb, var(--c) 45%, transparent); }
+.tr .t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tr .t small { font: 11px var(--mono); color: var(--ink3); margin-left: 6px; }
+.tr .new { width: 7px; height: 7px; border-radius: 50%; background: var(--c-review); justify-self: center; }
+.av { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink2); white-space: nowrap; overflow: hidden; }
+.av i { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font: 700 9px var(--ui); color: #fff; font-style: normal; flex: none; position: relative; }
+.av i::after { content: ""; position: absolute; right: -1px; bottom: -1px; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 1.5px var(--card); }
+.av i.s::after { background: var(--stale); }
+.av.none { color: var(--ink3); }
+.due { font-size: 12px; color: var(--ink2); text-align: right; }
+.due.soon { color: var(--warm); font-weight: 600; } .due.late { color: var(--err); font-weight: 600; }
+.det { padding: 2px 12px 12px 36px; display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 14px; }
+.det .lbl { font: 600 11.5px var(--ui); color: var(--ink3); margin-bottom: 4px; }
+.flow { display: flex; gap: 4px; align-items: center; margin-bottom: 10px; flex-wrap: wrap; }
+.flow span { font-size: 11.5px; padding: 1px 8px; border-radius: 10px; background: var(--tint2); color: var(--ink3); }
+.flow span.d { color: var(--ink2); } .flow span.c { background: var(--acc-soft); color: var(--acc); font-weight: 600; }
+.chg { background: var(--warm-soft); border-radius: 8px; padding: 8px 10px; font-size: 12.5px; }
+.chg .m { display: flex; gap: 8px; align-items: center; margin-top: 4px; font-size: 11.5px; color: var(--ink3); }
+.lks { display: flex; flex-direction: column; gap: 4px; }
+.lks div { display: flex; justify-content: space-between; font-size: 12.5px; padding: 4px 8px; border-radius: 6px; background: var(--tint); }
+.lks span { color: var(--ink3); font-size: 12px; }
+.acts { grid-column: 1 / 3; display: flex; gap: 8px; }
+.imp { margin: 12px 22px 0; background: var(--card); border-radius: 10px; box-shadow: 0 0 0 1px var(--line); padding: 14px; display: grid; gap: 12px; }
+.imp h4 { margin: 0; font: 600 13px var(--ui); }
+.imp .r { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.inp { height: 30px; border-radius: 6px; border: 1px solid var(--line); background: var(--frame); padding: 0 10px; font-size: 12.5px; width: 160px; }
+.sw2 { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--ink2); cursor: pointer; }
+.sw2 span { width: 30px; height: 18px; border-radius: 9px; background: var(--tint2); position: relative; transition: background .14s; box-shadow: inset 0 0 0 1px var(--line); }
+.sw2 span::after { content: ""; position: absolute; left: 3px; top: 3px; width: 12px; height: 12px; border-radius: 50%; background: var(--ink3); transition: transform .14s; }
+.sw2[aria-checked="true"] span { background: var(--acc); }
+.sw2[aria-checked="true"] span::after { transform: translateX(12px); background: var(--on-acc); }
+.empty { margin: 30px auto; max-width: 440px; text-align: center; }
+.empty .ill { width: 64px; height: 64px; margin: 0 auto 12px; border-radius: 18px; background: var(--acc-soft); display: grid; place-items: center; font-size: 26px; color: var(--acc); }
+.empty h4 { margin: 0 0 4px; font: 600 16px var(--disp); }
+.empty p { margin: 0 0 16px; color: var(--ink2); }
+.steps { text-align: left; display: grid; gap: 8px; }
+.steps div { display: flex; align-items: center; gap: 10px; background: var(--card); box-shadow: 0 0 0 1px var(--line); border-radius: 10px; padding: 10px 12px; }
+.steps b { width: 22px; height: 22px; border-radius: 50%; background: var(--tint2); display: grid; place-items: center; font-size: 12px; flex: none; }
+.steps span { flex: 1; } .steps small { display: block; color: var(--ink3); font-size: 12px; }
+.note { color: var(--ink2); font-size: 12px; margin-top: 12px; } .note b { color: var(--ink); }
+@media (max-width: 900px) { .win { grid-template-columns: minmax(0, 1fr); height: auto; } .side { flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--line); } .side h2 { width: 100%; } .pj { width: 48%; }
+  .tiles, .det { grid-template-columns: minmax(0, 1fr); } .acts { grid-column: 1; } .tr { grid-template-columns: 18px minmax(0, 1fr) 14px 96px 52px; } .tabs input { display: none; } }
+</style>
+</head>
+<body>
+<div class="top"><h1>Projects · Direction B · Workspace</h1><span class="sub">relay 0.5.5 · design/redesign · mockup, not shipped</span><span class="sp"></span><button class="tbtn" id="theme">Theme: auto</button></div>
+<p class="lede">One project in focus at a time. The left list shows every project with a status mini-bar, so you still see the whole portfolio. The project header turns the repo and import sources into two tiles, and the selected task expands in place. Try Portfolio for the empty state and the Import tab.</p>
+<div class="win"><aside class="side" id="side"></aside><section class="main" id="main"></section></div>
+<p class="note"><b>Keeps:</b> project counts, ProjectRepo (path, branch, ahead, dirty, refresh, choose, clear), ProjectImport (ClickUp list + include closed, GitHub owner/repo), status-ordered groups, claim, due, unacked dot, links, both empty messages. <b>Changes:</b> projects become a master list; import moves to its own tab; the task sheet becomes an in-place card, which frees 380 px on Projects (Today keeps its sheet).</p>
+<script>
+const MIXC = ["active", "review", "blocked", "todo", "done"];
+const P = [
+  { id: "account", name: "Account", c: "--p1", mix: [2, 2, 1, 1, 3], repo: "C:\\code\\ublr\\account", branch: "master", ahead: 2, dirty: true, src: [["ClickUp", "Billing sprint · list 901311428817", "synced 4m ago"], ["GitHub", "ublr/account issues", "synced 4m ago"]] },
+  { id: "relay", name: "Relay", c: "--p4", mix: [1, 0, 0, 2, 5], repo: "C:\\Projects\\relay", branch: "t3/redesign-overlay", ahead: 0, dirty: false, src: [["GitHub", "uFleck/relay issues", "synced 1h ago"]] },
+  { id: "ops", name: "Ops", c: "--p3", mix: [0, 0, 0, 0, 2], repo: null, src: [] },
+  { id: "portfolio", name: "Portfolio", c: "--p2", mix: [0, 0, 0, 0, 0], repo: null, src: [], empty: true },
+];
+const AV = { T3: "#6366f1", OpenCode: "#0ea5e9", "Claude Code": "#e2725b" };
+const T = [
+  { id: "a1", p: "account", g: "In Progress", cat: "active", ref: "ACC-412", t: "RC build auth regression", cl: ["T3", "1h 12m"], due: ["18:00", ""] },
+  { id: "a2", p: "account", g: "In Progress", cat: "active", ref: "ACC-418", t: "Session cookie SameSite=Lax breaks billing iframe", due: ["Today", "soon"], unacked: true },
+  { id: "a3", p: "account", g: "In Review", cat: "review", ref: "ACC-405", t: "Invoice PDF shows due date one day early (UTC−3)", rel: "released 20m", due: ["16:30", "soon"], unacked: true },
+  { id: "a4", p: "account", g: "In Review", cat: "review", ref: "ACC-401", t: "Retry declined renewals with exponential backoff", cl: ["OpenCode", "12m"], due: ["Fri", ""] },
+  { id: "a5", p: "account", g: "Blocked", cat: "blocked", ref: "ACC-399", t: "Churn report CSV export — waiting on data team schema", cl: ["Claude Code", "2h 05m", "s"], due: ["Nov 15", "late"] },
+  { id: "a6", p: "account", g: "Todo", cat: "todo", ref: "ACC-420", t: "Add tax id mask to the company profile form", due: ["", ""] },
+  { id: "r1", p: "relay", g: "In Progress", cat: "active", ref: "#88", t: "Hover: snap to nearest edge on drag release", cl: ["Claude Code", "18m"], due: ["", ""] },
+  { id: "r3", p: "relay", g: "Todo", cat: "todo", ref: "#91", t: "Projects page redesign", due: ["Nov 21", ""] },
+  { id: "r4", p: "relay", g: "Todo", cat: "todo", ref: "#92", t: "Controls: adopt headless primitives", due: ["", ""] },
+];
+let cur = "account", sel = "a3", tab = "tasks", closed = true;
+const ini = (h) => h.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase();
+function side() {
+  return `<h2>Projects<button title="New project">+</button></h2>` + P.map((p) => {
+    const tot = p.mix.reduce((a, b) => a + b, 0), open = tot - p.mix[4];
+    return `<button class="pj" data-p="${p.id}" aria-current="${p.id === cur}" style="--p:var(${p.c})"><span class="sw"></span><b>${p.name}</b><span class="n">${tot ? open + " open" : "empty"}</span>
+      <span class="mb">${p.mix.map((n, i) => n ? `<i style="flex:${n};background:var(--c-${MIXC[i]})"></i>` : "").join("")}</span></button>`;
+  }).join("");
+}
+function header(p) {
+  const [a, r, b, td, d] = p.mix;
+  return `<div class="hd" style="--p:var(${p.c})"><div class="row1"><span class="sw"></span><h3>${p.name}</h3><span class="sp"></span><button class="btn">Project settings</button></div>
+    <div class="stats"><span class="chip" style="--c:var(--c-todo)"><i></i><b>${a + r + b + td}</b> open</span><span class="chip" style="--c:var(--c-active)"><i></i><b>${a}</b> in progress</span><span class="chip" style="--c:var(--c-blocked)"><i></i><b>${b}</b> blocked</span><span class="chip" style="--c:var(--c-done)"><i></i><b>${d}</b> done</span></div>
+    <div class="tiles">
+      <div class="tile"><div class="k">Repository<span class="sp"></span>${p.repo ? `<button class="btn q" title="Refresh">↻</button><button class="btn q">Change</button><button class="btn q">Clear</button>` : ""}</div>
+        ${p.repo ? `<div class="v" title="${p.repo}">${p.repo}</div><div class="g">⑂ <b>${p.branch}</b>${p.ahead ? `<span class="pill">↑${p.ahead} to push</span>` : ""}${p.dirty ? `<span class="pill w">● uncommitted</span>` : `<span class="pill">clean</span>`}</div>`
+          : `<div class="g" style="margin:0">No repo linked.&nbsp;<button class="btn">Choose folder…</button></div>`}</div>
+      <div class="tile"><div class="k">Import sources<span class="sp"></span><button class="btn q" data-tab="import">Import…</button></div>
+        ${p.src.length ? p.src.map(([k, v, s]) => `<div class="src"><i></i><b>${k}</b>&nbsp;${v}<span>${s}</span></div>`).join("") : `<div class="g" style="margin:0;color:var(--ink3)">Nothing imported yet.</div>`}</div>
+    </div></div>
+    <div class="tabs"><button data-tab="tasks" aria-selected="${tab === "tasks"}">Tasks</button><button data-tab="import" aria-selected="${tab === "import"}">Import</button><button data-tab="activity" aria-selected="false">Activity</button><span class="sp"></span><input placeholder="Filter ${p.name} tasks…"></div>`;
+}
+function claim(t) {
+  if (t.cl) return `<span class="av"><i class="${t.cl[2] || ""}" style="background:${AV[t.cl[0]]}">${ini(t.cl[0])}</i>${t.cl[0]} · ${t.cl[1]}</span>`;
+  return `<span class="av none">${t.rel || "unclaimed"}</span>`;
+}
+const stc = (c) => c === "active" ? "a" : c === "blocked" ? "b" : c === "review" ? "r" : "";
+function det(t) {
+  return `<div class="det"><div><div class="lbl">Workflow</div><div class="flow"><span class="d">Todo</span><span class="d">In Progress</span><span class="${t.cat === "review" ? "c" : ""}">In Review</span><span>Merged</span><span>Waiting for deploy</span><span>RC</span></div>
+      <div class="lbl">Needs ack</div><div class="chg">“can we also cover the boleto PDF? same off-by-one there”<div class="m">Marina · #billing-squad · 14:21 · 0.86<span style="flex:1"></span><button class="btn">Ack</button><button class="btn q">Permalink</button></div></div></div>
+    <div><div class="lbl">Links</div><div class="lks"><div>PR #1182<span>open · 2 checks</span></div><div>ClickUp 86b3x<span>synced</span></div><div>Slack thread<span>3 msgs</span></div></div></div>
+    <div class="acts"><button class="btn pri">Open thread</button><button class="btn">View diff</button><button class="btn">Open full sheet</button></div></div>`;
+}
+function tasks(p) {
+  const rows = T.filter((t) => t.p === p.id);
+  if (p.empty) return `<div class="empty"><div class="ill">◇</div><h4>Portfolio has no tasks yet</h4><p>Relay fills a project from three places. Do any of them; tasks show up here.</p>
+    <div class="steps"><div><b>1</b><span>Link the repository<small>Agents claim tasks against this checkout</small></span><button class="btn">Choose folder…</button></div>
+    <div><b>2</b><span>Import a ClickUp list or GitHub issues<small>Link-level only, nothing is mirrored</small></span><button class="btn" data-tab="import">Import…</button></div>
+    <div><b>3</b><span>Approve a proposal from Slack<small>JEV routes matching messages here</small></span><button class="btn">Open Review</button></div></div></div>`;
+  if (!rows.length) return `<div class="empty"><div class="ill">✓</div><h4>Every task in ${p.name} is done</h4><p>2 tasks closed this week.</p></div>`;
+  const groups = [...new Set(rows.map((t) => t.g))];
+  return `<div class="list">` + groups.map((g) => { const r = rows.filter((t) => t.g === g); return `<div class="grp" style="--c:var(--c-${r[0].cat})"><i></i>${g} <span>${r.length}</span></div>` + r.map((t) => `
+    <div class="task${t.id === sel ? " open" : ""}"><button class="tr" data-id="${t.id}"><span class="st ${stc(t.cat)}" style="--c:var(--c-${t.cat})"></span><span class="t">${t.t}<small>${t.ref}</small></span>
+      ${t.unacked ? `<i class="new" title="Unacked change"></i>` : "<span></span>"}${claim(t)}<span class="due ${t.due[1]}">${t.due[0]}</span></button>${t.id === sel ? det(t) : ""}</div>`).join(""); }).join("") + `</div>`;
+}
+const imp = () => `<div class="imp"><h4>Import into this project</h4>
+  <div class="r"><b style="width:64px">ClickUp</b><input class="inp" placeholder="List id" value="901311428817"><span class="sw2" role="switch" aria-checked="${closed}" tabindex="0" data-sw><span></span>Include closed tasks</span><span style="flex:1"></span><button class="btn pri">Import list</button></div>
+  <div class="r"><b style="width:64px">GitHub</b><input class="inp" placeholder="owner" value="ublr" style="width:110px">/<input class="inp" placeholder="repo" value="account"><span style="flex:1"></span><button class="btn pri">Import issues</button></div>
+  <div style="font-size:12px;color:var(--ink3)">Imports create local tasks that link back to the source.</div></div>`;
+function draw() {
+  const p = P.find((x) => x.id === cur);
+  document.getElementById("side").innerHTML = side();
+  document.getElementById("main").innerHTML = header(p) + (tab === "import" ? imp() : tasks(p));
+}
+document.addEventListener("click", (e) => {
+  const pj = e.target.closest("[data-p]"); if (pj) { cur = pj.dataset.p; tab = "tasks"; draw(); return; }
+  const tb = e.target.closest("[data-tab]"); if (tb) { tab = tb.dataset.tab === "activity" ? "tasks" : tb.dataset.tab; draw(); return; }
+  if (e.target.closest("[data-sw]")) { closed = !closed; draw(); return; }
+  const r = e.target.closest("[data-id]"); if (r) { sel = sel === r.dataset.id ? null : r.dataset.id; draw(); }
+});
+draw();
+const th = document.getElementById("theme"), modes = ["auto", "light", "dark"];
+th.onclick = () => { const m = modes[(modes.indexOf(th.textContent.slice(7)) + 1) % 3]; th.textContent = "Theme: " + m; m === "auto" ? delete document.documentElement.dataset.theme : document.documentElement.dataset.theme = m; };
+</script>
+</body>
+</html>

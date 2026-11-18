@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Projects C · Board</title>
+<style>
+/* Direction C, "Board": the Signal language applied to Projects. Project tabs, a command bar that holds
+   repo and import, then workflow lanes coloured by status category. Cards are two lines. The selected
+   card opens an inspector docked at the bottom, so lanes keep their width. */
+:root {
+  --ui: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --sign: "Bahnschrift", "Segoe UI", system-ui, sans-serif;
+  --mono: "Cascadia Mono", Consolas, monospace;
+  color-scheme: light;
+  --frame: #ffffff; --lane: #f3f4f6; --card: #ffffff; --hover: rgba(0,0,0,.04); --line: #e2e4e8; --line2: #cdd0d6;
+  --ink: #101215; --ink2: #4c525c; --ink3: #858b95; --cap: #101215; --on-cap: #fff;
+  --c-active: #2f6bff; --c-review: #f0a400; --c-merged: #8b5cf6; --c-waiting: #e2725b; --c-blocked: #e5343a; --c-done: #18a058; --c-todo: #9aa0a8;
+  --band: #ffb000; --on-band: #1d1300; --live: #18a058; --stale: #d48a00;
+  --p1: #2f6bff; --p2: #18a058; --p3: #e2725b; --p4: #8b5cf6;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  color-scheme: dark;
+  --frame: #0f1114; --lane: #15181c; --card: #1c2025; --hover: rgba(255,255,255,.05); --line: #23272d; --line2: #343941;
+  --ink: #f1f2f4; --ink2: #a9afb9; --ink3: #6c727c; --cap: #f1f2f4; --on-cap: #0f1114;
+  --c-active: #5b8cff; --c-review: #ffb81f; --c-merged: #a78bfa; --c-waiting: #ff9b6a; --c-blocked: #ff5a5f; --c-done: #34d17c; --c-todo: #5a606a;
+  --band: #ffb81f; --live: #34d17c; --stale: #ffb81f;
+  --p1: #5b8cff; --p2: #34d17c; --p3: #ff9b6a; --p4: #a78bfa;
+} }
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --frame: #0f1114; --lane: #15181c; --card: #1c2025; --hover: rgba(255,255,255,.05); --line: #23272d; --line2: #343941;
+  --ink: #f1f2f4; --ink2: #a9afb9; --ink3: #6c727c; --cap: #f1f2f4; --on-cap: #0f1114;
+  --c-active: #5b8cff; --c-review: #ffb81f; --c-merged: #a78bfa; --c-waiting: #ff9b6a; --c-blocked: #ff5a5f; --c-done: #34d17c; --c-todo: #5a606a;
+  --band: #ffb81f; --live: #34d17c; --stale: #ffb81f;
+  --p1: #5b8cff; --p2: #34d17c; --p3: #ff9b6a; --p4: #a78bfa;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: transparent; color: var(--ink); font: 13px/1.4 var(--ui); padding: 4px 0 24px; }
+button, input { font: inherit; color: inherit; }
+.top { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
+.top h1 { font: 600 20px var(--sign); margin: 0; } .top .sub { color: var(--ink3); font: 12px var(--sign); } .top .sp { flex: 1; }
+.tbtn { border: 2px solid var(--ink); background: transparent; border-radius: 3px; padding: 3px 10px; cursor: pointer; font: 600 12px var(--sign); text-transform: uppercase; }
+.lede { color: var(--ink2); margin: 0 0 14px; max-width: 900px; }
+.win { border: 1px solid var(--line2); border-radius: 6px; overflow: hidden; background: var(--frame); display: flex; flex-direction: column; height: 740px; }
+.ptabs { display: flex; align-items: stretch; border-bottom: 1px solid var(--line); padding: 0 12px; gap: 2px; overflow-x: auto; }
+.ptabs h2 { font: 700 15px var(--sign); text-transform: uppercase; letter-spacing: .06em; margin: 0 14px 0 4px; align-self: center; }
+.ptab { border: 0; background: none; padding: 10px 12px 8px; cursor: pointer; display: flex; align-items: center; gap: 8px; border-bottom: 3px solid transparent; white-space: nowrap; }
+.ptab i { width: 9px; height: 9px; border-radius: 2px; background: var(--p); }
+.ptab b { font: 600 14px var(--sign); }
+.ptab span { font: 12px var(--sign); color: var(--ink3); }
+.ptab[aria-selected="true"] { border-color: var(--p); }
+.cmd { display: flex; align-items: center; gap: 10px; padding: 8px 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.big { display: flex; gap: 16px; margin-right: 8px; }
+.big div { display: flex; flex-direction: column; }
+.big b { font: 600 22px/1 var(--sign); }
+.big span { font: 11px var(--sign); color: var(--ink3); text-transform: uppercase; letter-spacing: .05em; }
+.big .bl b { color: var(--c-blocked); }
+.vr { width: 1px; align-self: stretch; background: var(--line); }
+.repo { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; }
+.repo .path { font: 12px var(--mono); color: var(--ink2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.br { font: 600 12.5px var(--sign); padding: 2px 8px; border-radius: 3px; background: var(--lane); white-space: nowrap; }
+.br .d { color: var(--stale); }
+.btn { height: 26px; padding: 0 10px; border-radius: 3px; border: 0; font: 700 11.5px var(--sign); letter-spacing: .05em; text-transform: uppercase; cursor: pointer; background: var(--ink); color: var(--frame); white-space: nowrap; }
+.btn.g { background: transparent; color: var(--ink); box-shadow: inset 0 0 0 1.5px var(--line2); }
+.btn.t { background: transparent; color: var(--ink2); padding: 0 6px; }
+.imp { display: flex; gap: 10px; align-items: center; padding: 8px 16px; border-bottom: 1px solid var(--line); background: var(--lane); flex-wrap: wrap; }
+.imp b { font: 700 12px var(--sign); text-transform: uppercase; letter-spacing: .06em; }
+.inp { height: 28px; border: 1.5px solid var(--line2); border-radius: 3px; background: var(--frame); padding: 0 8px; width: 140px; font-size: 12.5px; }
+.inp:focus { outline: none; border-color: var(--c-active); box-shadow: 0 0 0 3px color-mix(in srgb, var(--c-active) 25%, transparent); }
+.ck { display: inline-flex; gap: 7px; align-items: center; cursor: pointer; font-size: 12.5px; }
+.ck span { width: 16px; height: 16px; border-radius: 2px; border: 2px solid var(--ink2); display: grid; place-items: center; }
+.ck[aria-checked="true"] span { background: var(--ink); border-color: var(--ink); }
+.ck[aria-checked="true"] span::after { content: ""; width: 8px; height: 4px; border: solid var(--frame); border-width: 0 0 2px 2px; transform: rotate(-45deg) translate(1px, -1px); }
+.sep { color: var(--ink3); }
+.board { flex: 1; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(165px, 1fr); gap: 8px; padding: 10px 12px; overflow: auto; min-height: 0; }
+.lane { background: var(--lane); border-radius: 4px; display: flex; flex-direction: column; min-height: 0; border-top: 3px solid var(--c); }
+.lane.fold { max-width: 110px; }
+.lh { display: flex; align-items: baseline; gap: 6px; padding: 8px 10px 6px; }
+.lh b { font: 700 12px var(--sign); text-transform: uppercase; letter-spacing: .06em; }
+.lh span { font: 600 14px var(--sign); color: var(--ink3); margin-left: auto; }
+.cards { display: flex; flex-direction: column; gap: 6px; padding: 0 6px 8px; overflow: auto; }
+.cd { border: 0; text-align: left; background: var(--card); border-radius: 3px; padding: 7px 9px; cursor: pointer; box-shadow: 0 1px 0 var(--line), 0 0 0 1px var(--line); display: grid; gap: 4px; }
+.cd:hover { box-shadow: 0 0 0 1.5px var(--line2); }
+.cd.sel { box-shadow: 0 0 0 2px var(--c); }
+.cd .t { font-weight: 600; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.cd .m { display: flex; align-items: center; flex-wrap: wrap; gap: 2px 8px; white-space: nowrap; font: 12px var(--sign); color: var(--ink3); }
+.cd .m .ref { font: 11px var(--mono); }
+.cd .m .sp { flex: 1; }
+.cd .cl { display: inline-flex; align-items: center; gap: 4px; color: var(--ink2); }
+.cd .cl i { width: 7px; height: 7px; border-radius: 50%; background: var(--live); } .cd .cl i.s { background: var(--stale); }
+.cd .due.soon { color: var(--stale); font-weight: 600; } .cd .due.late { color: var(--c-blocked); font-weight: 600; }
+.cd .new { background: var(--band); color: var(--on-band); font: 700 10px/16px var(--sign); padding: 0 5px; border-radius: 2px; letter-spacing: .04em; }
+.none { color: var(--ink3); font: 12px var(--sign); text-align: center; padding: 14px 0; border: 1.5px dashed var(--line2); border-radius: 3px; margin: 0 6px 8px; }
+.insp { border-top: 3px solid var(--c); display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, .9fr); gap: 18px; padding: 12px 16px 14px; background: var(--frame); }
+.insp h3 { margin: 0 0 4px; font: 600 17px var(--sign); }
+.insp .k { font: 12px var(--sign); color: var(--ink3); display: flex; gap: 8px; align-items: center; }
+.insp .k .x { margin-left: auto; }
+.steps { display: flex; gap: 2px; margin: 8px 0 4px; }
+.steps i { flex: 1; height: 6px; background: var(--line); }
+.steps i.on { background: var(--c); }
+.steps-l { display: flex; justify-content: space-between; font: 10.5px var(--sign); color: var(--ink3); text-transform: uppercase; }
+.lbl { font: 700 11px var(--sign); letter-spacing: .08em; text-transform: uppercase; color: var(--ink3); margin-bottom: 4px; }
+.chg { border-left: 3px solid var(--band); background: var(--lane); padding: 6px 10px; font-size: 12.5px; }
+.chg .m { display: flex; gap: 8px; align-items: center; margin-top: 4px; font: 12px var(--sign); color: var(--ink3); }
+.lk { display: grid; gap: 4px; font-size: 12.5px; }
+.lk div { display: flex; justify-content: space-between; } .lk span { color: var(--ink3); font: 12px var(--sign); }
+.acts { display: flex; gap: 6px; margin-top: 10px; }
+.empty { flex: 1; display: grid; place-items: center; }
+.empty .in { text-align: center; max-width: 520px; }
+.empty .sign { display: inline-flex; align-items: center; gap: 10px; background: var(--cap); color: var(--on-cap); font: 700 18px var(--sign); text-transform: uppercase; letter-spacing: .08em; padding: 8px 16px; border-radius: 3px; }
+.empty p { color: var(--ink2); margin: 12px 0 16px; }
+.empty .row { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+.note { color: var(--ink2); font-size: 12px; margin-top: 12px; } .note b { color: var(--ink); }
+@media (max-width: 900px) { .win { height: auto; } .board { grid-auto-flow: row; grid-auto-columns: auto; grid-template-columns: 1fr 1fr; } .lane.fold { max-width: none; } .insp { grid-template-columns: minmax(0, 1fr); } .big { display: none; } }
+</style>
+</head>
+<body>
+<div class="top"><h1>Projects · Direction C · Board</h1><span class="sub">relay 0.5.5 · design/redesign · mockup, not shipped</span><span class="sp"></span><button class="tbtn" id="theme">Theme: auto</button></div>
+<p class="lede">The workflow made visible. Projects are tabs; the command bar holds counts, repo, branch and import; lanes follow the project's status order and its category colour. Done collapses to a count. The selected card docks an inspector at the bottom. Click cards, the Import button, and the Portfolio tab.</p>
+<div class="win" id="win"></div>
+<p class="note"><b>Keeps:</b> per-project counts, ProjectRepo (path, branch, ahead, dirty, refresh, choose, clear), ProjectImport (ClickUp list + include closed, GitHub owner/repo), status order, claim, due, unacked marker, links, empty states. <b>Changes:</b> lanes replace grouped rows (empty lanes stay visible as drop targets, not hidden); one project at a time; inspector replaces the side sheet. <b>Risk:</b> 7 lanes need ≥ 1200 px; below that they wrap to two columns.</p>
+<script>
+const P = [
+  { id: "account", name: "Account", c: "--p1", counts: [6, 2, 1, 3], repo: "C:\\code\\ublr\\account", branch: "master", ahead: 2, dirty: true },
+  { id: "relay", name: "Relay", c: "--p4", counts: [3, 1, 0, 5], repo: "C:\\Projects\\relay", branch: "t3/redesign-overlay", ahead: 0, dirty: false },
+  { id: "ops", name: "Ops", c: "--p3", counts: [0, 0, 0, 2] },
+  { id: "portfolio", name: "Portfolio", c: "--p2", counts: [0, 0, 0, 0], empty: true },
+];
+const L = [["Todo", "todo"], ["In Progress", "active"], ["In Review", "review"], ["Merged", "merged"], ["Waiting for deploy", "waiting"], ["Blocked", "blocked"], ["Done", "done"]];
+const T = [
+  { id: "a6", p: "account", g: "Todo", ref: "ACC-420", t: "Add tax id mask to the company profile form", due: ["", ""] },
+  { id: "a1", p: "account", g: "In Progress", ref: "ACC-412", t: "RC build auth regression", cl: ["T3", "1h 12m"], due: ["18:00", ""] },
+  { id: "a2", p: "account", g: "In Progress", ref: "ACC-418", t: "Session cookie SameSite=Lax breaks billing iframe", due: ["Today", "soon"], unacked: 1 },
+  { id: "a3", p: "account", g: "In Review", ref: "ACC-405", t: "Invoice PDF shows due date one day early (UTC−3)", due: ["16:30", "soon"], unacked: 1 },
+  { id: "a4", p: "account", g: "In Review", ref: "ACC-401", t: "Retry declined renewals with exponential backoff", cl: ["OpenCode", "12m"], due: ["Fri", ""] },
+  { id: "a5", p: "account", g: "Blocked", ref: "ACC-399", t: "Churn report CSV export — waiting on data team schema", cl: ["Claude Code", "2h 05m", "s"], due: ["Nov 15", "late"] },
+  { id: "r1", p: "relay", g: "In Progress", ref: "#88", t: "Hover: snap to nearest edge on drag release", cl: ["Claude Code", "18m"], due: ["", ""] },
+  { id: "r2", p: "relay", g: "Waiting for deploy", ref: "#84", t: "Bump tauri-plugin-updater to 2.9 and re-sign latest.json", due: ["", ""] },
+  { id: "r3", p: "relay", g: "Todo", ref: "#91", t: "Projects page redesign", due: ["Nov 21", ""] },
+];
+let cur = "account", sel = "a3", imp = false, closed = true;
+const card = (t, cat) => `<button class="cd${t.id === sel ? " sel" : ""}" data-id="${t.id}" style="--c:var(--c-${cat})"><span class="t">${t.t}</span>
+  <span class="m"><span class="ref">${t.ref}</span>${t.unacked ? `<span class="new">ACK</span>` : ""}<span class="sp"></span>${t.cl ? `<span class="cl"><i class="${t.cl[2] || ""}"></i>${t.cl[0]} · ${t.cl[1]}</span>` : ""}${t.due[0] ? `<span class="due ${t.due[1]}">${t.due[0]}</span>` : ""}</span></button>`;
+function inspector() {
+  const t = T.find((x) => x.id === sel && x.p === cur); if (!t) return "";
+  const li = L.findIndex(([g]) => g === t.g), cat = L[li][1];
+  return `<div class="insp" style="--c:var(--c-${cat})"><div><div class="k">${t.ref} · ${t.g}<button class="btn t x" data-close>Esc ✕</button></div><h3>${t.t}</h3>
+      <div class="steps">${L.slice(0, 5).map((_, i) => `<i class="${i <= li ? "on" : ""}"></i>`).join("")}</div><div class="steps-l">${L.slice(0, 5).map(([g]) => `<span>${g.split(" ")[0]}</span>`).join("")}</div>
+      <div class="acts"><button class="btn">Open thread</button><button class="btn g">View diff</button></div></div>
+    <div><div class="lbl">Needs ack</div><div class="chg">“can we also cover the boleto PDF? same off-by-one there”<div class="m">Marina · #billing-squad · 14:21 · 0.86<span style="flex:1"></span><button class="btn g">Ack</button></div></div>
+      <div class="lbl" style="margin-top:8px">Claim</div><div style="font:12.5px var(--sign);color:var(--ink2)">${t.cl ? `${t.cl[0]} · ${t.cl[1]} · last progress 2m ago` : "OpenCode released 20m ago"}</div></div>
+    <div><div class="lbl">Links</div><div class="lk"><div>PR #1182<span>open · 2 checks</span></div><div>ClickUp 86b3x<span>synced</span></div><div>Slack thread<span>3 msgs</span></div></div></div></div>`;
+}
+function draw() {
+  const p = P.find((x) => x.id === cur);
+  const [open, act, bl, done] = p.counts;
+  let h = `<div class="ptabs"><h2>Projects</h2>${P.map((x) => `<button class="ptab" data-p="${x.id}" aria-selected="${x.id === cur}" style="--p:var(${x.c})"><i></i><b>${x.name}</b><span>${x.counts[0] || (x.empty ? "empty" : "✓")}</span></button>`).join("")}</div>
+  <div class="cmd"><div class="big"><div><b>${open}</b><span>open</span></div><div><b>${act}</b><span>in progress</span></div><div class="bl"><b>${bl}</b><span>blocked</span></div><div><b>${done}</b><span>done</span></div></div><span class="vr"></span>
+    <div class="repo">${p.repo ? `<span class="br">⑂ ${p.branch}${p.ahead ? ` ↑${p.ahead}` : ""}${p.dirty ? ` <span class="d">●</span>` : ""}</span><span class="path" title="${p.repo}">${p.repo}</span><button class="btn t" title="Refresh">↻</button><button class="btn t">Change</button><button class="btn t">Clear</button>` : `<span class="path">No repo linked</span><button class="btn g">Choose folder</button>`}</div>
+    <button class="btn${imp ? "" : " g"}" data-imp>${imp ? "Hide import" : "Import"}</button></div>`;
+  if (imp) h += `<div class="imp"><b>ClickUp</b><input class="inp" placeholder="List id" value="901311428817"><span class="ck" role="checkbox" aria-checked="${closed}" tabindex="0" data-ck><span></span>Include closed</span><button class="btn">Import list</button>
+    <span class="vr"></span><b>GitHub</b><input class="inp" placeholder="owner" value="ublr" style="width:90px"><span class="sep">/</span><input class="inp" placeholder="repo" value="account" style="width:110px"><button class="btn">Import issues</button></div>`;
+  if (p.empty) h += `<div class="empty"><div class="in"><span class="sign">◇ No tasks in Portfolio</span><p>Link the repository so agents can claim work here, or import a ClickUp list or GitHub issues. Approved Slack proposals also land here.</p>
+    <div class="row"><button class="btn g">Choose folder</button><button class="btn" data-imp>Import</button></div></div></div>`;
+  else {
+    const rows = T.filter((t) => t.p === cur);
+    h += `<div class="board">${L.map(([g, cat]) => { const r = rows.filter((t) => t.g === g); const fold = cat === "done";
+      return `<div class="lane${fold ? " fold" : ""}" style="--c:var(--c-${cat})"><div class="lh"><b>${g}</b><span>${fold ? done : r.length}</span></div>
+        ${fold ? `<div class="none">${done} done<br>this week</div>` : `<div class="cards">${r.map((t) => card(t, cat)).join("") || `<div class="none">—</div>`}</div>`}</div>`; }).join("")}</div>${inspector()}`;
+  }
+  document.getElementById("win").innerHTML = h;
+}
+document.addEventListener("click", (e) => {
+  const pt = e.target.closest("[data-p]"); if (pt) { cur = pt.dataset.p; draw(); return; }
+  if (e.target.closest("[data-imp]")) { imp = !imp; draw(); return; }
+  if (e.target.closest("[data-ck]")) { closed = !closed; draw(); return; }
+  if (e.target.closest("[data-close]")) { sel = null; draw(); return; }
+  const c = e.target.closest("[data-id]"); if (c) { sel = c.dataset.id; draw(); }
+});
+draw();
+const th = document.getElementById("theme"), modes = ["auto", "light", "dark"];
+th.onclick = () => { const m = modes[(modes.indexOf(th.textContent.slice(7)) + 1) % 3]; th.textContent = "Theme: " + m; m === "auto" ? delete document.documentElement.dataset.theme : document.documentElement.dataset.theme = m; };
+</script>
+</body>
+</html>
