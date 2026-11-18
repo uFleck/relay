@@ -1,7 +1,7 @@
 # Relay handoff (for the next agent)
 
-State as of 2026-11-17 23:55 (-03:00). Relay 0.3.0 is installed on this machine (0.3.1 is
-released after it); the updater is validated from 0.1.0 → 0.1.1 → 0.2.0 → 0.3.0.
+State as of 2026-11-17 23:55 (-03:00). Relay **0.3.2** is installed on this machine; the updater is
+validated from 0.1.0 → 0.1.1 → 0.2.0 → 0.3.0 → 0.3.1 → 0.3.2.
 
 ## What works
 
@@ -41,8 +41,9 @@ released after it); the updater is validated from 0.1.0 → 0.1.1 → 0.2.0 → 
   (0 tasks, 0 episodes, 0 jobs).
 - Live PR sync: a linked `tauri-apps/tauri#16356` updated to `open` with `checks failing`, and
   `project_git_state` returned `master` / `7db841d` / dirty.
-- Updates: 0.1.0 → 0.1.1, 0.1.1 → 0.2.0, 0.2.0 → 0.3.0 and 0.2.0 → 0.3.1 all downloaded, verified the
-  signature, restarted and reported the new version.
+- Updates: 0.1.0 → 0.1.1, 0.1.1 → 0.2.0, 0.2.0 → 0.3.0, 0.3.0 → 0.3.1 and 0.3.1 → 0.3.2 all downloaded,
+  verified the signature, restarted and reported the new version.
+- In the installed 0.3.2, `Ctrl+Alt+S` from `/` opened `/?view=settings`.
 - On-demand sync: from a hidden debug app with no token, `Ctrl+Alt+S` opened Settings (`/?view=settings`), and
   `slack_sync_now` returned `Slack is not configured. Paste your user token in Settings → Slack.`
 
@@ -82,6 +83,7 @@ released after it); the updater is validated from 0.1.0 → 0.1.1 → 0.2.0 → 
 | `22e0359` | Catch-up pagination, rescreen at close, deletions |
 | `53d84eb` | Release 0.3.1 |
 | `ed38883` | On-demand Slack sync (`Ctrl+Alt+S`, tray, Settings) |
+| `adbadb7` | Release 0.3.2 |
 
 Everything is on `origin/master` except work committed after the last push; push before handing off.
 

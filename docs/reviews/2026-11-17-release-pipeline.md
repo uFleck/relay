@@ -26,6 +26,7 @@
 | v0.2.0 | **176.1 s** | **180.0 s (3:00)** | 4.86 MiB + `.sig` |
 | v0.3.0 | **154.0 s** | **158.1 s (2:38)** | 4.97 MiB + `.sig` |
 | v0.3.1 | **138.9 s** | **143.1 s (2:23)** | 4.97 MiB + `.sig` |
+| v0.3.2 | **140.3 s** | **144.1 s (2:24)** | 5.00 MiB + `.sig` |
 
 Both are under the 5:00 target with well over a minute of slack.
 
@@ -70,6 +71,13 @@ replaces the binary.
 The installed 0.3.0 checked, offered **0.3.1**, downloaded and verified the signature, restarted,
 and reports **0.3.1**. This one carries catch-up pagination, rescreen-at-close and deletion
 handling (a patch on top of 0.3.0).
+
+## Fifth update: 0.3.1 → 0.3.2
+
+The installed 0.3.1 checked, offered **0.3.2**, downloaded and verified the signature, restarted, and
+reports **0.3.2**. This one carries the on-demand Slack check (`Ctrl+Alt+S`, tray, Settings). In the
+installed build, pressing the shortcut from `/` opened `/?view=settings`; with no Slack token the panel
+shows "Not connected", as expected.
 
 ## Notes and risks
 
