@@ -953,9 +953,6 @@ h3.sub {
   min-height: var(--row-h);
   padding: 0 20px;
 }
-.setrow input[type="checkbox"] {
-  accent-color: var(--accent);
-}
 
 .mcp {
   display: grid;
@@ -1398,15 +1395,6 @@ h3.sub {
 }
 .imp-row .btn {
   flex: none;
-}
-.imp-chk {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--text-secondary);
-}
-.imp-chk input {
-  accent-color: var(--accent);
 }
 .imp-err {
   font: 500 11.5px var(--font-mono);

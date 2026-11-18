@@ -11,6 +11,7 @@ import { ClickupSettings, ProjectImport } from "./Import";
 import { McpSetup } from "./McpSetup";
 import { FromSlack, JevSettings, SlackSettings } from "./Slack";
 import { TaskGroups } from "./Today";
+import { Switch } from "../ui/controls";
 
 /* The rail's views besides Today. Each reads the same snapshot; none invents data the snapshot lacks. */
 
@@ -248,16 +249,14 @@ export function SettingsView({ snap, update, flags, onFlag, mcp, onMcpRetry, sla
           <p className="empty">Hover settings are available in the desktop app.</p>
         ) : (
           <>
-            <label className="setrow">
+            <Switch className="setrow" checked={flags.dnd} disabled={saving === "dnd"} onChange={() => void toggle("dnd")}>
               <span>Do not disturb · stops pulses, keeps the badge</span>
               <span className="push" />
-              <input type="checkbox" checked={flags.dnd} disabled={saving === "dnd"} onChange={() => void toggle("dnd")} />
-            </label>
-            <label className="setrow">
+            </Switch>
+            <Switch className="setrow" checked={flags.paused} disabled={saving === "paused"} onChange={() => void toggle("paused")}>
               <span>Pause capture</span>
               <span className="push" />
-              <input type="checkbox" checked={flags.paused} disabled={saving === "paused"} onChange={() => void toggle("paused")} />
-            </label>
+            </Switch>
           </>
         )}
 

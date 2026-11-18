@@ -4,6 +4,7 @@ import "./styles/tokens.css";
 import "./styles/layout-tokens.css";
 import "./styles/base.css";
 import "./styles/app.css";
+import "./styles/controls.css";
 import App from "./App";
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
