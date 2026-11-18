@@ -1,9 +1,10 @@
 name: Release
 
+# Releases are cut locally with scripts/release.ps1 (measured 176.5s from a warm
+# target) so a pushed tag never waits on a runner. This workflow is the hosted /
+# self-hosted fallback: dispatch it from the vX.Y.Z tag ref when a runner with the
+# `relay-release` label is registered.
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
     inputs:
       runner:
@@ -26,7 +27,7 @@ env:
 jobs:
   release:
     name: Release (self-hosted)
-    if: github.event_name == 'push' || inputs.runner != 'hosted'
+    if: inputs.runner != 'hosted'
     runs-on: [self-hosted, Windows, X64, relay-release]
     environment: Production
     timeout-minutes: 30
