@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use relay_core::clickup::ClickUpClient;
+use relay_core::clickup_sync::card_category;
 use relay_core::github::GithubClient;
 use relay_core::model::{NewLink, NewTask, StatusCategory, from_unix_millis, now};
 use relay_core::store::Store;
@@ -12,7 +13,7 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::secrets;
 
-const CLICKUP_TOKEN: &str = "clickup-token";
+pub(crate) const CLICKUP_TOKEN: &str = "clickup-token";
 
 #[derive(Debug, Clone, Copy, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -30,16 +31,18 @@ pub struct ConnectorStatus {
 /// The Sources row for ClickUp.
 pub fn sync_source() -> relay_core::view::SyncSource {
     use relay_core::view::{SyncSource, SyncState};
-    let (state, reason) = if secrets::read(CLICKUP_TOKEN).is_some() {
-        (SyncState::Ok, "token stored")
+    let (state, reason) = if secrets::read(CLICKUP_TOKEN).is_none() {
+        (SyncState::Off, "not connected".to_string())
+    } else if let Some(error) = crate::clickup_sync::last_error() {
+        (SyncState::Down, error)
     } else {
-        (SyncState::Off, "not connected")
+        (SyncState::Ok, "token stored".to_string())
     };
     SyncSource {
         name: "ClickUp".into(),
         short: "ClickUp".into(),
         state,
-        reason: Some(reason.to_string()),
+        reason: Some(reason),
     }
 }
 
@@ -88,10 +91,6 @@ pub async fn clickup_import(
     let statuses = store
         .list_statuses(&project_id)
         .map_err(|error| error.to_string())?;
-    let todo = statuses
-        .iter()
-        .find(|status| status.category == StatusCategory::Todo)
-        .map(|status| status.id.clone());
 
     let mut count = ImportCount::default();
     for task in tasks {
@@ -107,16 +106,7 @@ pub async fn clickup_import(
             count.skipped += 1;
             continue;
         }
-        let status_id = task
-            .status
-            .as_deref()
-            .and_then(|name| {
-                statuses
-                    .iter()
-                    .find(|status| status.name.eq_ignore_ascii_case(name))
-            })
-            .map(|status| status.id.clone())
-            .or_else(|| todo.clone());
+        let status_id = crate::clickup_sync::status_for(&statuses, card_category(&task));
         let mut new = NewTask::new(&project_id, &task.name);
         new.notes = task.description;
         new.status_id = status_id;

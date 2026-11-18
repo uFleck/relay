@@ -2,6 +2,7 @@
 //! local DB. The UI in both windows is owned by the frontend; this file only routes events to it.
 
 mod analyst;
+mod clickup_sync;
 mod commands;
 mod github;
 mod hover;
@@ -296,6 +297,11 @@ pub fn run() {
             imports::clickup_set_token,
             imports::clickup_clear_token,
             imports::clickup_import,
+            clickup_sync::clickup_workspaces,
+            clickup_sync::clickup_spaces,
+            clickup_sync::clickup_scope,
+            clickup_sync::clickup_set_scope,
+            clickup_sync::clickup_sync_now,
             imports::github_import_issues,
             hover::hover_place,
             hover::hover_drag,
@@ -344,6 +350,7 @@ pub fn run() {
             mcp::start(app.handle().clone(), store.clone(), &dir);
             slack::start(app.handle().clone(), store.clone());
             github::start(app.handle().clone());
+            clickup_sync::start(app.handle().clone());
 
             build_tray(app.handle())?;
             register_hotkeys(app.handle());

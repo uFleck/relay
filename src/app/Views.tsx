@@ -271,7 +271,7 @@ export function SettingsView({ snap, update, flags, onFlag, mcp, onMcpRetry, sla
         <GithubSettings />
 
         <h3 className="sub">ClickUp</h3>
-        <ClickupSettings />
+        <ClickupSettings projects={snap.projects} />
 
         <h3 className="sub">Agents &amp; MCP</h3>
         <McpSetup status={mcp} onRetry={onMcpRetry} />

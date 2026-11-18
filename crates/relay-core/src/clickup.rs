@@ -30,10 +30,31 @@ pub struct ClickUpTask {
     pub name: String,
     pub description: Option<String>,
     pub status: Option<String>,
+    /// ClickUp's status type: `open`, `custom`, `done` or `closed`.
+    pub status_type: Option<String>,
+    pub list_name: Option<String>,
     pub due_date: Option<i64>,
     pub priority: Option<i64>,
     pub url: Option<String>,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Named {
+    pub id: String,
+    pub name: String,
+}
+
+/// Cards assigned to one user. `truncated` means the page cap was hit, so the list is
+/// incomplete and must not be used to decide what is no longer assigned.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssignedTasks {
+    pub tasks: Vec<ClickUpTask>,
+    pub truncated: bool,
+}
+
+const PAGE_SIZE: usize = 100;
+const MAX_PAGES: u32 = 20;
 
 pub struct ClickUpClient {
     token: String,
@@ -103,6 +124,66 @@ impl ClickUpClient {
         Ok(out)
     }
 
+    /// The authenticated user's id.
+    pub async fn me(&self) -> Result<String, ClickUpError> {
+        let value = self.get("/user").await?;
+        id_string(value.pointer("/user/id")).ok_or(ClickUpError::Missing("user.id"))
+    }
+
+    pub async fn workspaces(&self) -> Result<Vec<Named>, ClickUpError> {
+        let value = self.get("/team").await?;
+        named_from(&value, "teams")
+    }
+
+    pub async fn spaces(&self, team_id: &str) -> Result<Vec<Named>, ClickUpError> {
+        let path = format!("/team/{}/space?archived=false", encode_segment(team_id));
+        named_from(&self.get(&path).await?, "spaces")
+    }
+
+    /// Open cards assigned to `user_id`, subtasks included, in one space or, without
+    /// `space_id`, in the whole workspace. A guest sees no spaces from `spaces`, only
+    /// "Shared with me" lists, so the workspace-wide query is the one that finds their cards.
+    pub async fn assigned_tasks(
+        &self,
+        team_id: &str,
+        user_id: &str,
+        space_id: Option<&str>,
+    ) -> Result<AssignedTasks, ClickUpError> {
+        let team = encode_segment(team_id);
+        let user = encode_segment(user_id);
+        let space = space_id
+            .map(|space| format!("&space_ids%5B%5D={}", encode_segment(space)))
+            .unwrap_or_default();
+        let mut tasks: Vec<ClickUpTask> = Vec::new();
+        for page in 0..MAX_PAGES {
+            let path = format!(
+                "/team/{team}/task?assignees%5B%5D={user}{space}\
+                 &subtasks=true&include_closed=false&page={page}"
+            );
+            let value = self.get(&path).await?;
+            let raw = value
+                .get("tasks")
+                .and_then(Value::as_array)
+                .ok_or(ClickUpError::Missing("tasks"))?;
+            for task in raw.iter().filter_map(task_from) {
+                if !tasks.iter().any(|seen| seen.id == task.id) {
+                    tasks.push(task);
+                }
+            }
+            let last = value.get("last_page").and_then(Value::as_bool) == Some(true);
+            if last || raw.len() < PAGE_SIZE {
+                return Ok(AssignedTasks {
+                    tasks,
+                    truncated: false,
+                });
+            }
+        }
+        Ok(AssignedTasks {
+            tasks,
+            truncated: true,
+        })
+    }
+
     async fn get(&self, path: &str) -> Result<Value, ClickUpError> {
         let mut response = self.send(path).await?;
         if response.status().as_u16() == 429 {
@@ -139,6 +220,30 @@ impl ClickUpClient {
             .send()
             .await?)
     }
+}
+
+fn id_string(value: Option<&Value>) -> Option<String> {
+    match value? {
+        Value::String(text) => Some(text.clone()),
+        Value::Number(number) => Some(number.to_string()),
+        _ => None,
+    }
+}
+
+fn named_from(value: &Value, key: &'static str) -> Result<Vec<Named>, ClickUpError> {
+    let items = value
+        .get(key)
+        .and_then(Value::as_array)
+        .ok_or(ClickUpError::Missing(key))?;
+    Ok(items
+        .iter()
+        .filter_map(|item| {
+            Some(Named {
+                id: id_string(item.get("id"))?,
+                name: item.get("name").and_then(Value::as_str)?.to_string(),
+            })
+        })
+        .collect())
 }
 
 fn encode_segment(value: &str) -> String {
@@ -179,6 +284,14 @@ fn task_from(value: &Value) -> Option<ClickUpTask> {
             .map(str::to_string),
         status: value
             .pointer("/status/status")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        status_type: value
+            .pointer("/status/type")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        list_name: value
+            .pointer("/list/name")
             .and_then(Value::as_str)
             .map(str::to_string),
         due_date,
@@ -255,6 +368,115 @@ mod tests {
             Some("https://app.clickup.com/t/abc")
         );
         assert!(client.check().await.is_ok());
+    }
+
+    async fn serve(app: Router) -> ClickUpClient {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        ClickUpClient::with_base("pk_test".into(), format!("http://{addr}")).unwrap()
+    }
+
+    #[tokio::test]
+    async fn assigned_tasks_sends_assignee_and_space_and_pages_to_the_end() {
+        use axum::extract::RawQuery;
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let log = seen.clone();
+        let app = Router::new()
+            .route(
+                "/user",
+                get(|| async { Json(json!({"user": {"id": 42, "username": "me"}})) }),
+            )
+            .route(
+                "/team",
+                get(|| async { Json(json!({"teams": [{"id": "9", "name": "Umbler"}]})) }),
+            )
+            .route(
+                "/team/9/space",
+                get(|RawQuery(query): RawQuery| async move {
+                    assert_eq!(query.as_deref(), Some("archived=false"));
+                    Json(json!({"spaces": [{"id": "S1", "name": "Payment"}]}))
+                }),
+            )
+            .route(
+                "/team/9/task",
+                get(move |RawQuery(query): RawQuery| {
+                    let log = log.clone();
+                    async move {
+                        let query = query.unwrap_or_default();
+                        let page = query.rsplit("page=").next().unwrap().to_string();
+                        log.lock().unwrap().push(query);
+                        let count = if page == "0" { 100 } else { 1 };
+                        let tasks: Vec<_> = (0..count)
+                            .map(|n| {
+                                json!({
+                                    "id": format!("{page}-{n}"),
+                                    "name": "card",
+                                    "status": {"status": "doing", "type": "custom"},
+                                    "list": {"name": "Sprint"}
+                                })
+                            })
+                            .collect();
+                        Json(json!({"tasks": tasks, "last_page": page != "0"}))
+                    }
+                }),
+            );
+        let client = serve(app).await;
+
+        assert_eq!(client.me().await.unwrap(), "42");
+        let workspaces = client.workspaces().await.unwrap();
+        assert_eq!(workspaces[0].name, "Umbler");
+        assert_eq!(client.spaces("9").await.unwrap()[0].id, "S1");
+
+        let assigned = client.assigned_tasks("9", "42", Some("S1")).await.unwrap();
+        assert_eq!(assigned.tasks.len(), 101);
+        assert!(!assigned.truncated);
+        assert_eq!(assigned.tasks[0].status_type.as_deref(), Some("custom"));
+        assert_eq!(assigned.tasks[0].list_name.as_deref(), Some("Sprint"));
+        let with_space = seen.lock().unwrap().clone();
+        assert_eq!(with_space.len(), 2);
+        for query in &with_space {
+            assert!(query.contains("assignees%5B%5D=42"), "{query}");
+            assert!(query.contains("space_ids%5B%5D=S1"), "{query}");
+            assert!(query.contains("subtasks=true"), "{query}");
+            assert!(query.contains("include_closed=false"), "{query}");
+        }
+
+        seen.lock().unwrap().clear();
+        client.assigned_tasks("9", "42", None).await.unwrap();
+        let without_space = seen.lock().unwrap().clone();
+        assert!(
+            without_space[0].contains("assignees%5B%5D=42"),
+            "{}",
+            without_space[0]
+        );
+        assert!(
+            !without_space[0].contains("space_ids"),
+            "{}",
+            without_space[0]
+        );
+    }
+
+    #[tokio::test]
+    async fn assigned_tasks_reports_truncation_at_the_page_cap() {
+        let app = Router::new().route(
+            "/team/9/task",
+            get(
+                |axum::extract::RawQuery(query): axum::extract::RawQuery| async move {
+                    let page = query.unwrap().rsplit("page=").next().unwrap().to_string();
+                    let tasks: Vec<_> = (0..100)
+                        .map(|n| json!({"id": format!("{page}-{n}"), "name": "card"}))
+                        .collect();
+                    Json(json!({"tasks": tasks, "last_page": false}))
+                },
+            ),
+        );
+        let client = serve(app).await;
+        let assigned = client.assigned_tasks("9", "42", None).await.unwrap();
+        assert!(assigned.truncated);
+        assert_eq!(assigned.tasks.len(), 2000);
     }
 
     #[test]

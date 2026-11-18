@@ -372,6 +372,44 @@ export const clickupClearToken = () =>
 export const clickupImport = (args: { projectId: string; listId: string; includeClosed?: boolean }) =>
   call<ImportCount>("clickup_import", args, () => emptyImport);
 
+export interface ClickupNamed {
+  id: string;
+  name: string;
+}
+
+export interface ClickupScope {
+  workspaceId: string;
+  /** Null tracks the whole workspace; guests have no spaces to choose. */
+  spaceId: string | null;
+  projectId: string;
+}
+
+export interface ClickupSyncResult {
+  created: number;
+  updated: number;
+  archived: number;
+  truncated: boolean;
+}
+
+export interface ClickupScopeView {
+  scope: ClickupScope | null;
+  last: ClickupSyncResult | null;
+  error: string | null;
+}
+
+export const clickupWorkspaces = () => call<ClickupNamed[]>("clickup_workspaces", undefined, () => []);
+
+export const clickupSpaces = (workspaceId: string) =>
+  call<ClickupNamed[]>("clickup_spaces", { workspaceId }, () => []);
+
+export const clickupScope = () =>
+  call<ClickupScopeView>("clickup_scope", undefined, () => ({ scope: null, last: null, error: null }));
+
+export const clickupSetScope = (scope: ClickupScope) => call<void>("clickup_set_scope", { scope }, () => undefined);
+
+export const clickupSyncNow = () =>
+  call<ClickupSyncResult>("clickup_sync_now", undefined, () => ({ created: 0, updated: 0, archived: 0, truncated: false }));
+
 export const githubImportIssues = (args: { projectId: string; owner: string; repo: string }) =>
   call<ImportCount>("github_import_issues", args, () => emptyImport);
 

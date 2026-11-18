@@ -1,5 +1,20 @@
-import { useState, type FormEvent } from "react";
-import { clickupClearToken, clickupImport, clickupSetToken, clickupStatus, errorText, githubImportIssues, inTauri, type ImportCount } from "../ipc";
+import { useEffect, useState, type FormEvent } from "react";
+import {
+  clickupClearToken,
+  clickupImport,
+  clickupScope,
+  clickupSetScope,
+  clickupSetToken,
+  clickupSpaces,
+  clickupStatus,
+  clickupSyncNow,
+  clickupWorkspaces,
+  errorText,
+  githubImportIssues,
+  inTauri,
+  type ClickupSyncResult,
+  type ImportCount,
+} from "../ipc";
 import type { Project } from "../types";
 import { Spinner, useLive } from "./Slack";
 
@@ -8,7 +23,7 @@ import { Spinner, useLive } from "./Slack";
 
 /* ── Settings → ClickUp ── */
 
-export function ClickupSettings() {
+export function ClickupSettings({ projects }: { projects: Project[] }) {
   const { data: status, error: loadError, mutate } = useLive(clickupStatus, []);
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState<"save" | "clear" | null>(null);
@@ -87,6 +102,122 @@ export function ClickupSettings() {
       <p className="mcp-note">
         A personal token reaches every workspace your ClickUp account can see. Save checks it with one real ClickUp call; it
         stays in Windows Credential Manager. Relay only imports from ClickUp and never writes back.
+      </p>
+      {status.configured && inTauri && <TrackAssigned projects={projects} />}
+    </>
+  );
+}
+
+/* ── Settings → ClickUp → cards assigned to me ── */
+
+function TrackAssigned({ projects }: { projects: Project[] }) {
+  const scope = useLive(clickupScope, []);
+  const workspaces = useLive(clickupWorkspaces, []);
+  const [workspaceId, setWorkspaceId] = useState<string | null>(null);
+  const [spaceId, setSpaceId] = useState<string | null>(null);
+  const [projectId, setProjectId] = useState<string | null>(null);
+  const [spaces, setSpaces] = useState<{ id: string; name: string }[]>([]);
+  const [busy, setBusy] = useState<"save" | "sync" | null>(null);
+  const [result, setResult] = useState<ClickupSyncResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const saved = scope.data?.scope ?? null;
+  const workspace = workspaceId ?? saved?.workspaceId ?? workspaces.data?.[0]?.id ?? "";
+  const space = spaceId ?? (workspaceId === null ? saved?.spaceId : null) ?? "";
+  const project = projectId ?? saved?.projectId ?? projects.find((p) => p.name === "Inbox")?.id ?? projects[0]?.id ?? "";
+  const shown = result ?? scope.data?.last ?? null;
+
+  useEffect(() => {
+    if (!workspace) return;
+    let live = true;
+    clickupSpaces(workspace)
+      .then((next) => live && setSpaces(next))
+      .catch((err) => live && setError(errorText(err)));
+    return () => {
+      live = false;
+    };
+  }, [workspace]);
+
+  async function run(kind: "save" | "sync") {
+    setBusy(kind);
+    setError(null);
+    try {
+      if (kind === "save") await clickupSetScope({ workspaceId: workspace, spaceId: space || null, projectId: project });
+      setResult(await clickupSyncNow());
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <>
+      <h4 className="sub">Track cards assigned to me</h4>
+      <div className="sform">
+        <label htmlFor="cu-workspace">Workspace</label>
+        <select
+          id="cu-workspace"
+          className="inp"
+          value={workspace}
+          disabled={busy !== null}
+          onChange={(e) => {
+            setWorkspaceId(e.target.value);
+            setSpaceId(null);
+            setSpaces([]);
+          }}
+        >
+          {(workspaces.data ?? []).map((w) => (
+            <option key={w.id} value={w.id}>
+              {w.name}
+            </option>
+          ))}
+        </select>
+        <label htmlFor="cu-space">Space</label>
+        <select id="cu-space" className="inp" value={space} disabled={busy !== null} onChange={(e) => setSpaceId(e.target.value)}>
+          <option value="">All spaces I can see</option>
+          {spaces.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name}
+            </option>
+          ))}
+        </select>
+        <label htmlFor="cu-project">Relay project</label>
+        <select id="cu-project" className="inp" value={project} disabled={busy !== null} onChange={(e) => setProjectId(e.target.value)}>
+          {projects.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+        <span />
+        <div className="sform-f">
+          <button type="button" className="btn pri" disabled={busy !== null || !workspace || !project} onClick={() => void run("save")}>
+            {busy === "save" && <Spinner />}
+            {busy === "save" ? "Syncing…" : "Save and sync"}
+          </button>
+          {saved && (
+            <button type="button" className="btn" disabled={busy !== null} onClick={() => void run("sync")}>
+              {busy === "sync" && <Spinner />}
+              {busy === "sync" ? "Syncing…" : "Sync now"}
+            </button>
+          )}
+        </div>
+      </div>
+      {(error ?? scope.data?.error) && (
+        <p className="mcp-err" role="alert">
+          {error ?? scope.data?.error}
+        </p>
+      )}
+      {shown && (
+        <p className="mcp-note" role="status">
+          {shown.created} new, {shown.updated} updated, {shown.archived} archived
+          {shown.truncated && ". The list was cut off, so nothing was archived this time"}
+        </p>
+      )}
+      <p className="mcp-note">
+        Relay syncs every 10 minutes and brings in only open cards assigned to you. A card that is reassigned or closed in
+        ClickUp is archived here, never deleted.
       </p>
     </>
   );
