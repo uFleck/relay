@@ -1,7 +1,7 @@
 // The update store, adapted from Hopper. No UI here: pages read it with `useUpdater()` and act through the functions.
 import { useSyncExternalStore } from "react";
 import { getVersion } from "@tauri-apps/api/app";
-import { listen } from "@tauri-apps/api/event";
+import { emit, listen } from "@tauri-apps/api/event";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 
@@ -10,6 +10,10 @@ const CHECK_EVERY_MS = 30 * 60 * 1000;
 const RELEASES_URL = "https://api.github.com/repos/uFleck/relay/releases?per_page=20";
 /** Sent by the tray's "Check for updates" and by the hover (`check_for_updates`). */
 const CHECK_EVENT = "update://check";
+/* The main window owns the updater; the hover mirrors its state through these events. */
+const STATE_EVENT = "update://state";
+const REQUEST_EVENT = "update://request";
+const INSTALL_EVENT = "update://install";
 
 export interface ReleaseNote {
   version: string;
@@ -36,10 +40,13 @@ interface GithubRelease {
 let state: UpdateState = { kind: "idle" };
 let pending: Update | null = null;
 const listeners = new Set<() => void>();
+/** True in the window that ran `startUpdateChecks`, which tells the others. */
+let owner = false;
 
 function set(next: UpdateState) {
   state = next;
   listeners.forEach((l) => l());
+  if (owner) void emit(STATE_EVENT, next).catch((e) => console.warn("update state broadcast failed", e));
 }
 
 function inTauri(): boolean {
@@ -154,11 +161,33 @@ let started = false;
 export function startUpdateChecks() {
   if (started || !inTauri()) return;
   started = true;
+  owner = true;
   void listen(CHECK_EVENT, () => void checkForUpdates(true));
+  void listen(REQUEST_EVENT, () => void emit(STATE_EVENT, state));
+  void listen(INSTALL_EVENT, () => {
+    if (state.kind === "ready") void installUpdate();
+  });
   if (!import.meta.env.PROD) return;
   const tick = () => void checkForUpdates(false);
   window.setTimeout(() => {
     tick();
     window.setInterval(tick, CHECK_EVERY_MS);
   }, FIRST_CHECK_MS);
+}
+
+let following = false;
+
+/** Call once from the hover: `useUpdater()` then shows the main window's state. */
+export function followUpdates() {
+  if (following || !inTauri()) return;
+  following = true;
+  void listen<UpdateState>(STATE_EVENT, (e) => {
+    state = e.payload;
+    listeners.forEach((l) => l());
+  }).then(() => emit(REQUEST_EVENT));
+}
+
+/** From the hover: asks the main window to install the update it already downloaded. */
+export function requestInstall() {
+  if (inTauri()) void emit(INSTALL_EVENT);
 }

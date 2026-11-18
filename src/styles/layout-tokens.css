@@ -1,0 +1,28 @@
+/* Relay additions to the Circuit tokens in tokens.css (design/README.md "Tokens used").
+   Sizes for both windows, and one colour per status category: category, not status name, picks the colour. */
+
+:root {
+  --r-sm: 5px;
+
+  --title-h: 36px;
+  --rail-w: 184px;
+  --sheet-w: 380px;
+  --row-h: 34px;
+  --strip-h: 40px;
+
+  --tab-w: 52px;
+  --tab-h: 64px;
+  --hov-w: 400px;
+  --hov-h: 540px;
+
+  --c-active: var(--accent);
+  --c-review: var(--warn);
+  --c-merged: var(--i4);
+  --c-waiting: var(--i3);
+  --c-deploying: var(--s3);
+  --c-blocked: var(--err);
+  --c-done: var(--ok);
+  --c-todo: var(--text-tertiary);
+
+  --caption-close: #c42b1c;
+}
