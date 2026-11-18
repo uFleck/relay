@@ -161,6 +161,18 @@ if (-not (git tag --list $tag)) {
     } else {
         throw "Tag $tag does not exist. Run scripts/version.ps1 -Version $v -Tag first."
     }
+} else {
+    # The installer must be built from the commit the tag names, or the release
+    # would advertise one version for a different tree.
+    $tagCommit = (git rev-list -n 1 $tag 2>$null | Out-String).Trim()
+    $headCommit = (git rev-parse HEAD 2>$null | Out-String).Trim()
+    if ($tagCommit -and $headCommit -and $tagCommit -ne $headCommit) {
+        if ($DryRun) {
+            Write-Warning "Tag $tag points at $tagCommit, not HEAD $headCommit."
+        } else {
+            throw "Tag $tag points at $tagCommit, not HEAD $headCommit. Check out the tagged commit or move the tag before releasing."
+        }
+    }
 }
 
 # gh is required: without it the existing-release probe cannot run, and the
@@ -324,7 +336,11 @@ Step "find NSIS installer and signature" {
 
 $latestPath = Join-Path $root "latest.json"
 Step "write latest.json" {
-    $url = "https://github.com/uFleck/relay/releases/download/$tag/$([uri]::EscapeDataString($script:installer.Name))"
+    $releaseRepo = if ($env:GH_REPO) { $env:GH_REPO.Trim() } else { Resolve-GitHubRepo }
+    if (-not $releaseRepo) {
+        throw "Cannot write latest.json: no GitHub repository (add origin or set GH_REPO)."
+    }
+    $url = "https://github.com/$releaseRepo/releases/download/$tag/$([uri]::EscapeDataString($script:installer.Name))"
     $latest = [ordered]@{
         version   = $v
         pub_date  = [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")

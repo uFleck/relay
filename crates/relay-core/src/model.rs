@@ -39,6 +39,24 @@ pub fn format_time(value: time::OffsetDateTime) -> String {
     format_timestamp(value)
 }
 
+/// Converts a Slack message ts (`1700000000.000100`) to the stored RFC 3339 form.
+/// Returns `None` when the value is not a valid Slack timestamp.
+pub fn slack_ts_to_rfc3339(ts: &str) -> Option<String> {
+    let (seconds, fraction) = ts.split_once('.').unwrap_or((ts, ""));
+    let seconds: i64 = seconds.parse().ok()?;
+    let mut nanos = 0i64;
+    if !fraction.is_empty() {
+        if fraction.len() > 9 {
+            return None;
+        }
+        let digits: i64 = fraction.parse().ok()?;
+        nanos = digits * 10i64.pow(9 - fraction.len() as u32);
+    }
+    let parsed = time::OffsetDateTime::from_unix_timestamp(seconds).ok()?
+        + time::Duration::nanoseconds(nanos);
+    Some(format_timestamp(parsed))
+}
+
 /// Parses an RFC 3339 timestamp, the only accepted user-supplied time format.
 pub fn parse_time(value: &str) -> Option<time::OffsetDateTime> {
     time::OffsetDateTime::parse(value, &time::format_description::well_known::Rfc3339).ok()
@@ -340,24 +358,6 @@ pub struct Proposal {
     pub decided_by: Option<String>,
     pub decided_at: Option<String>,
     pub applied_event_id: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AnalysisJob {
-    pub id: String,
-    pub conversation_id: String,
-    pub project_id: Option<String>,
-    pub watermark: String,
-    pub kind: String,
-    pub state: String,
-    pub attempts: i64,
-    pub jev_json: Option<String>,
-    pub agent_session: Option<String>,
-    pub error: Option<String>,
-    pub created_at: String,
-    pub started_at: Option<String>,
-    pub finished_at: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -706,7 +706,6 @@ pub struct SlackPeer {
     pub name: Option<String>,
     pub is_bot: bool,
     pub excluded: bool,
-    pub last_message_at: Option<String>,
     pub created_at: String,
 }
 
@@ -714,6 +713,7 @@ pub struct SlackPeer {
 #[serde(rename_all = "camelCase")]
 pub struct SlackEpisode {
     pub id: String,
+    pub channel_id: String,
     pub peer_id: String,
     /// `open`, `waiting`, `closed`, `analyzed` or `needs_review`.
     pub state: String,
@@ -789,33 +789,35 @@ pub struct RawSlackMessage {
 #[serde(rename_all = "camelCase")]
 pub struct AnalysisJob {
     pub id: String,
-    pub episode_id: String,
-    /// The newest message ts the job covers. One live job per episode watermark.
+    pub conversation_id: String,
+    pub project_id: Option<String>,
+    /// The newest message ts the job covers. One live job per conversation watermark.
     pub watermark: String,
     /// `screen` or `classify`.
-    pub stage: String,
+    pub kind: String,
     /// `pending`, `running`, `pending_agent`, `done`, `failed`, `superseded` or `shadow`.
     pub state: String,
-    pub project_id: Option<String>,
-    /// `ignore`, `review`, `change` or `new_task`.
+    pub attempts: i64,
+    /// `ignore`, `review`, `rescreen`, `change` or `new_task`.
     pub route: Option<String>,
     pub jev_json: Option<String>,
     pub candidates: Vec<String>,
     pub summary: Option<String>,
     pub error: Option<String>,
     pub superseded_by: Option<String>,
+    pub agent_session: Option<String>,
     pub created_at: String,
-    pub updated_at: String,
+    pub updated_at: Option<String>,
     pub started_at: Option<String>,
-    pub completed_at: Option<String>,
+    pub finished_at: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NewJob {
-    pub episode_id: String,
+    pub conversation_id: String,
     pub watermark: String,
-    pub stage: String,
+    pub kind: String,
     pub project_id: Option<String>,
     pub route: Option<String>,
     pub jev_json: Option<String>,
@@ -828,7 +830,7 @@ pub struct JobOp {
     pub id: String,
     pub job_id: String,
     pub op_index: i64,
-    pub kind: String,
+    pub tool: String,
     pub result_json: String,
     pub created_at: String,
 }

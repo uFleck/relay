@@ -483,6 +483,9 @@ impl Default for Thresholds {
 pub enum Route {
     /// Archive: the episode is not about work.
     Ignore,
+    /// The middle band: keep the episode and rescreen when it closes, instead of
+    /// putting it in the human queue now.
+    Rescreen { score: f64 },
     /// A human reads it. Every uncertain, conflicting or incomplete case.
     Review { reason: String },
     /// Append to an existing task. `early` only when the task is claimed.
@@ -499,7 +502,8 @@ pub enum Route {
 /// Order matters:
 ///
 /// 1. `worth_reviewing < screen_no` archives. A missing screen answer never does.
-/// 2. `worth_reviewing` in `[screen_no, screen_yes]` is the middle band.
+/// 2. `worth_reviewing` in `[screen_no, screen_yes]` is the middle band and returns
+///    [`Route::Rescreen`]: keep the episode and look again when it closes.
 /// 3. `needs_human > needs_human` always reviews.
 /// 4. `affects_existing` and `is_new_task` both high reviews; the reviewer decides.
 /// 5. `task = multiple` reviews; the reviewer splits one change per task.
@@ -516,10 +520,9 @@ pub fn route(response: &JevResponse, thresholds: Thresholds, task_claimed: bool)
         return Route::Ignore;
     }
     if worth_reviewing <= thresholds.screen_yes {
-        return review(format!(
-            "{} {worth_reviewing:.2} is in the middle band; rescreen at episode close",
-            ids::WORTH_REVIEWING
-        ));
+        return Route::Rescreen {
+            score: worth_reviewing,
+        };
     }
 
     let Some(needs_human) = response.noul(ids::NEEDS_HUMAN) else {
@@ -1019,20 +1022,19 @@ mod tests {
         let loud = stage_b(0.10, 0.99, 0.99, "task_1", 0.99, 0.99);
         assert_eq!(route(&response(loud), thresholds, true), Route::Ignore);
 
-        // Exactly at screen_no is not below it: the middle band reviews.
+        // Exactly at screen_no is not below it: the middle band rescreens at close.
         let boundary = stage_b(0.25, 0.10, 0.10, "none", 0.10, 0.10);
         assert!(matches!(
             route(&response(boundary), thresholds, false),
-            Route::Review { .. }
+            Route::Rescreen { .. }
         ));
 
-        // Between screen_no and screen_yes: rescreen at close.
+        // Between screen_no and screen_yes: rescreen at close, not the human queue.
         let middle = stage_b(0.45, 0.10, 0.10, "none", 0.10, 0.10);
-        let decision = route(&response(middle), thresholds, false);
-        assert!(
-            review_reason(&decision).contains("middle band"),
-            "{decision:?}"
-        );
+        assert!(matches!(
+            route(&response(middle), thresholds, false),
+            Route::Rescreen { .. }
+        ));
     }
 
     #[test]

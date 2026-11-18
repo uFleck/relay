@@ -155,7 +155,7 @@ if ($Tag) {
     }
     $dirty = git status --porcelain
     if ($dirty) {
-        Write-Warning "The working tree has uncommitted changes. The tag will point at HEAD, not at the version bump. Commit the bump first if you want the tag to contain it."
+        throw "The working tree has uncommitted changes. The tag would point at HEAD, not at the version bump. Commit the bump first, then tag."
     }
     git tag -a $tag -m "Relay $tag"
     if ($LASTEXITCODE -ne 0) {
