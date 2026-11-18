@@ -1365,6 +1365,29 @@ pub fn job_retry(
     Ok(job)
 }
 
+/// Settles a job waiting in Review: `send` starts the reviewer on it, otherwise it is dismissed.
+#[tauri::command]
+pub fn job_resolve_review(
+    app: AppHandle,
+    state: State<'_, SlackState>,
+    id: String,
+    send: bool,
+) -> Result<AnalysisJob, String> {
+    let job = state
+        .store
+        .resolve_review_job(&id, send)
+        .map_err(|error| error.to_string())?;
+    let episode_state = if send { "waiting" } else { "analyzed" };
+    let _ = state
+        .store
+        .set_slack_episode_state(&job.conversation_id, episode_state);
+    if send {
+        crate::analyst::spawn_job(app.clone(), id);
+    }
+    let _ = app.emit("relay://change", ());
+    Ok(job)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

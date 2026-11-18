@@ -9,6 +9,7 @@ import {
   jevClearKey,
   jevSetKey,
   jevStatus,
+  jobResolveReview,
   jobRetry,
   jobsList,
   onEvent,
@@ -691,7 +692,9 @@ export function EpisodeSheet({ id, onClose }: SheetProps) {
   // The list is refreshed on every change, so it wins over the job `episodeAnalyze` returned once it has caught up.
   const listed = newest((jobs.data ?? []).filter((j) => j.conversationId === id));
   const job = listed && (!queued || Date.parse(listed.createdAt) >= Date.parse(queued.createdAt)) ? listed : queued;
-  const running = analyzing || job?.state === "pending" || job?.state === "running";
+  // A `review` job stays `pending` until you resolve it in Review; only an unrouted pending job is still analysing.
+  const inReview = job?.state === "pending" && job.route === "review";
+  const running = analyzing || (job?.state === "pending" && !inReview) || job?.state === "running";
   const waiting = job?.state === "pending_agent";
 
   async function retry(failed: AnalysisJob) {
@@ -786,11 +789,19 @@ export function EpisodeSheet({ id, onClose }: SheetProps) {
         <button
           type="button"
           className="btn pri"
-          disabled={!detail || running || waiting || retrying || reanalyzing}
+          disabled={!detail || running || waiting || inReview || retrying || reanalyzing}
           onClick={() => void analyze()}
         >
           {running && <Spinner />}
-          {analyzing ? "Queuing…" : running ? "Analysis running" : waiting ? "Waiting for an agent…" : "Analyze now"}
+          {analyzing
+            ? "Queuing…"
+            : running
+              ? "Analysis running"
+              : waiting
+                ? "Waiting for an agent…"
+                : inReview
+                  ? "In Review"
+                  : "Analyze now"}
         </button>
         <button
           type="button"
@@ -871,17 +882,38 @@ function JobState({ job, retrying, onRetry }: { job: AnalysisJob; retrying: bool
 
 export function FromSlack({ onOpen }: { onOpen: (episodeId: string) => void }) {
   const now = useNow();
-  const { data } = useLive(async () => {
+  const { data, reload } = useLive(async () => {
     const jobs = (await jobsList({ stateFilter: "pending" })).filter((j) => j.route === "review");
     const ids = [...new Set(jobs.map((j) => j.conversationId))];
     const details = await Promise.all(ids.map((id) => episodeGet(id).catch(() => null)));
     const byId = new Map(details.flatMap((d) => (d ? [[d.episode.id, d] as const] : [])));
     return jobs.map((job) => ({ job, detail: byId.get(job.conversationId) ?? null }));
   }, []);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function resolve(id: string, send: boolean) {
+    setBusy(id);
+    setError(null);
+    try {
+      if (!(await jobResolveReview(id, send))) setError("Review actions run in the desktop app.");
+      await reload();
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   if (!data?.length) return null;
   return (
     <>
       <h3 className="sub">From Slack · {data.length}</h3>
+      {error && (
+        <p className="mcp-err" role="alert">
+          {error}
+        </p>
+      )}
       <ul className="jrows">
         {data.map(({ job, detail }) => (
           <li key={job.id}>
@@ -895,6 +927,19 @@ export function FromSlack({ onOpen }: { onOpen: (episodeId: string) => void }) {
             <button type="button" className="btn" onClick={() => onOpen(job.conversationId)}>
               <Icon name="slack" small />
               Transcript
+            </button>
+            <button
+              type="button"
+              className="btn pri"
+              disabled={busy !== null}
+              title="Let the reviewer apply this conversation to its task"
+              onClick={() => void resolve(job.id, true)}
+            >
+              {busy === job.id && <Spinner />}
+              Send to reviewer
+            </button>
+            <button type="button" className="btn" disabled={busy !== null} onClick={() => void resolve(job.id, false)}>
+              Dismiss
             </button>
           </li>
         ))}

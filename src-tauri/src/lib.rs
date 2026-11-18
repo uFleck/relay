@@ -289,6 +289,7 @@ pub fn run() {
             slack::jev_clear_key,
             slack::slack_simulate_message,
             slack::job_retry,
+            slack::job_resolve_review,
             github::github_status,
             github::github_set_token,
             github::github_clear_token,

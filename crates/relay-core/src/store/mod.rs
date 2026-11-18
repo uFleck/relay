@@ -2710,6 +2710,35 @@ impl Store {
         self.get_job(id)
     }
 
+    /// Settles a job waiting in Review. `send` hands it to the reviewer as a `change`;
+    /// otherwise it is `dismissed`. Either route takes it out of the Review queue and out of
+    /// `requeue_recent`.
+    pub fn resolve_review_job(&self, id: &str, send: bool) -> Result<AnalysisJob, StoreError> {
+        let (route, state, summary) = if send {
+            (
+                "change",
+                "pending_agent",
+                "sent to the reviewer from Review",
+            )
+        } else {
+            ("dismissed", "done", "dismissed in Review")
+        };
+        let at = now();
+        let changed = self.conn().execute(
+            "UPDATE analysis_jobs SET
+                 route = ?1, state = ?2, summary = ?3, error = NULL, updated_at = ?4,
+                 finished_at = CASE WHEN ?2 = 'done' THEN ?4 ELSE finished_at END
+             WHERE id = ?5 AND state = 'pending' AND route = 'review'",
+            params![route, state, summary, at, id],
+        )?;
+        if changed == 0 {
+            return Err(StoreError::InvalidInput(format!(
+                "analysis job {id} is not waiting in Review"
+            )));
+        }
+        self.get_job(id)
+    }
+
     /// Idempotent analyst write: the first result for `(job_id, op_index)` wins, and a
     /// replay returns it with `false` as the second tuple element.
     pub fn record_job_op(
@@ -5152,6 +5181,33 @@ mod tests {
             vec![ignored.clone(), shadow.clone()]
         );
         assert_eq!(store.requeue_recent(3, 1).unwrap(), vec![ignored]);
+    }
+
+    #[test]
+    fn a_review_job_resolves_once_and_then_leaves_the_requeue() {
+        let store = Store::open_in_memory().unwrap();
+        let sent = recent_conversation(&store, "U1", 600);
+        let dismissed = recent_conversation(&store, "U2", 500);
+        let sent_job = job_in(&store, &sent, "pending", "review");
+        let dismissed_job = job_in(&store, &dismissed, "pending", "review");
+        some_task(&store);
+        assert_eq!(store.requeue_recent(3, 10).unwrap().len(), 2);
+
+        let job = store.resolve_review_job(&sent_job, true).unwrap();
+        assert_eq!(
+            (job.state.as_str(), job.route.as_deref()),
+            ("pending_agent", Some("change"))
+        );
+        let job = store.resolve_review_job(&dismissed_job, false).unwrap();
+        assert_eq!(
+            (job.state.as_str(), job.route.as_deref()),
+            ("done", Some("dismissed"))
+        );
+        assert!(store.requeue_recent(3, 10).unwrap().is_empty());
+        assert!(
+            store.resolve_review_job(&dismissed_job, true).is_err(),
+            "a settled job cannot be resolved again"
+        );
     }
 
     #[test]

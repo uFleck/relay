@@ -342,6 +342,9 @@ export const jobsList = (args: { stateFilter?: string; limit?: number } = {}) =>
   call<AnalysisJob[]>("jobs_list", args, () => []);
 
 export const jobRetry = (id: string) => call<AnalysisJob | null>("job_retry", { id }, () => null);
+/** Settles a job waiting in Review: `send` starts the reviewer on it, otherwise it is dismissed. */
+export const jobResolveReview = (id: string, send: boolean) =>
+  call<AnalysisJob | null>("job_resolve_review", { id, send }, () => null);
 
 export const jevStatus = () => call<JevStatus>("jev_status", undefined, () => ({ configured: false, model: null, error: null }));
 
