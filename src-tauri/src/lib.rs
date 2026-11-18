@@ -5,6 +5,7 @@ mod analyst;
 mod commands;
 mod github;
 mod hover;
+mod imports;
 mod mcp;
 mod secrets;
 mod slack;
@@ -270,6 +271,11 @@ pub fn run() {
             github::sync_prs_now,
             github::project_git_state,
             github::project_set_repo,
+            imports::clickup_status,
+            imports::clickup_set_token,
+            imports::clickup_clear_token,
+            imports::clickup_import,
+            imports::github_import_issues,
             hover::hover_place,
             hover::hover_drag,
             hover::hover_pointer,

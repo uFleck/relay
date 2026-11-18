@@ -39,6 +39,15 @@ pub fn format_time(value: time::OffsetDateTime) -> String {
     format_timestamp(value)
 }
 
+/// Converts Unix milliseconds (ClickUp due dates) to the stored RFC 3339 form.
+pub fn from_unix_millis(ms: i64) -> Option<String> {
+    let seconds = ms.div_euclid(1000);
+    let nanos = ms.rem_euclid(1000) * 1_000_000;
+    let parsed = time::OffsetDateTime::from_unix_timestamp(seconds).ok()?
+        + time::Duration::nanoseconds(nanos);
+    Some(format_timestamp(parsed))
+}
+
 /// Converts a Slack message ts (`1700000000.000100`) to the stored RFC 3339 form.
 /// Returns `None` when the value is not a valid Slack timestamp.
 pub fn slack_ts_to_rfc3339(ts: &str) -> Option<String> {

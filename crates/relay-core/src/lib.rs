@@ -4,6 +4,7 @@
 //! Adapters (Tauri IPC, MCP, Slack, JEV, GitHub, ClickUp) stay thin; policy lives here.
 
 pub mod analysis;
+pub mod clickup;
 pub mod git;
 pub mod github;
 pub mod jev;

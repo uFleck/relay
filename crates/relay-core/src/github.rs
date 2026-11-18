@@ -57,6 +57,18 @@ pub struct GithubClient {
     base: String,
 }
 
+/// One open issue, without pull requests (the issues endpoint returns both).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GithubIssue {
+    pub number: u64,
+    pub title: String,
+    pub body: Option<String>,
+    pub state: String,
+    pub url: String,
+    pub labels: Vec<String>,
+}
+
 impl std::fmt::Debug for GithubClient {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("GithubClient")
@@ -158,6 +170,48 @@ impl GithubClient {
     /// A cheap authenticated call that proves a token (or the public rate limit).
     pub async fn check(&self) -> Result<(), GithubError> {
         self.get("/rate_limit").await.map(|_| ())
+    }
+
+    /// Open issues for a repository, first page (100), pull requests excluded.
+    pub async fn list_issues(
+        &self,
+        owner: &str,
+        repo: &str,
+    ) -> Result<Vec<GithubIssue>, GithubError> {
+        let value = self
+            .get(&format!(
+                "/repos/{owner}/{repo}/issues?state=open&per_page=100"
+            ))
+            .await?;
+        let items = value.as_array().ok_or(GithubError::Missing("issues"))?;
+        Ok(items
+            .iter()
+            .filter(|item| item.get("pull_request").is_none())
+            .filter_map(|item| {
+                Some(GithubIssue {
+                    number: item.get("number")?.as_u64()?,
+                    title: item.get("title")?.as_str()?.to_string(),
+                    body: item
+                        .get("body")
+                        .and_then(Value::as_str)
+                        .filter(|text| !text.is_empty())
+                        .map(str::to_string),
+                    state: item.get("state")?.as_str()?.to_string(),
+                    url: item.get("html_url")?.as_str()?.to_string(),
+                    labels: item
+                        .get("labels")
+                        .and_then(Value::as_array)
+                        .map(|labels| {
+                            labels
+                                .iter()
+                                .filter_map(|label| label.get("name").and_then(Value::as_str))
+                                .map(str::to_string)
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                })
+            })
+            .collect())
     }
 
     async fn get(&self, path: &str) -> Result<Value, GithubError> {
@@ -291,7 +345,29 @@ mod tests {
                 ]))
             }),
         );
-        let app = pulls.merge(checks).merge(reviews);
+        let issues = Router::new().route(
+            "/repos/acme/relay/issues",
+            get(|| async {
+                axum::Json(json!([
+                    {
+                        "number": 12,
+                        "title": "Hover tab sticks",
+                        "body": "When the main window closes...",
+                        "state": "open",
+                        "html_url": "https://github.com/acme/relay/issues/12",
+                        "labels": [{"name": "bug"}]
+                    },
+                    {
+                        "number": 7,
+                        "title": "Add the hover tab",
+                        "state": "open",
+                        "html_url": "https://github.com/acme/relay/pull/7",
+                        "pull_request": {"url": "https://api.github.com/repos/acme/relay/pulls/7"}
+                    }
+                ]))
+            }),
+        );
+        let app = pulls.merge(checks).merge(reviews).merge(issues);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
@@ -311,6 +387,12 @@ mod tests {
         assert_eq!(pull.checks, Checks::Pending);
         assert_eq!(pull.review, Review::ChangesRequested);
         assert!(!pull.merged);
+
+        let issues = client.list_issues("acme", "relay").await.unwrap();
+        assert_eq!(issues.len(), 1, "the pull request is skipped");
+        assert_eq!(issues[0].number, 12);
+        assert_eq!(issues[0].labels, vec!["bug"]);
+        assert_eq!(issues[0].url, "https://github.com/acme/relay/issues/12");
     }
 
     #[test]

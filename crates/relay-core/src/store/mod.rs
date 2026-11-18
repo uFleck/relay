@@ -1507,6 +1507,27 @@ impl Store {
         Ok(link)
     }
 
+    /// Finds a link by its external id or URL, for idempotent imports.
+    pub fn find_link(
+        &self,
+        kind: &str,
+        external_id: Option<&str>,
+        url: &str,
+    ) -> Result<Option<TaskLink>, StoreError> {
+        let conn = self.conn();
+        let link = conn
+            .query_row(
+                &format!(
+                    "SELECT {LINK_COLUMNS} FROM task_links
+                     WHERE kind = ?1 AND (external_id = ?2 OR url = ?3) LIMIT 1"
+                ),
+                params![kind, external_id, url.trim()],
+                link_from_row,
+            )
+            .optional()?;
+        Ok(link)
+    }
+
     /// Appends a free-form event (progress lives in `add_progress`; this is for adapters
     /// like git state or a manual note).
     pub fn add_event(&self, new: NewEvent) -> Result<TaskEvent, StoreError> {
