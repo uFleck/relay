@@ -24,6 +24,7 @@
 | v0.1.0 | **123.8 s** | **128.4 s (2:08)** | 4.57 MiB + `.sig` |
 | v0.1.1 | **140.9 s** | **145.4 s (2:25)** | 4.56 MiB + `.sig` |
 | v0.2.0 | **176.1 s** | **180.0 s (3:00)** | 4.86 MiB + `.sig` |
+| v0.3.0 | **154.0 s** | **158.1 s (2:38)** | 4.97 MiB + `.sig` |
 
 Both are under the 5:00 target with well over a minute of slack.
 
@@ -53,6 +54,15 @@ Evidence: `Settings` screenshot after the restart (Relay 0.1.1, green MCP, token
 
 This also proves the upgrade keeps the local database and credentials: the updater only
 replaces the binary.
+
+## Third update: 0.2.0 → 0.3.0 (git/PR + imports + review fixes)
+
+1. The installed 0.2.0 app offered **Relay 0.3.0 is available** on its automatic check.
+2. Download, signature verification and **Restart to update** completed.
+3. `%LOCALAPPDATA%\Relay\relay.exe` ProductVersion **0.3.0** and the running app reports
+   `plugin:app|version = 0.3.0`.
+4. The DB is clean (0 tasks, 0 episodes) and `mcp_status` no longer contains any token
+   field while the MCP server is green.
 
 ## Notes and risks
 
