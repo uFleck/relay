@@ -47,3 +47,7 @@ Screenshots (`scratchpad/relay-shots/`): `03-github.png`, `04-sources.png`.
 - Does the GitHub issue import still work with no stored token and no `gh`?
 
 ## Opus verdict
+
+## Release (2026-11-18)
+
+Released as v0.4.0 with `scripts/release.ps1` (run from `pwsh`, not Windows PowerShell: `gh auth status` writes to stderr and aborts it there). Build 137.7 s, total 141.6 s with upload. `version.ps1 -Tag` failed at its tag step (a parameter bug), so the tag was created by hand.

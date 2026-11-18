@@ -1,7 +1,7 @@
 # Relay handoff (for the next agent)
 
-State as of 2026-11-17 23:55 (-03:00). Relay **0.3.2** is installed on this machine; the updater is
-validated from 0.1.0 → 0.1.1 → 0.2.0 → 0.3.0 → 0.3.1 → 0.3.2.
+State as of 2026-11-18 02:25 (-03:00). Relay **0.4.0** is released (GitHub release `v0.4.0`); 0.3.2 is what was
+installed here and the 0.3.2 → 0.4.0 update has not been run yet. Validated updater path so far: 0.1.0 → … → 0.3.2.
 
 ## What works
 
@@ -39,10 +39,12 @@ validated from 0.1.0 → 0.1.1 → 0.2.0 → 0.3.0 → 0.3.1 → 0.3.2.
 
 ## Verified
 
-- `cargo test -p relay-core`: **70 passed**.
-- `cargo test -p relay --lib`: **23 passed**.
+- `cargo test -p relay-core`: **88 passed**.
+- `cargo test -p relay --lib`: **26 passed** (1 ignored real smoke).
 - `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all -- --check`: clean.
 - `pnpm typecheck`, `pnpm vitest run` (14), `pnpm build`: pass.
+- Settings in the real debug exe (0.4.0 build): Slack transport picker and Claude panel, GitHub "Using your gh session" and Sources rows render. Screenshots were not committed.
+- **Not verified**: a clean Claude-transport run after the first (two later runs hit connector `pending`).
 - JEV key persisted in Credential Manager across restarts; the installed app runs with a clean DB
   (0 tasks, 0 episodes, 0 jobs).
 - Live PR sync: a linked `tauri-apps/tauri#16356` updated to `open` with `checks failing`, and
@@ -79,6 +81,8 @@ validated from 0.1.0 → 0.1.1 → 0.2.0 → 0.3.0 → 0.3.1 → 0.3.2.
 | `f5ca859` | Created-task scope + rescreen |
 | `c5a4fc6` | git/GitHub clients |
 | `fff648c` | PR sync + project git state |
+| `2e2da6c` | gh credentials, real Sources, Claude Slack transport |
+| `abb7971` | Release 0.4.0 |
 | `542716f` | ClickUp/Issues import |
 | `220c74e` | repoPath + PR metadata in the snapshot |
 | `d163fe1` | Job requeue + next queued job |
