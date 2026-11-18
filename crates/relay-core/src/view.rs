@@ -60,6 +60,8 @@ pub struct Snapshot {
 pub struct Project {
     pub id: String,
     pub name: String,
+    /// The checkout the git/PR context reads; `null` when the project has none.
+    pub repo_path: Option<String>,
     pub color_var: String,
 }
 
@@ -188,6 +190,8 @@ pub struct TaskLink {
     pub label: String,
     pub state: String,
     pub url: String,
+    /// The polled metadata for a PR (`checks`, `review`, `headSha`), as JSON text.
+    pub metadata_json: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -377,6 +381,7 @@ pub(crate) fn build_snapshot(data: SnapshotData, version: &str, sync: Vec<SyncSo
         .map(|(index, project)| Project {
             id: project.id.clone(),
             name: project.name.clone(),
+            repo_path: project.repo_path.clone(),
             color_var: color_var(project.color.as_deref(), index),
         })
         .collect();
@@ -702,6 +707,8 @@ fn link_view(link: &model::TaskLink) -> TaskLink {
         label: link.title.clone().unwrap_or_else(|| link.kind.clone()),
         state: link.state.clone().unwrap_or_default(),
         url: link.url.clone(),
+        metadata_json: (link.metadata_json.trim() != "{}" && !link.metadata_json.trim().is_empty())
+            .then(|| link.metadata_json.clone()),
     }
 }
 
@@ -950,6 +957,7 @@ mod tests {
             projects: vec![Project {
                 id: "p".to_string(),
                 name: "Inbox".to_string(),
+                repo_path: None,
                 color_var: "--i1".to_string(),
             }],
             statuses: vec![Status {
