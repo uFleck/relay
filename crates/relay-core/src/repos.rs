@@ -107,6 +107,17 @@ pub fn scan_folder(root: &Path) -> Result<Vec<RepoCandidate>, GitError> {
             })
         })
         .collect();
+    // Extra worktrees of one repo (`account-PAYMENT-10260`) share its origin; keep one checkout
+    // per repo, preferring the main one (`.git` is a directory there) and then the shortest path.
+    found.sort_by_key(|candidate| {
+        (
+            candidate.repo.owner.to_lowercase(),
+            candidate.repo.name.to_lowercase(),
+            !Path::new(&candidate.path).join(".git").is_dir(),
+            candidate.path.len(),
+        )
+    });
+    found.dedup_by(|later, kept| later.repo.same_as(&kept.repo));
     found.sort_by_key(|candidate| candidate.path.to_lowercase());
     Ok(found)
 }
@@ -185,8 +196,13 @@ pub fn import_repos(store: &Store, candidates: &[RepoCandidate]) -> Result<RepoI
         .into_iter()
         .map(|project| project.slug)
         .collect();
+    let tracked = tracked_repos(store)?;
     for candidate in annotate_projects(store, candidates.to_vec())? {
-        if candidate.project_id.is_some() {
+        if candidate.project_id.is_some()
+            || tracked
+                .iter()
+                .any(|project| project.repo.same_as(&candidate.repo))
+        {
             count.skipped += 1;
             continue;
         }
@@ -390,12 +406,21 @@ mod tests {
             Some("https://github.com/umbler/deep"),
         );
 
+        init_repo(
+            &root.join("a-bill-copy"),
+            Some("https://github.com/Umbler/Bill.git"),
+        );
+
         let found = scan_folder(&root).unwrap();
         let names: Vec<_> = found
             .iter()
             .map(|c| format!("{}/{}", c.repo.owner, c.repo.name))
             .collect();
         assert_eq!(names, ["umbler/account", "umbler/bill"]);
+        assert!(
+            found[1].path.ends_with("bill"),
+            "one checkout per repo, the shorter path"
+        );
         assert!(found.iter().all(|c| c.project_id.is_none()));
 
         init_repo(&root, Some("https://github.com/umbler/root"));
