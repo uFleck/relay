@@ -173,6 +173,13 @@ export interface SlackSyncReport {
   error: string | null;
 }
 
+export interface ReanalyzeReport {
+  selected: number;
+  analyzed: number;
+  failed: number;
+  error: string | null;
+}
+
 export interface SlackPeer {
   id: string;
   userId: string;
@@ -319,6 +326,17 @@ export const episodeGet = (id: string) => call<EpisodeDetail | null>("episode_ge
 
 export const episodeAnalyze = (id: string) =>
   call<AnalysisJob | null>("episode_analyze", { id }, () => null);
+
+export const slackReanalyze = (conversationId: string) =>
+  call<AnalysisJob | null>("slack_reanalyze", { conversationId }, () => null);
+
+export const slackReanalyzeRecent = () =>
+  call<ReanalyzeReport>("slack_reanalyze_recent", undefined, () => ({
+    selected: 0,
+    analyzed: 0,
+    failed: 0,
+    error: "Re-analysis runs in the desktop app.",
+  }));
 
 export const jobsList = (args: { stateFilter?: string; limit?: number } = {}) =>
   call<AnalysisJob[]>("jobs_list", args, () => []);

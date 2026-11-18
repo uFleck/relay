@@ -277,12 +277,25 @@ fn is_stop(word: &str) -> bool {
     STOP_EN.contains(&word) || STOP_PT.contains(&word)
 }
 
+/// A transcript line is `author: text`; the author repeats on every line and says nothing
+/// about the topic.
+fn strip_author(line: &str) -> &str {
+    match line.split_once(": ") {
+        Some((author, rest)) if author.chars().count() <= 40 && !author.contains('/') => rest,
+        _ => line,
+    }
+}
+
 /// The `limit` most frequent non-stop words (4+ characters), ties broken by first
 /// appearance. URLs are skipped: their hosts and slugs say nothing about the topic.
 pub fn keywords(text: &str, limit: usize) -> Vec<String> {
     let mut count: HashMap<String, (usize, usize)> = HashMap::new();
     let mut order = 0;
-    for chunk in text.split_whitespace() {
+    for chunk in text
+        .lines()
+        .map(strip_author)
+        .flat_map(str::split_whitespace)
+    {
         if chunk.contains("://") || chunk.contains("www.") {
             continue;
         }
@@ -468,6 +481,10 @@ mod tests {
                 .any(|w| w == "para" || w == "precisamos" || w == "esta")
         );
         assert_eq!(keywords("ties alpha beta gamma", 2), vec!["ties", "alpha"]);
+        let chat = "Murilo Mittmann: relatorio
+Murilo Mittmann: faturamento
+me: relatorio";
+        assert_eq!(keywords(chat, 3), vec!["relatorio", "faturamento"]);
     }
 
     #[test]
