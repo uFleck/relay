@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import type { McpStatus } from "../ipc";
 import type { SyncState } from "../types";
 
@@ -17,6 +18,9 @@ function mcpLabel(status: McpStatus) {
   if (status.running) return `Running on 127.0.0.1:${status.port}`;
   return status.error ? "MCP did not start" : "MCP is starting…";
 }
+
+/** PLAN 6: the window shows a token's last 4 characters until you reveal it; Copy always copies the real one. */
+const mask = (token: string) => `••••••••${token.slice(-4)}`;
 
 const bearer = (token: string) => ({ Authorization: `Bearer ${token}` });
 
@@ -37,8 +41,8 @@ function selectContents(el: HTMLElement | null) {
   sel?.addRange(range);
 }
 
-/** Copies `text`; if the clipboard refuses, selects the matching block so Ctrl+C still works. */
-function CopyButton({ text, target }: { text: string; target: React.RefObject<HTMLElement | null> }) {
+/** Copies `text`; if the clipboard refuses, reveals and selects the matching block so Ctrl+C still works. */
+function CopyButton({ text, target, reveal }: { text: string; target: React.RefObject<HTMLElement | null>; reveal: () => void }) {
   const [state, setState] = useState<"idle" | "copied" | "manual">("idle");
   useEffect(() => {
     if (state === "idle") return;
@@ -52,6 +56,8 @@ function CopyButton({ text, target }: { text: string; target: React.RefObject<HT
       .then(
         () => setState("copied"),
         () => {
+          // The block must hold the real token before it is selected.
+          flushSync(reveal);
           selectContents(target.current);
           setState("manual");
         },
@@ -63,35 +69,61 @@ function CopyButton({ text, target }: { text: string; target: React.RefObject<HT
   );
 }
 
-function Field({ label, value, copy }: { label: string; value: string; copy?: boolean }) {
-  const ref = useRef<HTMLElement>(null);
+interface Secret {
+  shown: boolean;
+  onShown: (shown: boolean) => void;
+}
+
+function Field({ label, value }: { label: string; value: string }) {
   return (
     <>
       <span className="k">{label}</span>
-      <code ref={ref}>{value}</code>
-      {copy ? <CopyButton text={value} target={ref} /> : <span />}
+      <code>{value}</code>
+      <span />
     </>
   );
 }
 
-function Snippet({ title, note, text }: { title: string; note: React.ReactNode; text: string }) {
+function TokenField({ label, token, shown, onShown }: { label: string; token: string } & Secret) {
+  const ref = useRef<HTMLElement>(null);
+  return (
+    <>
+      <span className="k">{label}</span>
+      <code ref={ref}>{shown ? token : mask(token)}</code>
+      <span className="mcp-act">
+        <button type="button" className="btn ghost" aria-pressed={shown} onClick={() => onShown(!shown)}>
+          {shown ? "Hide" : "Reveal"}
+        </button>
+        <CopyButton text={token} target={ref} reveal={() => onShown(true)} />
+      </span>
+    </>
+  );
+}
+
+/** A config snippet. It shows the masked token unless that token is revealed; Copy copies the real one. */
+function Snippet({ title, note, text, masked, shown, onShown }: { title: string; note: React.ReactNode; text: string; masked: string } & Secret) {
   const ref = useRef<HTMLPreElement>(null);
   return (
     <div className="snip">
       <div className="snip-h">
         <b>{title}</b>
         <span className="push" />
-        <CopyButton text={text} target={ref} />
+        <CopyButton text={text} target={ref} reveal={() => onShown(true)} />
       </div>
       <p className="mcp-note">{note}</p>
-      <pre ref={ref}>{text}</pre>
+      <pre ref={ref}>{shown ? text : masked}</pre>
     </div>
   );
 }
 
 export function McpSetup({ status, onRetry }: { status: McpStatus | null; onRetry: () => void }) {
+  const [shown, setShown] = useState({ agent: false, analyst: false });
   if (status === null) return <p className="empty">MCP setup is available in the desktop app.</p>;
   const { agentToken, analystToken } = status;
+  const secret = (which: "agent" | "analyst"): Secret => ({
+    shown: shown[which],
+    onShown: (on) => setShown((s) => ({ ...s, [which]: on })),
+  });
   return (
     <>
       <div className="setrow" role="status">
@@ -110,9 +142,9 @@ export function McpSetup({ status, onRetry }: { status: McpStatus | null; onRetr
         <>
           <div className="mcp">
             <Field label="Agent URL" value={status.url} />
-            <Field label="Agent token" value={agentToken} copy />
+            <TokenField label="Agent token" token={agentToken} {...secret("agent")} />
             <Field label="Analyst URL" value={status.analystUrl} />
-            <Field label="Analyst token" value={analystToken} copy />
+            <TokenField label="Analyst token" token={analystToken} {...secret("analyst")} />
           </div>
           <Snippet
             title="Executor · agent endpoint"
@@ -122,6 +154,8 @@ export function McpSetup({ status, onRetry }: { status: McpStatus | null; onRetr
               </>
             }
             text={executorSnippet(status.url, agentToken)}
+            masked={executorSnippet(status.url, mask(agentToken))}
+            {...secret("agent")}
           />
           <Snippet
             title="OpenCode · analyst endpoint"
@@ -131,6 +165,8 @@ export function McpSetup({ status, onRetry }: { status: McpStatus | null; onRetr
               </>
             }
             text={openCodeSnippet(status.analystUrl, analystToken)}
+            masked={openCodeSnippet(status.analystUrl, mask(analystToken))}
+            {...secret("analyst")}
           />
         </>
       )}
