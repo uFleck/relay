@@ -429,23 +429,30 @@ pub async fn sync_prs_now(app: AppHandle) -> Result<usize, String> {
     poll_once(&app).await
 }
 
+/// Spawns several `git` processes (~250 ms on Windows), so it runs on the blocking pool:
+/// a sync command would hold the main thread and freeze the window meanwhile.
 #[tauri::command]
-pub fn project_git_state(
+pub async fn project_git_state(
     store: State<'_, Arc<Store>>,
     project_id: String,
 ) -> Result<Option<GitState>, String> {
-    let project = store
-        .get_project(&project_id)
-        .map_err(|error| error.to_string())?;
-    let Some(path) = project.repo_path else {
-        return Ok(None);
-    };
-    git::state(Path::new(&path))
-        .map(Some)
-        .map_err(|error| error.to_string())
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let project = store
+            .get_project(&project_id)
+            .map_err(|error| error.to_string())?;
+        let Some(path) = project.repo_path else {
+            return Ok(None);
+        };
+        git::state(Path::new(&path))
+            .map(Some)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn project_set_repo(
     store: State<'_, Arc<Store>>,
     project_id: String,

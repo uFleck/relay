@@ -344,7 +344,7 @@ function RefreshButton({ onClick, busy }: { onClick: () => void; busy?: boolean 
 export function ProjectRepo({ project }: { project: Project }) {
   // `undefined`: the snapshot did not say. The git state then tells whether a checkout is linked.
   const [path, setPath] = useState(project.repoPath);
-  const git = useLive(() => projectGitState(project.id), [project.id]);
+  const git = useLive(() => projectGitState(project.id), [project.id], { onChange: false });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -420,7 +420,7 @@ const REVIEW_TONE: Record<Review, string> = { none: "mut", pending: "warn", appr
 
 /** The task's project checkout and its PRs. Renders nothing when there is neither. Key it by project. */
 export function TaskContext({ task, onOpen }: { task: Task; onOpen: (url: string) => void }) {
-  const git = useLive(() => projectGitState(task.projectId), [task.projectId]);
+  const git = useLive(() => projectGitState(task.projectId), [task.projectId], { onChange: false });
   const prs = task.links.filter((l) => l.kind === "pr");
   if (!git.data && !git.error && prs.length === 0) return null;
 

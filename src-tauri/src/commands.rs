@@ -47,8 +47,9 @@ impl From<StoreError> for CommandError {
     }
 }
 
-/// The snapshot behind `getSnapshot()` in `src/ipc.ts`.
-#[tauri::command]
+/// The snapshot behind `getSnapshot()` in `src/ipc.ts`. Off the main thread, so a refresh
+/// that waits on the store lock behind a background sync cannot freeze the window.
+#[tauri::command(async)]
 pub fn relay_snapshot(
     app: AppHandle,
     store: State<'_, Arc<Store>>,
