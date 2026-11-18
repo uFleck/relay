@@ -34,8 +34,6 @@ pub struct McpStatus {
     pub url: String,
     pub analyst_url: String,
     pub error: Option<String>,
-    pub agent_token: Option<String>,
-    pub analyst_token: Option<String>,
 }
 
 /// Server handle and the last status, kept in Tauri state. Dropping it stops the listener.
@@ -121,11 +119,7 @@ pub fn start(app: AppHandle, store: Arc<Store>, dir: &Path) {
         }
     };
     tauri::async_runtime::spawn(async move {
-        let status = McpStatus {
-            agent_token: Some(tokens.agent.clone()),
-            analyst_token: Some(tokens.analyst.clone()),
-            ..base
-        };
+        let status = McpStatus { ..base };
         let state = app.state::<McpState>();
         match server::serve(store, tokens, DEFAULT_PORT).await {
             Ok(running) => {
