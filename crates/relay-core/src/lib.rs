@@ -10,6 +10,7 @@ pub mod git;
 pub mod github;
 pub mod jev;
 pub mod model;
+pub mod repos;
 pub mod slack;
 pub mod store;
 pub mod view;

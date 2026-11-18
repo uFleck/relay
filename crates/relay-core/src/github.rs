@@ -3,6 +3,8 @@
 
 use serde_json::Value;
 
+use crate::repos::{GithubRepo, parse_github_remote};
+
 pub const DEFAULT_BASE_URL: &str = "https://api.github.com";
 const TIMEOUT_SECS: u64 = 15;
 
@@ -67,6 +69,22 @@ pub struct GithubIssue {
     pub state: String,
     pub url: String,
     pub labels: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PullRole {
+    Author,
+    ReviewRequested,
+}
+
+/// An open pull request found by search, before it is linked to a task.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FoundPull {
+    pub repo: GithubRepo,
+    pub number: u64,
+    pub title: String,
+    pub url: String,
+    pub role: PullRole,
 }
 
 impl std::fmt::Debug for GithubClient {
@@ -194,6 +212,29 @@ impl GithubClient {
         Ok(out)
     }
 
+    /// Open pull requests the token's user authored or was asked to review. One page of
+    /// 100 per query is enough for a person's open work.
+    pub async fn search_my_pulls(&self) -> Result<Vec<FoundPull>, GithubError> {
+        let mut out = Vec::new();
+        for (query, role) in [
+            ("is:pr+is:open+author:@me", PullRole::Author),
+            (
+                "is:pr+is:open+review-requested:@me",
+                PullRole::ReviewRequested,
+            ),
+        ] {
+            let value = self
+                .get(&format!("/search/issues?q={query}&per_page=100"))
+                .await?;
+            let items = value
+                .get("items")
+                .and_then(Value::as_array)
+                .ok_or(GithubError::Missing("items"))?;
+            out.extend(items.iter().filter_map(|item| found_from(item, role)));
+        }
+        Ok(out)
+    }
+
     async fn get(&self, path: &str) -> Result<Value, GithubError> {
         let mut request = self
             .http
@@ -244,6 +285,22 @@ fn issue_from(item: &Value) -> Option<GithubIssue> {
                     .collect()
             })
             .unwrap_or_default(),
+    })
+}
+
+fn found_from(item: &Value, role: PullRole) -> Option<FoundPull> {
+    let api_repo = item.get("repository_url")?.as_str()?;
+    let repo = parse_github_remote(&api_repo.replacen(
+        "https://api.github.com/repos/",
+        "https://github.com/",
+        1,
+    ))?;
+    Some(FoundPull {
+        repo,
+        number: item.get("number")?.as_u64()?,
+        title: item.get("title")?.as_str()?.to_string(),
+        url: item.get("html_url")?.as_str()?.to_string(),
+        role,
     })
 }
 
@@ -375,7 +432,34 @@ mod tests {
                 ]))
             }),
         );
-        let app = pulls.merge(checks).merge(reviews).merge(issues);
+        let search = Router::new().route(
+            "/search/issues",
+            get(
+                |axum::extract::Query(q): axum::extract::Query<
+                    std::collections::HashMap<String, String>,
+                >| async move {
+                    let wanted = q.get("q").cloned().unwrap_or_default();
+                    let item = |number: u64, repo: &str| {
+                        json!({
+                            "number": number,
+                            "title": format!("Pull {number}"),
+                            "html_url": format!("https://github.com/{repo}/pull/{number}"),
+                            "repository_url": format!("https://api.github.com/repos/{repo}")
+                        })
+                    };
+                    axum::Json(if wanted.contains("author:@me") {
+                        json!({"items": [item(1, "acme/relay"), item(2, "acme/Other")]})
+                    } else {
+                        json!({"items": [item(3, "acme/relay"), {"number": 4}]})
+                    })
+                },
+            ),
+        );
+        let app = pulls
+            .merge(checks)
+            .merge(search)
+            .merge(reviews)
+            .merge(issues);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
@@ -401,6 +485,42 @@ mod tests {
         assert_eq!(issues[0].number, 12);
         assert_eq!(issues[0].labels, vec!["bug"]);
         assert_eq!(issues[0].url, "https://github.com/acme/relay/issues/12");
+    }
+
+    #[tokio::test]
+    async fn searches_my_open_pulls_by_role() {
+        let client = GithubClient::with_base(Some("t".into()), mock().await).unwrap();
+        let found = client.search_my_pulls().await.unwrap();
+        let got: Vec<_> = found
+            .iter()
+            .map(|p| (p.repo.name.as_str(), p.number, p.role))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("relay", 1, PullRole::Author),
+                ("Other", 2, PullRole::Author),
+                ("relay", 3, PullRole::ReviewRequested),
+            ],
+            "the malformed item is skipped"
+        );
+        assert_eq!(found[0].repo.owner, "acme");
+        assert_eq!(found[0].url, "https://github.com/acme/relay/pull/1");
+    }
+
+    /// `RELAY_GH_TOKEN=$(gh auth token) cargo test -p relay-core real_search -- --ignored --nocapture`
+    #[tokio::test]
+    #[ignore = "calls api.github.com"]
+    async fn real_search() {
+        let token = std::env::var("RELAY_GH_TOKEN").expect("RELAY_GH_TOKEN");
+        let found = GithubClient::new(Some(token))
+            .unwrap()
+            .search_my_pulls()
+            .await
+            .unwrap();
+        for p in found {
+            println!("{:?} {}/{}#{}", p.role, p.repo.owner, p.repo.name, p.number);
+        }
     }
 
     #[test]

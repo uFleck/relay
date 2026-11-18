@@ -297,6 +297,8 @@ pub fn run() {
             imports::clickup_clear_token,
             imports::clickup_import,
             imports::github_import_issues,
+            imports::repos_scan,
+            imports::repos_import,
             hover::hover_place,
             hover::hover_drag,
             hover::hover_pointer,
