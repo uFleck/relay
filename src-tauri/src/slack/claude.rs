@@ -5,10 +5,12 @@ use std::io::Read;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use relay_core::claude_slack::{self as core, ClaudeError, RunRequest, Runner};
 use relay_core::store::Store;
+use relay_core::summaries::{self, SummaryRunner};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -17,6 +19,7 @@ use super::{SlackState, SlackSyncReport, paused, publish};
 const TRANSPORT_KEY: &str = "slack.transport";
 const RUN_TIMEOUT: Duration = Duration::from_secs(90);
 const INTERVAL: Duration = Duration::from_secs(10 * 60);
+const SUMMARY_INTERVAL: Duration = Duration::from_secs(3 * 60);
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -103,10 +106,22 @@ pub struct ProcessRunner {
 impl Runner for ProcessRunner {
     fn run(&self, request: &RunRequest) -> Result<String, ClaudeError> {
         let settings = core::run_settings_json(&enabled_plugins());
+        self.run_claude(core::cli_args(request, &settings), &core::RUN_ENV)
+    }
+}
+
+impl SummaryRunner for ProcessRunner {
+    fn run(&self, args: Vec<String>) -> Result<String, ClaudeError> {
+        self.run_claude(args, &summaries::RUN_ENV)
+    }
+}
+
+impl ProcessRunner {
+    fn run_claude(&self, args: Vec<String>, env: &[(&str, &str)]) -> Result<String, ClaudeError> {
         let mut command = Command::new(&self.claude);
         command
-            .args(core::cli_args(request, &settings))
-            .envs(core::RUN_ENV)
+            .args(args)
+            .envs(env.iter().copied())
             .current_dir(&self.cwd)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -245,6 +260,7 @@ pub async fn sync(app: &AppHandle) -> Result<SlackSyncReport, String> {
     });
     publish(app, &status);
     let _ = app.emit("relay://change", ());
+    summarize_in_background(app.clone());
     match report.error.clone() {
         Some(error) if report.messages == 0 => Err(error),
         _ => Ok(report),
@@ -253,6 +269,7 @@ pub async fn sync(app: &AppHandle) -> Result<SlackSyncReport, String> {
 
 /// Every 10 minutes while the app runs and the Claude transport is active.
 pub fn start_schedule(app: AppHandle) {
+    let app_for_summaries = app.clone();
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(Duration::from_secs(20)).await;
         loop {
@@ -262,6 +279,58 @@ pub fn start_schedule(app: AppHandle) {
             }
             tokio::time::sleep(INTERVAL).await;
         }
+    });
+    // Inbox summaries for either transport: backfill shortly after start, then catch new messages.
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(30)).await;
+        loop {
+            summarize_in_background(app_for_summaries.clone());
+            tokio::time::sleep(SUMMARY_INTERVAL).await;
+        }
+    });
+}
+
+static SUMMARIZING: AtomicBool = AtomicBool::new(false);
+
+/// Summarizes Inbox episodes on a blocking thread, one pass after another until nothing is left
+/// or a pass fails. Never two at once; does nothing while capture is paused or without `claude`.
+pub fn summarize_in_background(app: AppHandle) {
+    if paused(&app) {
+        return;
+    }
+    let Some(claude) = find_claude() else {
+        return;
+    };
+    let Ok(dir) = app.path().app_data_dir() else {
+        return;
+    };
+    if SUMMARIZING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    tauri::async_runtime::spawn(async move {
+        let cwd = dir.join("claude-slack");
+        let settings = summaries::run_settings_json(&enabled_plugins());
+        loop {
+            let store = app.state::<SlackState>().store.clone();
+            let runner = ProcessRunner {
+                claude: claude.clone(),
+                cwd: cwd.clone(),
+            };
+            let settings = settings.clone();
+            let pass = tokio::task::spawn_blocking(move || {
+                std::fs::create_dir_all(&runner.cwd).ok();
+                summaries::summarize_pending(&store, &runner, &settings)
+            })
+            .await;
+            let Ok(report) = pass else { break };
+            if report.summarized > 0 {
+                let _ = app.emit("relay://change", ());
+            }
+            if report.error.is_some() || report.summarized < summaries::PER_PASS || paused(&app) {
+                break;
+            }
+        }
+        SUMMARIZING.store(false, Ordering::SeqCst);
     });
 }
 

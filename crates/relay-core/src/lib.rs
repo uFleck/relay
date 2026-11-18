@@ -15,4 +15,5 @@ pub mod model;
 pub mod repos;
 pub mod slack;
 pub mod store;
+pub mod summaries;
 pub mod view;

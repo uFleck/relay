@@ -646,8 +646,8 @@ export function InboxView({ slack, openId, onOpen, onSettings }: InboxProps) {
           >
             <b className="ellip">{peerLabel(peerName, peerUserId)}</b>
             <EpisodeTag state={e.state} />
-            <span className="meta ellip" title={preview ?? undefined}>
-              {preview ?? "No text"}
+            <span className="meta ellip" title={preview ? `Last message: ${preview}` : undefined}>
+              {e.summary ?? preview ?? "No text"}
             </span>
             <span className="meta nowrap">{plural(messageCount, "msg")}</span>
             <span className="meta nowrap">{ago(e.lastMessageAt, now)}</span>
