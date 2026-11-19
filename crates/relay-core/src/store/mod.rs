@@ -33,11 +33,14 @@ use crate::model::{
 };
 use crate::view;
 
+mod notes;
+
 const MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/0001_init.sql"),
     include_str!("../../migrations/0002_change_acks.sql"),
     include_str!("../../migrations/0003_slack_jobs.sql"),
     include_str!("../../migrations/0004_conversation_summaries.sql"),
+    include_str!("../../migrations/0005_notes.sql"),
 ];
 
 /// Claim lease in minutes; every claimant write extends it.
@@ -4632,6 +4635,34 @@ mod tests {
         let listed = store.list_slack_episodes(None, 10).unwrap();
         assert_eq!(listed[0].episode.summary.as_deref(), Some("Deploy do bill"));
         assert_eq!(listed[0].preview.as_deref(), Some("faz sentido"));
+    }
+
+    #[test]
+    fn upgrade_from_0004_keeps_tasks_and_adds_searchable_notes() {
+        let db = TempDatabase::new();
+        let task_id = {
+            let store = Store::open(&db.path).unwrap();
+            let project = store
+                .create_project_with_default_workflow(NewProject::new("Relay", "relay", None))
+                .unwrap()
+                .project;
+            let task = create_task(&store, &project, "Ship notes");
+            let conn = store.conn();
+            conn.execute_batch("DROP TABLE notes_fts; DROP TABLE notes;")
+                .unwrap();
+            conn.pragma_update(None, "user_version", 4).unwrap();
+            task.id
+        };
+
+        let store = Store::open(&db.path).unwrap();
+        let version: i64 = store
+            .conn()
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, MIGRATIONS.len() as i64);
+        assert_eq!(store.get_task(&task_id).unwrap().title, "Ship notes");
+        let note = store.create_note("Kept", "after the upgrade").unwrap();
+        assert_eq!(store.list_notes(Some("upgr"), None).unwrap(), vec![note]);
     }
 
     #[test]

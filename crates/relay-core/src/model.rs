@@ -696,6 +696,18 @@ pub struct SyncCursor {
     pub error: Option<String>,
 }
 
+/// A local note. Pinned notes list first; `title` may be empty while the user types.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Note {
+    pub id: String,
+    pub title: String,
+    pub body: String,
+    pub pinned: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Setting {
