@@ -1,12 +1,13 @@
 //! IPC commands the main window calls. They stay thin: the store owns the rules, this module
 //! only reads the app version, maps the UI's decision string and shapes errors for the page.
 
-use relay_core::model::ProposalDecision;
+use relay_core::model::{Note, ProposalDecision, Task};
 use relay_core::store::{Store, StoreError};
 use relay_core::view::Snapshot;
 use serde::Serialize;
 use std::sync::Arc;
 use tauri::{AppHandle, Manager, State};
+use tauri_plugin_opener::OpenerExt;
 
 use crate::github::{self, GithubState};
 use crate::imports;
@@ -110,4 +111,67 @@ pub fn decide_proposal(
 
     store.decide_proposal(&proposal_id, decision, "you")?;
     Ok(())
+}
+
+// Notes. Every command is async so a write waiting on the store lock never blocks the window.
+
+#[tauri::command(async)]
+pub fn notes_list(
+    query: Option<String>,
+    store: State<'_, Arc<Store>>,
+) -> Result<Vec<Note>, CommandError> {
+    Ok(store.list_notes(query.as_deref(), None)?)
+}
+
+#[tauri::command(async)]
+pub fn note_create(
+    title: String,
+    body: String,
+    store: State<'_, Arc<Store>>,
+) -> Result<Note, CommandError> {
+    Ok(store.create_note(&title, &body)?)
+}
+
+#[tauri::command(async)]
+pub fn note_update(
+    id: String,
+    title: String,
+    body: String,
+    store: State<'_, Arc<Store>>,
+) -> Result<Note, CommandError> {
+    Ok(store.update_note(&id, &title, &body)?)
+}
+
+#[tauri::command(async)]
+pub fn note_set_pinned(
+    id: String,
+    pinned: bool,
+    store: State<'_, Arc<Store>>,
+) -> Result<Note, CommandError> {
+    Ok(store.set_note_pinned(&id, pinned)?)
+}
+
+#[tauri::command(async)]
+pub fn note_delete(id: String, store: State<'_, Arc<Store>>) -> Result<(), CommandError> {
+    Ok(store.delete_note(&id)?)
+}
+
+#[tauri::command(async)]
+pub fn note_to_task(
+    id: String,
+    project_id: String,
+    store: State<'_, Arc<Store>>,
+) -> Result<Task, CommandError> {
+    Ok(store.note_to_task(&id, &project_id)?)
+}
+
+/// Brings T3 Code to the front through its `t3code://` protocol. The prompt travels on the
+/// clipboard; Relay opens the app and never starts an agent.
+#[tauri::command(async)]
+pub fn open_t3(app: AppHandle) -> Result<(), CommandError> {
+    app.opener()
+        .open_url("t3code://", None::<&str>)
+        .map_err(|error| {
+            CommandError::new("open_failed", format!("could not open T3 Code: {error}"))
+        })
 }

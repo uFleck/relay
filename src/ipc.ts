@@ -128,6 +128,65 @@ export const openExternal = async (url: string) => {
   }
 };
 
+/* ── notes ── */
+
+/** A local note; Rust's `model::Note`. */
+export interface Note {
+  id: string;
+  title: string;
+  body: string;
+  pinned: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/* In the browser, notes live in memory so the view can be exercised on mock data. */
+let browserNotes: Note[] = [];
+const browserNote = (id: string) => {
+  const note = browserNotes.find((n) => n.id === id);
+  if (!note) throw { kind: "not_found", message: `note ${id}` };
+  return note;
+};
+const browserSort = (notes: Note[]) =>
+  [...notes].sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt.localeCompare(a.updatedAt));
+
+/** Pinned first, then most recently edited; a query filters by prefix over title and body. */
+export const listNotes = (query: string) =>
+  call<Note[]>("notes_list", { query: query.trim() || null }, () => {
+    const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+    const hit = (n: Note) => {
+      const tokens = `${n.title} ${n.body}`.toLowerCase().split(/\W+/);
+      return words.every((w) => tokens.some((t) => t.startsWith(w)));
+    };
+    return browserSort(browserNotes.filter(hit));
+  });
+
+export const createNote = (title = "", body = "") =>
+  call<Note>("note_create", { title, body }, () => {
+    const at = new Date().toISOString();
+    const note = { id: crypto.randomUUID(), title, body, pinned: false, createdAt: at, updatedAt: at };
+    browserNotes = [note, ...browserNotes];
+    return note;
+  });
+
+export const updateNote = (args: { id: string; title: string; body: string }) =>
+  call<Note>("note_update", args, () => ({ ...Object.assign(browserNote(args.id), { title: args.title, body: args.body, updatedAt: new Date().toISOString() }) }));
+
+export const setNotePinned = (id: string, pinned: boolean) =>
+  call<Note>("note_set_pinned", { id, pinned }, () => ({ ...Object.assign(browserNote(id), { pinned }) }));
+
+export const deleteNote = (id: string) =>
+  call<void>("note_delete", { id }, () => {
+    browserNotes = browserNotes.filter((n) => n.id !== id);
+  });
+
+/** Creates a Relay task from the note; agents pick it up over MCP. Returns the new task's id. */
+export const noteToTask = (id: string, projectId: string) =>
+  call<{ id: string; title: string }>("note_to_task", { id, projectId }, () => ({ id: crypto.randomUUID(), title: browserNote(id).title }));
+
+/** Brings T3 Code to the front (`t3code://`). It only opens the app; the prompt goes on the clipboard. */
+export const openT3 = () => call<void>("open_t3", undefined, () => console.info("[relay] open_t3"));
+
 /* ── events ── */
 
 /** What changed. Rust does not send it yet; the main window does after an ack or a decision. */
