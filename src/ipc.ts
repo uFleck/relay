@@ -1,6 +1,7 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { emit, listen } from "@tauri-apps/api/event";
 import { mockSnapshot } from "./data/mock";
+import { sortNotes } from "./notes";
 import type { ProposalDecision, RepoCandidate, Snapshot } from "./types";
 
 /* Typed wrappers over the Rust commands. Outside Tauri (pnpm dev in a browser), or while a command
@@ -147,8 +148,6 @@ const browserNote = (id: string) => {
   if (!note) throw { kind: "not_found", message: `note ${id}` };
   return note;
 };
-const browserSort = (notes: Note[]) =>
-  [...notes].sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt.localeCompare(a.updatedAt));
 
 /** Pinned first, then most recently edited; a query filters by prefix over title and body. */
 export const listNotes = (query: string) =>
@@ -158,7 +157,7 @@ export const listNotes = (query: string) =>
       const tokens = `${n.title} ${n.body}`.toLowerCase().split(/\W+/);
       return words.every((w) => tokens.some((t) => t.startsWith(w)));
     };
-    return browserSort(browserNotes.filter(hit));
+    return sortNotes(browserNotes.filter(hit));
   });
 
 export const createNote = (title = "", body = "") =>

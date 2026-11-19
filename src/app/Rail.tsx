@@ -35,6 +35,7 @@ export function Rail({ view, onView, version, inbox, review, liveAgents, sync, m
       </div>
       {item("today", "sun", "Today")}
       {item("inbox", "tray", "Inbox", inbox > 0 && <span className="bdg">{inbox}</span>)}
+      {item("notes", "pencil", "Notes")}
       {item("projects", "folders", "Projects")}
       {item("agents", "robot", "Agents", liveAgents > 0 && <span className="meta push">{liveAgents} live</span>)}
       {item("review", "review", "Review", review > 0 && <span className="bdg warn">{review}</span>)}
