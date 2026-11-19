@@ -4,6 +4,7 @@ import { Rail } from "./app/Rail";
 import { TaskSheet } from "./app/TaskSheet";
 import { TitleBar } from "./app/TitleBar";
 import { AgentStrip, TaskGroups, TodayHeader } from "./app/Today";
+import { NotesView } from "./app/Notes";
 import { EpisodeSheet, InboxView } from "./app/Slack";
 import { AgentsView, ProjectsView, ReviewView, SettingsView, UpdateNotice } from "./app/Views";
 import {
@@ -332,6 +333,16 @@ export default function App() {
         )}
         {route.view === "inbox" && (
           <InboxView slack={slack} openId={episode} onOpen={openEpisode} onSettings={() => setView("settings")} />
+        )}
+        {route.view === "notes" && (
+          <NotesView
+            projects={snap.projects}
+            onNotice={setNotice}
+            onTaskCreated={(task) => {
+              void emitChange({ taskId: task.id });
+              void refresh();
+            }}
+          />
         )}
         {route.view === "projects" && (
           <ProjectsView snap={snap} selectedId={selected?.id ?? null} onSelect={openTask} renderTask={(t) => sheet(t, true)} />

@@ -1,9 +1,9 @@
 /* Routes are the strings Rust and the hover pass around: `/review`, `/settings`,
    `/today?task=<id>&focus=changes`, `/review?proposal=<id>`, `/inbox?episode=<id>`. Both windows read them here. */
 
-export type View = "today" | "inbox" | "projects" | "agents" | "review" | "settings";
+export type View = "today" | "inbox" | "notes" | "projects" | "agents" | "review" | "settings";
 
-const VIEWS: readonly View[] = ["today", "inbox", "projects", "agents", "review", "settings"];
+const VIEWS: readonly View[] = ["today", "inbox", "notes", "projects", "agents", "review", "settings"];
 
 export interface Route {
   view: View;
