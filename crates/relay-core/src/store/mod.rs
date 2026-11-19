@@ -37,6 +37,7 @@ const MIGRATIONS: &[&str] = &[
     include_str!("../../migrations/0001_init.sql"),
     include_str!("../../migrations/0002_change_acks.sql"),
     include_str!("../../migrations/0003_slack_jobs.sql"),
+    include_str!("../../migrations/0004_conversation_summaries.sql"),
 ];
 
 /// Claim lease in minutes; every claimant write extends it.
@@ -2387,6 +2388,48 @@ impl Store {
         })
     }
 
+    /// Episodes with text whose summary is missing, or stale and quiet since `settled_before`
+    /// (so a live conversation is not re-summarized on every message). Newest first.
+    pub fn episodes_needing_summary(
+        &self,
+        settled_before: &str,
+        limit: usize,
+    ) -> Result<Vec<String>, StoreError> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT c.id FROM conversations c
+             WHERE EXISTS (SELECT 1 FROM messages m
+                           WHERE m.conversation_id = c.id AND m.deleted = 0 AND m.text <> '')
+               AND (c.summary IS NULL
+                    OR (COALESCE(c.summary_through, '') < c.last_message_at
+                        AND c.last_message_at <= ?1))
+             ORDER BY c.last_message_at DESC LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![settled_before, limit as i64], |row| row.get(0))?;
+        let mut ids = Vec::new();
+        for row in rows {
+            ids.push(row?);
+        }
+        Ok(ids)
+    }
+
+    /// Stores an episode summary covering messages up to `through` (its `last_message_at`).
+    pub fn set_episode_summary(
+        &self,
+        id: &str,
+        summary: &str,
+        through: &str,
+    ) -> Result<(), StoreError> {
+        let changed = self.conn().execute(
+            "UPDATE conversations SET summary = ?1, summary_through = ?2 WHERE id = ?3",
+            params![summary, through, id],
+        )?;
+        if changed == 0 {
+            return Err(StoreError::NotFound(format!("slack episode {id}")));
+        }
+        Ok(())
+    }
+
     pub fn set_slack_episode_state(
         &self,
         id: &str,
@@ -4547,6 +4590,48 @@ mod tests {
         assert_eq!(store.search_tasks("release", 2).unwrap().len(), 2);
         assert_eq!(store.search_tasks("release", 10).unwrap().len(), 3);
         assert!(store.search_tasks("release", 0).unwrap().is_empty());
+    }
+
+    #[test]
+    fn upgrade_from_0003_keeps_episodes_and_queues_them_for_a_summary() {
+        let db = TempDatabase::new();
+        {
+            let conn = Connection::open(&db.path).unwrap();
+            for sql in &MIGRATIONS[..3] {
+                conn.execute_batch(sql).unwrap();
+            }
+            conn.pragma_update(None, "user_version", 3).unwrap();
+            conn.execute(
+                "INSERT INTO conversations (id, channel_id, peer_id, opened_at, last_message_at)
+                 VALUES ('E1', 'D1', 'P1', '2026-01-01T00:00:00Z', '2026-01-01T00:01:00Z')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO messages (id, conversation_id, ts, author_id, direction, text)
+                 VALUES ('M1', 'E1', '1767225660.000100', 'U1', 'in', 'faz sentido')",
+                [],
+            )
+            .unwrap();
+        }
+
+        let store = Store::open(&db.path).unwrap();
+        assert_eq!(
+            store.episodes_needing_summary(&now(), 10).unwrap(),
+            vec!["E1".to_string()]
+        );
+        store
+            .set_episode_summary("E1", "Deploy do bill", "2026-01-01T00:01:00Z")
+            .unwrap();
+        assert!(
+            store
+                .episodes_needing_summary(&now(), 10)
+                .unwrap()
+                .is_empty()
+        );
+        let listed = store.list_slack_episodes(None, 10).unwrap();
+        assert_eq!(listed[0].episode.summary.as_deref(), Some("Deploy do bill"));
+        assert_eq!(listed[0].preview.as_deref(), Some("faz sentido"));
     }
 
     #[test]
