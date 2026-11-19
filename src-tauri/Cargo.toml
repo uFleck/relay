@@ -1,6 +1,6 @@
 [package]
 name = "relay"
-version = "0.7.0"
+version = "0.8.0"
 description = "Relay: a local-first task graph for AI sessions"
 authors = ["Bruno Koster"]
 edition = "2024"
