@@ -6,7 +6,7 @@
 //! (no process, no Tauri): the `Runner` trait is the seam, so tests inject a fake stream.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -74,14 +74,17 @@ pub enum Tool {
     ReadChannel,
     ReadThread,
     UserProfile,
+    /// #33: the conversation directory scan (`slack_list_user_channels`).
+    ListChannels,
 }
 
 impl Tool {
-    pub const ALL: [Tool; 4] = [
+    pub const ALL: [Tool; 5] = [
         Tool::Search,
         Tool::ReadChannel,
         Tool::ReadThread,
         Tool::UserProfile,
+        Tool::ListChannels,
     ];
 
     pub fn full_name(self) -> String {
@@ -90,6 +93,7 @@ impl Tool {
             Tool::ReadChannel => "slack_read_channel",
             Tool::ReadThread => "slack_read_thread",
             Tool::UserProfile => "slack_read_user_profile",
+            Tool::ListChannels => "slack_list_user_channels",
         };
         format!("{PREFIX}{short}")
     }
@@ -159,6 +163,54 @@ impl ToolCall {
             input: json!({ "channel_id": channel, "message_ts": message_ts }),
         }
     }
+
+    /// #33: a fixed-window read. Twenty messages per page is the window page limit, distinct
+    /// from the v1 sync's `CHANNEL_LIMIT` of 100.
+    pub fn read_window(channel: &str, oldest: &str, cursor: Option<&str>) -> Self {
+        let mut input = json!({
+            "channel_id": channel,
+            "oldest": oldest,
+            "limit": 20,
+        });
+        if let Some(cursor) = cursor {
+            input["cursor"] = json!(cursor);
+        }
+        Self {
+            tool: Tool::ReadChannel,
+            input,
+        }
+    }
+
+    /// #33: one full directory page. The four fixed arguments never change between pages; only
+    /// the cursor advances, and a short page still carries a cursor that must be followed.
+    pub fn list_channels(cursor: Option<&str>) -> Self {
+        let mut input = json!({
+            "types": "public_channel,private_channel,im,mpim",
+            "format": "full",
+            "limit": 200,
+        });
+        if let Some(cursor) = cursor {
+            input["cursor"] = json!(cursor);
+        }
+        Self {
+            tool: Tool::ListChannels,
+            input,
+        }
+    }
+
+    /// #33: one detailed message-search call. `keywords` replaces v1's DM-only `filters` search.
+    pub fn search_messages(query: &str) -> Self {
+        Self {
+            tool: Tool::Search,
+            input: json!({
+                "keywords": [query],
+                "natural_language_query": "",
+                "response_format": "detailed",
+                "include_context": false,
+                "limit": 10,
+            }),
+        }
+    }
 }
 
 /// The prompt for one invocation: the model copies these calls and replies "done".
@@ -182,6 +234,11 @@ pub struct RunRequest {
     pub max_turns: u32,
     /// Tools and `mcp__<server>` prefixes to remove from the model's context.
     pub disallow: Vec<String>,
+    /// Per-run deadline. On-demand thread reads use the 30-second deadline; directory scans
+    /// fall back to the transport's default. `None` means "use the default".
+    pub timeout: Option<Duration>,
+    /// Narrows `--allowedTools` for one run. `None` keeps the full Slack tool allowlist.
+    pub tools: Option<Vec<String>>,
 }
 
 /// The `claude` argument list for a request. `settings_json` turns hooks and plugins off.
@@ -214,7 +271,13 @@ pub fn cli_args(request: &RunRequest, settings_json: &str) -> Vec<String> {
     ] {
         args.push(part.to_string());
     }
-    args.push(allowed_tools().join(" "));
+    args.push(
+        request
+            .tools
+            .clone()
+            .unwrap_or_else(allowed_tools)
+            .join(" "),
+    );
     if !request.disallow.is_empty() {
         args.push("--disallowedTools".into());
         args.push(request.disallow.join(" "));
@@ -259,7 +322,7 @@ pub struct ToolOutput {
 
 impl ToolOutput {
     /// Tool errors arrive as plain text; real results are JSON objects.
-    fn failed(&self) -> bool {
+    pub(crate) fn failed(&self) -> bool {
         self.is_error || !self.text.trim_start().starts_with('{')
     }
 }
@@ -273,9 +336,14 @@ pub struct StreamData {
     pub turns: u32,
     pub is_error: bool,
     pub result_text: Option<String>,
+    /// Strict-call consumers use these to reject a run that made more than the one requested
+    /// call, repeated a call, or reached a connector that is not connected.
+    pub tool_use_count: usize,
+    pub duplicate_tool_use: bool,
+    pub connector_status: Option<String>,
 }
 
-fn content_text(content: &Value) -> String {
+pub(crate) fn content_text(content: &Value) -> String {
     match content {
         Value::String(text) => text.clone(),
         Value::Array(items) => items
@@ -342,6 +410,7 @@ pub fn parse_stream(stdout: &str, calls: &[ToolCall]) -> Result<StreamData, Clau
                     })
                     .and_then(|server| server.get("status").and_then(Value::as_str))
                     .map(str::to_string);
+                data.connector_status = connector.clone();
             }
             Some("assistant") => {
                 let blocks = event
@@ -369,7 +438,11 @@ pub fn parse_stream(stdout: &str, calls: &[ToolCall]) -> Result<StreamData, Clau
                         )));
                     };
                     let id = block.get("id").and_then(Value::as_str).unwrap_or_default();
+                    if uses.contains_key(id) {
+                        data.duplicate_tool_use = true;
+                    }
                     uses.insert(id.to_string(), index);
+                    data.tool_use_count += 1;
                 }
             }
             Some("user") => {
@@ -634,7 +707,7 @@ fn thread_marker(line: &str) -> Option<ThreadMarker> {
 }
 
 /// Splits a block's body into text and trailing metadata lines.
-fn body_and_marker(lines: &[&str]) -> (String, Option<ThreadMarker>) {
+pub(crate) fn body_and_marker(lines: &[&str]) -> (String, Option<ThreadMarker>) {
     let mut end = lines.len();
     while end > 0 && lines[end - 1].trim().is_empty() {
         end -= 1;
@@ -649,7 +722,7 @@ fn body_and_marker(lines: &[&str]) -> (String, Option<ThreadMarker>) {
     (lines[..end].join("\n").trim().to_string(), marker)
 }
 
-fn sender_from_header(header: &str) -> (String, String) {
+pub(crate) fn sender_from_header(header: &str) -> (String, String) {
     // `name <email> (U123)`; the name may be missing for bots.
     let id = id_in_parens(header).unwrap_or_default();
     let name = header
@@ -882,6 +955,8 @@ impl Session<'_> {
                     max_turns: 4,
                     disallow: disallow_list(self.store),
                     calls: batch.clone(),
+                    timeout: None,
+                    tools: None,
                 };
                 let stdout = self.runner.run(&request)?;
                 self.out.invocations += 1;
@@ -1503,6 +1578,8 @@ mod tests {
             prompt: "p".into(),
             max_turns: 3,
             disallow: vec!["mcp__local-mcp".into(), "Bash".into()],
+            timeout: None,
+            tools: None,
         };
         let args = cli_args(&request, &run_settings_json(&["a@b".to_string()]));
         let at = |flag: &str| {
@@ -1700,6 +1777,7 @@ mod tests {
                 "1790000200.000100",
                 &[(SELF, "1790000260.000100", "nice")],
             )),
+            Tool::ListChannels => None,
         })
     }
 

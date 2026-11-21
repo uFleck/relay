@@ -537,66 +537,6 @@ impl NewChange {
     }
 }
 
-/// A change as seen by one claim (or by a human when `claim_id` is `None`).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ChangeView {
-    pub change: TaskChange,
-    /// The scope the `acked` flag refers to. `None` is the human view.
-    pub claim_id: Option<String>,
-    /// Acked for `claim_id`; for a human view, acked by anyone.
-    pub acked: bool,
-    /// Acked by someone else but not for this claim. A new claimant re-acks.
-    pub acked_elsewhere: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AckResult {
-    pub change: ChangeView,
-    /// Still unacked for the same scope, so one response is enough.
-    pub unacked_changes: Vec<ChangeView>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct NewClaim {
-    pub task_id: String,
-    /// `agent`, `human` or `system`.
-    pub holder_kind: String,
-    pub holder_name: String,
-    pub thread_ref: Option<String>,
-    pub session_ref: Option<String>,
-}
-
-impl NewClaim {
-    pub fn new(task_id: &str, holder_kind: &str, holder_name: &str) -> Self {
-        Self {
-            task_id: task_id.to_string(),
-            holder_kind: holder_kind.to_string(),
-            holder_name: holder_name.to_string(),
-            thread_ref: None,
-            session_ref: None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ClaimView {
-    pub claim: Claim,
-    /// Active changes this claim has not acked. Empty on a fresh unclaimed task.
-    pub unacked_changes: Vec<ChangeView>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ProgressUpdate {
-    pub claim: Claim,
-    pub event: TaskEvent,
-    pub unacked_changes: Vec<ChangeView>,
-}
-
 /// Everything the task side sheet needs in one read.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -607,8 +547,6 @@ pub struct TaskDetail {
     pub links: Vec<TaskLink>,
     pub events: Vec<TaskEvent>,
     pub active_claim: Option<Claim>,
-    /// Scoped to the `claim_id` passed to `get_task_detail`; the human queue when `None`.
-    pub unacked_changes: Vec<ChangeView>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

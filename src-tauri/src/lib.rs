@@ -1,19 +1,28 @@
 //! Relay's Tauri shell: the main window, the hover window, tray, global hotkey, single instance, autostart and the
 //! local DB. The UI in both windows is owned by the frontend; this file only routes events to it.
 
-mod analyst;
 mod clickup_sync;
 mod commands;
+mod dispatch;
 mod github;
+mod grilling;
+mod grilling_mcp;
 mod hover;
-mod imports;
-mod mcp;
+mod live;
+mod note_import;
+mod opencode;
+mod progress;
+mod recovery;
 mod secrets;
+mod settings;
 mod slack;
+mod t3;
+mod t3_cli;
 
-use hover::HoverState;
+use hover::{DockRuntime, HoverState};
 use relay_core::model::NewProject;
 use relay_core::store::Store;
+use relay_core::v2::V2Store;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
@@ -33,7 +42,8 @@ const HOTKEY: &str = "ctrl+alt+r";
 /// Checks the Slack DMs now, without waiting for the socket. The tray has the same action.
 const SYNC_HOTKEY: &str = "ctrl+alt+s";
 
-/// Sent to the main window with a route (`/review`, `/settings`, `/today?task=<id>&focus=changes`) to navigate to.
+/// Sent to the main window with a v2 route (`/notebook`, `/tasks?task=<id>`,
+/// `/settings?provider=<key>`) to navigate to. Retired v1 routes land on Notebook.
 const OPEN_EVENT: &str = "relay://open";
 /// Sent to the main window to run a manual update check (`src/updater.ts`).
 const UPDATE_CHECK_EVENT: &str = "update://check";
@@ -129,7 +139,8 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let paused = CheckMenuItem::with_id(app, "pause", "Pause capture", true, false, None::<&str>)?;
     let dnd = CheckMenuItem::with_id(app, "dnd", "Do not disturb", true, false, None::<&str>)?;
     let sync = MenuItem::with_id(app, "sync", "Sync Slack now", true, None::<&str>)?;
-    let review = MenuItem::with_id(app, "review", "Review queue", true, None::<&str>)?;
+    let notebook = MenuItem::with_id(app, "notebook", "Notebook", true, None::<&str>)?;
+    let tasks = MenuItem::with_id(app, "tasks", "Tasks", true, None::<&str>)?;
     let settings = MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
     let updates = MenuItem::with_id(app, "updates", "Check for updates", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
@@ -142,7 +153,8 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             &dnd,
             &PredefinedMenuItem::separator(app)?,
             &sync,
-            &review,
+            &notebook,
+            &tasks,
             &settings,
             &updates,
             &PredefinedMenuItem::separator(app)?,
@@ -167,7 +179,8 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                 set_dnd_flag(app, !dnd);
             }
             "sync" => slack::sync_in_background(app.clone()),
-            "review" => open_route(app, "/review"),
+            "notebook" => open_route(app, "/notebook"),
+            "tasks" => open_route(app, "/tasks"),
             "settings" => open_route(app, "/settings"),
             "updates" => {
                 show_main(app);
@@ -201,7 +214,9 @@ fn register_hotkeys(app: &AppHandle) {
         .global_shortcut()
         .on_shortcut(HOTKEY, |app, _shortcut, event| {
             if event.state == ShortcutState::Pressed {
-                toggle_main(app);
+                // global-hotkey dispatches `Pressed` synchronously from WM_HOTKEY on the main
+                // thread, so the Dock can capture the foreground window and take focus here.
+                hover::summon(app);
             }
         });
     if let Err(err) = summon {
@@ -258,7 +273,11 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(HoverState::default())
-        .manage(mcp::McpState::default())
+        .manage(opencode::BriefingState::default())
+        .manage(grilling::GrillingState::default())
+        .manage(dispatch::DispatchGate::default())
+        .manage(progress::ProgressState::default())
+        .manage(DockRuntime::default())
         .invoke_handler(tauri::generate_handler![
             show_main_window,
             open_main,
@@ -266,7 +285,62 @@ pub fn run() {
             set_dnd,
             check_for_updates,
             commands::relay_snapshot,
-            commands::ack_change,
+            commands::v2_notebook_snapshot,
+            commands::v2_workspace_snapshot,
+            commands::v2_workspace_search,
+            commands::v2_composer_save,
+            commands::v2_reference_picker,
+            commands::v2_reference_parse,
+            live::v2_reference_search,
+            live::v2_reference_exact,
+            live::v2_reference_pick,
+            slack::directory::v2_slack_refresh,
+            slack::directory::v2_slack_search,
+            slack::window::v2_slack_window_start,
+            commands::v2_task_assign_project,
+            opencode::v2_briefing_view,
+            opencode::v2_briefing_generate,
+            opencode::v2_briefing_approve,
+            opencode::v2_briefing_rewrite,
+            opencode::v2_briefing_continue_link_only,
+            opencode::v2_briefing_retry,
+            grilling::v2_grilling_view,
+            grilling::v2_grilling_start,
+            grilling::v2_grilling_answer,
+            grilling::v2_grilling_retry,
+            grilling::v2_grilling_cancel,
+            grilling::v2_grilling_go,
+            grilling::v2_grilling_continue_link_only,
+            dispatch::v2_dispatch_view,
+            dispatch::v2_dispatch_retry,
+            dispatch::v2_dispatch_check,
+            dispatch::v2_dispatch_link,
+            dispatch::v2_dispatch_cancel,
+            progress::v2_t3_progress,
+            progress::v2_t3_refresh,
+            progress::v2_t3_send,
+            progress::v2_t3_check_again,
+            progress::v2_t3_resend,
+            progress::v2_t3_close,
+            settings::v2_provider_status,
+            settings::v2_provider_refresh,
+            settings::v2_github_set_token,
+            settings::v2_github_clear_token,
+            settings::v2_clickup_set_token,
+            settings::v2_clickup_clear_token,
+            settings::v2_clickup_workspaces,
+            settings::v2_clickup_spaces,
+            settings::v2_settings_update,
+            settings::v2_opencode_set_model,
+            settings::v2_opencode_set_key,
+            settings::v2_opencode_clear_key,
+            settings::v2_repos_scan,
+            settings::v2_repos_register,
+            settings::repos_scan,
+            settings::repos_import,
+            note_import::v2_import_now,
+            settings::v2_t3_set_target,
+            settings::v2_t3_check_target,
             commands::decide_proposal,
             commands::notes_list,
             commands::note_create,
@@ -275,8 +349,6 @@ pub fn run() {
             commands::note_delete,
             commands::note_to_task,
             commands::open_t3,
-            mcp::mcp_status,
-            mcp::mcp_token,
             slack::slack_status,
             slack::slack_sync_now,
             slack::slack_set_transport,
@@ -303,27 +375,33 @@ pub fn run() {
             github::sync_prs_now,
             github::project_git_state,
             github::project_set_repo,
-            imports::clickup_status,
-            imports::clickup_set_token,
-            imports::clickup_clear_token,
-            imports::clickup_import,
+            clickup_sync::clickup_status,
+            clickup_sync::clickup_set_token,
+            clickup_sync::clickup_clear_token,
             clickup_sync::clickup_workspaces,
             clickup_sync::clickup_spaces,
             clickup_sync::clickup_scope,
             clickup_sync::clickup_set_scope,
             clickup_sync::clickup_sync_now,
-            imports::github_import_issues,
-            imports::repos_scan,
-            imports::repos_import,
-            hover::hover_place,
-            hover::hover_drag,
-            hover::hover_pointer,
-            hover::hover_focus,
-            hover::hover_ready,
+            hover::dock_ready,
+            hover::dock_resize,
+            hover::dock_dismiss,
             hover::hover_set_pinned,
             hover::hover_state,
         ])
         .on_window_event(|window, event| {
+            if window.label() == hover::LABEL {
+                match event {
+                    // A native blur means the user clicked elsewhere: hide and keep their focus.
+                    WindowEvent::Focused(false) => hover::handle_blur(window.app_handle()),
+                    // Re-read the work area and scale before the page applies a new CSS height.
+                    WindowEvent::ScaleFactorChanged { .. } => {
+                        hover::handle_scale_change(window.app_handle());
+                    }
+                    _ => {}
+                }
+                return;
+            }
             if window.label() != MAIN {
                 return;
             }
@@ -332,12 +410,6 @@ pub fn run() {
                 WindowEvent::CloseRequested { api, .. } => {
                     api.prevent_close();
                     let _ = window.hide();
-                }
-                // Hiding the main window also blurs it, so this covers hide-to-tray as well.
-                WindowEvent::Focused(focused) => {
-                    window
-                        .state::<HoverState>()
-                        .set_main_focused(window.app_handle(), *focused);
                 }
                 _ => {}
             }
@@ -359,10 +431,30 @@ pub fn run() {
             }
             let store = Arc::new(store);
             app.manage(store.clone());
-            mcp::start(app.handle().clone(), store.clone(), &dir);
+            // v2 owns its own file and version. It has no credential dependency and
+            // never reopens or migrates the legacy database.
+            let v2_store = Arc::new(V2Store::open(dir.join("relay-v2.db"))?);
+            app.manage(v2_store);
+            // Offline status only: a provider probe never runs during startup.
+            settings::start(app.handle());
+            // Background Reference recovery runs against the v2 database and never touches the
+            // legacy store. It reads due rows first and releases SQLite before any network await.
+            recovery::start(app.handle().clone());
             slack::start(app.handle().clone(), store.clone());
             github::start(app.handle().clone());
-            clickup_sync::start(app.handle().clone());
+            // #34: an OpenCode attempt abandoned by a previous run becomes a manual Retry.
+            opencode::init(app.handle());
+            // #35: an interrupted Grilling turn is retryable without losing its transcript.
+            grilling::init(app.handle());
+            // #36: reconcile attempts left uncertain by a restart, then start ready Tasks.
+            dispatch::init(app.handle());
+            // #37: observe bound threads from the store; never replay a dispatch or a pending send.
+            progress::init(app.handle());
+            // One v2 service owns startup, scheduled and manual Import for both providers.
+            note_import::start(app.handle().clone());
+            // #33: a first setup or a directory older than seven days gets its metadata scan on a
+            // dedicated guard; thread reads, window reads and searches stay independent.
+            slack::directory::scan_if_due(app.handle());
 
             build_tray(app.handle())?;
             register_hotkeys(app.handle());

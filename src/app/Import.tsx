@@ -1,7 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import {
   clickupClearToken,
-  clickupImport,
   clickupScope,
   clickupSetScope,
   clickupSetToken,
@@ -10,17 +9,16 @@ import {
   clickupSyncNow,
   clickupWorkspaces,
   errorText,
-  githubImportIssues,
   inTauri,
   type ClickupSyncResult,
   type ImportCount,
 } from "../ipc";
 import type { Project } from "../types";
 import { Spinner, useLive } from "./Slack";
-import { Checkbox, Select } from "../ui/controls";
+import { Select } from "../ui/controls";
 
-/* ClickUp and GitHub Issues import: the Settings section for the ClickUp token and the per-project
-   panel on Projects. Imports are one-shot and link-only; errors stay inline. */
+/* Legacy ClickUp scope controls and the shared repo-import result renderer. Create-only Note
+   Import lives in the v2 Settings Import section; errors stay inline. */
 
 /* ── Settings → ClickUp ── */
 
@@ -252,92 +250,4 @@ export function useRun() {
     }
   }
   return { run, busy: run?.kind === "busy", start };
-}
-
-/** The Projects → Import tab: one ClickUp list or one GitHub repo's open issues into `project`. */
-export function ImportPanel({ project }: { project: Project }) {
-  const clickup = useLive(clickupStatus, []);
-  const [listId, setListId] = useState("");
-  const [includeClosed, setIncludeClosed] = useState(false);
-  const [owner, setOwner] = useState("");
-  const [repo, setRepo] = useState("");
-  const cu = useRun();
-  const gh = useRun();
-
-  if (!inTauri) {
-    return (
-      <div className="imp">
-        <p className="imp-note">Import runs in the desktop app. The browser preview has no ClickUp or GitHub connection.</p>
-      </div>
-    );
-  }
-
-  const noToken = clickup.data?.configured === false;
-  const importList = (e: FormEvent) => {
-    e.preventDefault();
-    void cu.start(() => clickupImport({ projectId: project.id, listId: listId.trim(), includeClosed }));
-  };
-  const importIssues = (e: FormEvent) => {
-    e.preventDefault();
-    void gh.start(() => githubImportIssues({ projectId: project.id, owner: owner.trim(), repo: repo.trim() }));
-  };
-
-  return (
-    <div className="imp">
-      <p className="imp-note">
-        Each imported task keeps a link to its source. Running an import again skips what already exists. Relay does not
-        mirror later changes in either direction.
-      </p>
-
-      <form className="imp-row" onSubmit={importList}>
-        <b>ClickUp</b>
-        <input
-          className="inp"
-          aria-label="ClickUp list id"
-          placeholder="List id"
-          spellCheck={false}
-          value={listId}
-          disabled={cu.busy}
-          onChange={(e) => setListId(e.target.value)}
-        />
-        <Checkbox checked={includeClosed} disabled={cu.busy} onChange={setIncludeClosed}>
-          Include closed
-        </Checkbox>
-        <button type="submit" className="btn pri" disabled={cu.busy || noToken || !listId.trim()}>
-          {cu.busy && <Spinner />}
-          {cu.busy ? "Importing…" : "Import list"}
-        </button>
-        <RunResult run={cu.run} />
-      </form>
-      {noToken && <p className="imp-note">Add a ClickUp token in Settings to import lists.</p>}
-      {clickup.error && <p className="imp-err">{clickup.error}</p>}
-
-      <form className="imp-row" onSubmit={importIssues}>
-        <b>GitHub</b>
-        <input
-          className="inp"
-          aria-label="GitHub owner"
-          placeholder="owner"
-          spellCheck={false}
-          value={owner}
-          disabled={gh.busy}
-          onChange={(e) => setOwner(e.target.value)}
-        />
-        <input
-          className="inp"
-          aria-label="GitHub repository"
-          placeholder="repo"
-          spellCheck={false}
-          value={repo}
-          disabled={gh.busy}
-          onChange={(e) => setRepo(e.target.value)}
-        />
-        <button type="submit" className="btn pri" disabled={gh.busy || !owner.trim() || !repo.trim()}>
-          {gh.busy && <Spinner />}
-          {gh.busy ? "Importing…" : "Import open issues"}
-        </button>
-        <RunResult run={gh.run} />
-      </form>
-    </div>
-  );
 }

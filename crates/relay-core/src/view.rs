@@ -733,9 +733,7 @@ fn link_kind(kind: &str) -> LinkKind {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{
-        ChangeKind, NewChange, NewClaim, NewLink, NewProject, NewTask, StatusCategory,
-    };
+    use crate::model::{ChangeKind, NewChange, NewLink, NewProject, NewTask, StatusCategory};
     use crate::store::Store;
 
     fn project_row(id: &str, name: &str) -> model::Project {
@@ -792,20 +790,11 @@ mod tests {
             })
             .unwrap();
 
-        let claim = store
-            .claim_task(NewClaim::new(&task.id, "agent", "opencode"))
-            .unwrap()
-            .claim;
-        store
-            .add_progress(&claim.id, "drafting rollback steps")
-            .unwrap();
-
         let mut requirement = NewChange::requirement(&task.id, "Put rollback first", "slack");
         requirement.source_id = Some("U123".to_string());
         requirement.confidence = Some(0.83);
         requirement.permalink = Some("https://slack.example/p1".to_string());
         let acked = store.add_change(requirement).unwrap();
-        store.ack_change(None, &acked.id).unwrap();
 
         let unacked = store
             .add_change(NewChange::requirement(
@@ -832,7 +821,7 @@ mod tests {
         assert!(snapshot.proposals.is_empty());
         assert!(snapshot.sync.is_empty());
         assert!(matches!(snapshot.update, UpdateState::Idle { .. }));
-        assert_eq!(snapshot.inbox_count, 1);
+        assert_eq!(snapshot.inbox_count, 2);
         assert!(snapshot.last_proposal_handled_at.is_none());
 
         let categories: Vec<Category> = snapshot.statuses.iter().map(|s| s.category).collect();
@@ -875,14 +864,6 @@ mod tests {
         assert_eq!(due.at, "2026-11-17T17:30:00.000Z");
         assert!(due.has_time);
 
-        let view_claim = view_task.claim.as_ref().unwrap();
-        assert_eq!(view_claim.id, claim.id);
-        assert_eq!(view_claim.holder, ClaimHolder::OpenCode);
-        assert_eq!(view_claim.lease_minutes, 30);
-        assert_eq!(view_claim.last_progress, "drafting rollback steps");
-        assert!(view_claim.last_progress_at >= view_claim.claimed_at);
-        assert!(view_claim.released_at.is_none());
-
         let change_ids: Vec<&str> = view_task
             .changes
             .iter()
@@ -909,8 +890,8 @@ mod tests {
         assert_eq!(requirement.text, "Put rollback first");
         assert_eq!(requirement.confidence, 0.83);
         assert_eq!(requirement.permalink, "https://slack.example/p1");
-        assert!(requirement.acked_at.is_some());
-        assert_eq!(requirement.acked_by.as_deref(), Some("you"));
+        assert!(requirement.acked_at.is_none());
+        assert!(requirement.acked_by.is_none());
 
         let field = view_task
             .changes

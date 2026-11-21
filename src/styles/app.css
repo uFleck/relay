@@ -1673,3 +1673,129 @@ h3.sub {
 .note-text:focus-visible {
   box-shadow: none;
 }
+
+/* ── v2 Settings ── */
+
+.settings-scroll {
+  padding-bottom: 32px;
+}
+.psec-intro {
+  margin: 0 20px 6px;
+  line-height: 1.5;
+}
+.psec-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 10px;
+  padding: 0 20px 8px;
+}
+.psec {
+  padding: 12px 14px 14px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--r-lg);
+  background: var(--bg-surface);
+  outline: none;
+}
+.psec:focus-visible {
+  border-color: var(--accent);
+  box-shadow: var(--ring);
+}
+.psec-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.psec-head h3 {
+  margin: 0;
+  font: 700 14px var(--font-ui);
+}
+.pst {
+  margin-left: auto;
+  padding: 2px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  font: 600 10.5px var(--font-mono);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+.pst-missingSetup { color: var(--warn); border-color: var(--warn); }
+.pst-configuredUnverified { color: var(--accent-text); border-color: var(--accent); }
+.pst-verified { color: var(--ok); border-color: var(--ok); }
+.pst-unavailable { color: var(--err); border-color: var(--err); }
+.psec-reason {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.mask {
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+}
+.pform {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+.pfield {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.pfield input {
+  width: 100%;
+  height: var(--ctl);
+  padding: 0 10px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--r);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  font: 400 13px var(--font-ui);
+}
+.pfield input:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: var(--ring);
+}
+.pactions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.perr,
+.pok {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.perr { color: var(--err); }
+.pok { color: var(--ok); }
+.pfolders {
+  margin: 0;
+  padding-left: 16px;
+}
+.pfolders li {
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.path {
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.import-form {
+  padding: 0 20px 8px;
+}
+.set-msg {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 20px 0;
+  padding: 8px 12px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--r);
+  color: var(--text-secondary);
+  font-size: 12px;
+}

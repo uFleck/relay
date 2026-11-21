@@ -1,0 +1,68 @@
+/* Observed T3 progress in the Task sheet (#37). Follows the shared panel and control tokens. */
+
+.t3-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line, rgba(127, 127, 127, 0.25));
+  border-radius: 10px;
+  background: var(--panel, rgba(127, 127, 127, 0.05));
+  font-size: 12px;
+}
+
+.t3-needs-answer,
+.t3-confirm-send,
+.t3-followup,
+.t3-close,
+.t3-dialog {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.t3-followup-input {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 88px;
+  padding: 8px;
+  border-radius: 8px;
+  border: 1px solid var(--line, rgba(127, 127, 127, 0.3));
+  background: var(--panel, transparent);
+  color: inherit;
+  font: inherit;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  resize: vertical;
+}
+
+.t3-reply-text {
+  margin: 0;
+  padding: 8px;
+  border-radius: 8px;
+  background: var(--panel, rgba(127, 127, 127, 0.05));
+  white-space: pre-wrap;
+  word-break: break-word;
+  font: inherit;
+}
+
+.t3-prs ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.t3-dialog {
+  position: relative;
+  margin-top: 6px;
+  padding: 12px;
+  border: 1px solid var(--line, rgba(127, 127, 127, 0.4));
+  border-radius: 10px;
+  background: var(--page, var(--panel, transparent));
+}
+
+.t3-dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}

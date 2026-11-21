@@ -8,6 +8,9 @@ use crate::git::{self, GitError};
 use crate::github::{FoundPull, PullRole};
 use crate::model::{NewLink, NewProject, NewTask, StatusCategory, now};
 use crate::store::{Store, StoreError};
+use crate::v2::{
+    GithubItemKind, ImportCandidate, ReferenceKey, ReferenceSnapshot, dedupe_candidates,
+};
 
 /// A GitHub repository. Case is kept for display; compare with [`GithubRepo::same_as`].
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -317,6 +320,63 @@ pub fn discover_pull_tasks(store: &Store, found: &[FoundPull]) -> Result<usize, 
     Ok(created)
 }
 
+/// Builds create-only Note Import candidates from the verified `search_my_pulls` read. Only
+/// registered v2 repos are included. Duplicate repo registrations and a PR that is both
+/// authored and review-requested collapse to one candidate by canonical key. The provider's
+/// exact title is kept for review requests; Import never rewrites it into a local task title.
+pub fn import_candidates(
+    found: &[FoundPull],
+    registered_repos: &[String],
+    cached_at: &str,
+) -> Vec<ImportCandidate> {
+    let allowed: HashSet<String> = registered_repos
+        .iter()
+        .map(|repo| repo.trim().to_ascii_lowercase())
+        .collect();
+    dedupe_candidates(
+        found
+            .iter()
+            .filter_map(|pull| {
+                let owner_repo =
+                    format!("{}/{}", pull.repo.owner, pull.repo.name).to_ascii_lowercase();
+                if !allowed.contains(&owner_repo) {
+                    return None;
+                }
+                let key = ReferenceKey::Github {
+                    owner_repo,
+                    number: pull.number,
+                    item: GithubItemKind::Pull,
+                };
+                let role = match pull.role {
+                    PullRole::Author => "authored",
+                    PullRole::ReviewRequested => "review requested",
+                };
+                let snapshot = ReferenceSnapshot::from_provider(
+                    &pull.title,
+                    "open",
+                    vec![format!("repo {}", key_repo(&key)), role.to_string()],
+                    cached_at,
+                );
+                Some(ImportCandidate {
+                    canonical_url: key.canonical_url(),
+                    key,
+                    source_kind: "github".to_string(),
+                    title: pull.title.clone(),
+                    snapshot_json: Some(snapshot.to_json()),
+                    account_id: None,
+                })
+            })
+            .collect(),
+    )
+}
+
+fn key_repo(key: &ReferenceKey) -> String {
+    match key {
+        ReferenceKey::Github { owner_repo, .. } => owner_repo.clone(),
+        _ => String::new(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -573,6 +633,25 @@ mod tests {
                 ("Pull 1", "umbler/bill#1", "p1"),
                 ("Review: Pull 2", "umbler/bill#2", "p1"),
             ]
+        );
+    }
+
+    #[test]
+    fn import_candidates_dedupe_roles_and_keep_the_exact_review_title() {
+        let registered = vec!["umbler/bill".to_string(), "UMBLER/BILL".to_string()];
+        let found = vec![
+            pull("umbler", "bill", 9, PullRole::ReviewRequested),
+            pull("umbler", "bill", 9, PullRole::Author),
+            pull("umbler", "other", 10, PullRole::Author),
+        ];
+        let candidates = import_candidates(&found, &registered, "2026-11-21T00:00:00.000Z");
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].title, "Pull 9");
+        assert_eq!(candidates[0].source_kind, "github");
+        assert_eq!(candidates[0].key.identity(), "github:umbler/bill#9");
+        assert_eq!(
+            candidates[0].canonical_url,
+            "https://github.com/umbler/bill/pull/9"
         );
     }
 

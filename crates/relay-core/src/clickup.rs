@@ -4,6 +4,8 @@
 
 use serde_json::Value;
 
+use crate::provider::ProviderFailure;
+
 pub const DEFAULT_BASE_URL: &str = "https://api.clickup.com/api/v2";
 const TIMEOUT_SECS: u64 = 20;
 
@@ -21,6 +23,18 @@ pub enum ClickUpError {
     MissingToken,
 }
 
+impl ClickUpError {
+    /// A safe typed outcome. 401 and a missing token are configuration failures; a 429 that
+    /// survived the single retry still carries no raw body into the UI.
+    pub fn failure(&self) -> ProviderFailure {
+        match self {
+            Self::Status { status, .. } => crate::provider::failure_from_status(*status, "", None),
+            Self::MissingToken => ProviderFailure::Configuration,
+            Self::Http(_) | Self::Missing(_) | Self::Json(_) => ProviderFailure::Unavailable,
+        }
+    }
+}
+
 /// One task as the import sees it. `due_date` is Unix milliseconds; `priority` is 1-4
 /// (1 urgent, 4 low).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -36,6 +50,12 @@ pub struct ClickUpTask {
     pub due_date: Option<i64>,
     pub priority: Option<i64>,
     pub url: Option<String>,
+    /// Provider update time as RFC 3339 UTC, when ClickUp supplied one. The Lens shows it as
+    /// the card's last update; it is never used as the snapshot's local fetch time.
+    pub date_updated: Option<String>,
+    /// Assignee ids from the exact card read, for #31's live-state resolver.
+    #[serde(default)]
+    pub assignee_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -97,6 +117,17 @@ impl ClickUpClient {
     /// A cheap authenticated call: the workspace's spaces.
     pub async fn check(&self) -> Result<(), ClickUpError> {
         self.get("/team").await.map(|_| ())
+    }
+
+    /// One exact card read in one request. `GET /task/{native_id}` returns the complete card,
+    /// so the picker never fans out a title search or chains an extra assignee call.
+    pub async fn task(&self, native_id: &str) -> Result<ClickUpTask, ClickUpError> {
+        let id = native_id.trim();
+        if id.is_empty() {
+            return Err(ClickUpError::Missing("task id"));
+        }
+        let value = self.get(&format!("/task/{}", encode_segment(id))).await?;
+        task_from(&value).ok_or(ClickUpError::Missing("task"))
     }
 
     /// The first page (up to 100) of a list's tasks.
@@ -297,6 +328,24 @@ fn task_from(value: &Value) -> Option<ClickUpTask> {
         due_date,
         priority,
         url: value.get("url").and_then(Value::as_str).map(str::to_string),
+        date_updated: value
+            .get("date_updated")
+            .and_then(|raw| match raw {
+                Value::String(text) => text.parse::<i64>().ok(),
+                Value::Number(number) => number.as_i64(),
+                _ => None,
+            })
+            .and_then(crate::model::from_unix_millis),
+        assignee_ids: value
+            .get("assignees")
+            .and_then(Value::as_array)
+            .map(|assignees| {
+                assignees
+                    .iter()
+                    .filter_map(|user| id_string(user.get("id")))
+                    .collect()
+            })
+            .unwrap_or_default(),
     })
 }
 
@@ -485,5 +534,65 @@ mod tests {
             ClickUpClient::new("  ".into()),
             Err(ClickUpError::MissingToken)
         ));
+    }
+
+    #[tokio::test]
+    async fn an_exact_card_read_is_one_request_with_assignees_and_update_time() {
+        use axum::extract::RawQuery;
+        let seen = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = seen.clone();
+        let app = Router::new().route(
+            "/task/8x1K2",
+            get(move |RawQuery(query): RawQuery| {
+                let counter = counter.clone();
+                async move {
+                    counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    assert!(query.is_none(), "the exact card read sends no query");
+                    Json(json!({
+                        "id": "8x1K2",
+                        "name": "Ship the RC",
+                        "status": {"status": "in progress", "type": "custom"},
+                        "list": {"name": "Sprint"},
+                        "date_updated": "1795000000000",
+                        "assignees": [
+                            {"id": 42, "username": "me"},
+                            {"id": "77", "username": "partner"}
+                        ],
+                        "url": "https://app.clickup.com/t/8x1K2"
+                    }))
+                }
+            }),
+        );
+        let client = serve(app).await;
+        let task = client.task("8x1K2").await.unwrap();
+        assert_eq!(task.id, "8x1K2");
+        assert_eq!(task.name, "Ship the RC");
+        assert_eq!(task.assignee_ids, vec!["42", "77"]);
+        assert!(task.date_updated.is_some());
+        assert_eq!(seen.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn a_rate_limited_card_read_maps_to_a_typed_failure() {
+        use axum::response::IntoResponse;
+        let app = Router::new().route(
+            "/task/rate",
+            get(|| async {
+                let mut response =
+                    (axum::http::StatusCode::TOO_MANY_REQUESTS, "slow down").into_response();
+                response
+                    .headers_mut()
+                    .insert("retry-after", "0".parse().unwrap());
+                response
+            }),
+        );
+        let client = serve(app).await;
+        let failure = client.task("rate").await.unwrap_err().failure();
+        assert_eq!(
+            failure,
+            crate::provider::ProviderFailure::RateLimited {
+                retry_after_ms: None
+            }
+        );
     }
 }

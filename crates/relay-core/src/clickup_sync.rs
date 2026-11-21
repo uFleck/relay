@@ -3,8 +3,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::clickup::ClickUpTask;
+use crate::clickup::{AssignedTasks, ClickUpTask};
 use crate::model::StatusCategory;
+use crate::v2::{ImportCandidate, ReferenceKey, ReferenceSnapshot, dedupe_candidates};
 
 /// Keyword groups, tried in order, matched against the start of each word of the
 /// normalized status name. Anything unmatched (todo, analyzing, open) is `Todo`.
@@ -130,6 +131,51 @@ pub fn reconcile(assigned: &[ClickUpTask], existing: &[LinkedTask], complete: bo
     plan
 }
 
+/// Builds create-only Note Import candidates from the verified `me → assigned_tasks` read.
+/// The workspace-wide query is already done by the caller, so a guest with no spaces still
+/// contributes cards. Pagination and truncation reporting stay with the provider read; a
+/// truncated page only limits what is offered now, it never archives or unassigns anything.
+/// Finished cards keep v1's scope and are not imported.
+pub fn import_candidates(
+    assigned: &AssignedTasks,
+    account_id: &str,
+    cached_at: &str,
+) -> Vec<ImportCandidate> {
+    dedupe_candidates(
+        assigned
+            .tasks
+            .iter()
+            .filter(|card| card_category(card) != StatusCategory::Done)
+            .map(|card| {
+                let key = ReferenceKey::Clickup {
+                    id: card.id.clone(),
+                };
+                let state = card.status.clone().unwrap_or_else(|| "open".to_string());
+                let mut metadata = Vec::new();
+                if let Some(list) = &card.list_name {
+                    metadata.push(format!("list {list}"));
+                }
+                if let Some(assignee) = card.assignee_ids.first() {
+                    metadata.push(format!("assignee {assignee}"));
+                }
+                if let Some(updated) = &card.date_updated {
+                    metadata.push(format!("updated {updated}"));
+                }
+                let snapshot =
+                    ReferenceSnapshot::from_provider(&card.name, &state, metadata, cached_at);
+                ImportCandidate {
+                    canonical_url: card.url.clone().unwrap_or_else(|| key.canonical_url()),
+                    key,
+                    source_kind: "clickup".to_string(),
+                    title: card.name.clone(),
+                    snapshot_json: Some(snapshot.to_json()),
+                    account_id: Some(account_id.to_string()),
+                }
+            })
+            .collect(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -145,6 +191,8 @@ mod tests {
             due_date: None,
             priority: None,
             url: None,
+            date_updated: None,
+            assignee_ids: Vec::new(),
         }
     }
 
@@ -246,5 +294,20 @@ mod tests {
     fn a_truncated_list_archives_nothing() {
         let plan = reconcile(&[card("1", "doing")], &[linked("9", "doing")], false);
         assert!(plan.archive.is_empty());
+    }
+
+    #[test]
+    fn import_candidates_keep_exact_titles_and_skip_finished_cards() {
+        let mut titled = card("1", "doing");
+        titled.name = "! Ship the RC".into();
+        let assigned = AssignedTasks {
+            tasks: vec![titled, card("2", "done")],
+            truncated: true,
+        };
+        let candidates = import_candidates(&assigned, "42", "2026-11-21T00:00:00.000Z");
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].title, "! Ship the RC");
+        assert_eq!(candidates[0].account_id.as_deref(), Some("42"));
+        assert_eq!(candidates[0].key.identity(), "clickup:1");
     }
 }

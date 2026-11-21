@@ -24,12 +24,11 @@ use rusqlite::{
 };
 
 use crate::model::{
-    self, AckResult, AnalysisJob, ChangeKind, ChangeState, ChangeView, Claim, ClaimView,
-    EpisodeDetail, EpisodeSummary, JobOp, NewChange, NewClaim, NewEvent, NewJob, NewLink,
-    NewProject, NewProposal, NewTask, ProgressUpdate, Project, ProjectStatus, ProjectWithStatuses,
-    Proposal, ProposalDecision, ProposalView, RawSlackMessage, Setting, SlackEpisode, SlackMessage,
-    SlackPeer, StatusCategory, SyncCursor, Task, TaskChange, TaskDetail, TaskEvent, TaskFilter,
-    TaskLink, TaskPatch, new_id, now, now_plus_minutes,
+    self, AnalysisJob, ChangeKind, ChangeState, Claim, EpisodeDetail, EpisodeSummary, JobOp,
+    NewChange, NewEvent, NewJob, NewLink, NewProject, NewProposal, NewTask, Project, ProjectStatus,
+    ProjectWithStatuses, Proposal, ProposalDecision, ProposalView, RawSlackMessage, Setting,
+    SlackEpisode, SlackMessage, SlackPeer, StatusCategory, SyncCursor, Task, TaskChange,
+    TaskDetail, TaskEvent, TaskFilter, TaskLink, TaskPatch, new_id, now, now_plus_minutes,
 };
 use crate::view;
 
@@ -711,13 +710,8 @@ impl Store {
         Ok(task)
     }
 
-    /// Task plus status, timeline, links, events, active claim and the unacked changes
-    /// for `claim_id` (the human queue when `None`).
-    pub fn get_task_detail(
-        &self,
-        id: &str,
-        claim_id: Option<&str>,
-    ) -> Result<TaskDetail, StoreError> {
+    /// Task plus status, timeline, links, events and active claim in one read.
+    pub fn get_task_detail(&self, id: &str) -> Result<TaskDetail, StoreError> {
         let conn = self.conn();
         let task = task_by_id(&conn, id)?;
         let status = status_by_id(&conn, &task.status_id)?;
@@ -725,19 +719,6 @@ impl Store {
         let links = links_for_task(&conn, id)?;
         let events = events_for_task(&conn, id)?;
         let active_claim = active_claim_for_task(&conn, id, &now())?;
-        let unacked_changes = match claim_id {
-            Some(claim_id) => {
-                let claim = claim_by_id(&conn, claim_id)?;
-                if claim.task_id != task.id {
-                    return Err(StoreError::ClaimTaskMismatch {
-                        claim_id: claim_id.to_string(),
-                        task_id: task.id.clone(),
-                    });
-                }
-                unacked_for_claim(&conn, &claim)?
-            }
-            None => unacked_for_human(&conn, id)?,
-        };
         Ok(TaskDetail {
             task,
             status,
@@ -745,7 +726,6 @@ impl Store {
             links,
             events,
             active_claim,
-            unacked_changes,
         })
     }
 
@@ -954,359 +934,6 @@ impl Store {
         let updated = change_by_id(&tx, old_id)?;
         tx.commit()?;
         Ok(updated)
-    }
-
-    /// Acknowledges a change for one claim, or for a human when `claim_id` is `None`.
-    /// A claimant ack requires a live claim that owns the change's task and extends its
-    /// lease. Human acks are deliberately a separate scope: they never clear an agent's
-    /// queue, and a new claimant never inherits the previous claimant's acks.
-    pub fn ack_change(
-        &self,
-        claim_id: Option<&str>,
-        change_id: &str,
-    ) -> Result<AckResult, StoreError> {
-        let mut conn = self.conn();
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let change = change_by_id(&tx, change_id)?;
-
-        let claim = match claim_id {
-            Some(claim_id) => {
-                let claim = claim_by_id(&tx, claim_id)?;
-                if claim.task_id != change.task_id {
-                    return Err(StoreError::ClaimTaskMismatch {
-                        claim_id: claim_id.to_string(),
-                        task_id: change.task_id.clone(),
-                    });
-                }
-                ensure_claim_active(&claim)?;
-                Some(extend_claim(&tx, &claim)?)
-            }
-            None => None,
-        };
-
-        let at = now();
-        let recorded = tx.execute(
-            "INSERT OR IGNORE INTO change_acks (change_id, claim_id, acked_at)
-             VALUES (?1, ?2, ?3)",
-            params![change.id, claim.as_ref().map(|claim| claim.id.as_str()), at],
-        )?;
-        // First ack of any kind is the timeline's "acknowledged at".
-        tx.execute(
-            "UPDATE task_changes SET acked_at = COALESCE(acked_at, ?1) WHERE id = ?2",
-            params![at, change.id],
-        )?;
-        if recorded > 0 {
-            insert_event(
-                &tx,
-                &change.task_id,
-                "change_acked",
-                claim.as_ref().map(|claim| claim.holder_name.as_str()),
-                claim.as_ref().map(|claim| claim.holder_kind.as_str()),
-                Some(&format!("acknowledged {}", change.kind)),
-                &serde_json::json!({
-                    "changeId": change.id,
-                    "claimId": claim.as_ref().map(|claim| claim.id.as_str()),
-                }),
-            )?;
-        }
-
-        let change = change_by_id(&tx, change_id)?;
-        let unacked = match &claim {
-            Some(claim) => unacked_for_claim(&tx, claim)?,
-            None => unacked_for_human(&tx, &change.task_id)?,
-        };
-        let scope_claim_id = claim.map(|claim| claim.id);
-        tx.commit()?;
-
-        Ok(AckResult {
-            change: ChangeView {
-                change,
-                claim_id: scope_claim_id,
-                acked: true,
-                acked_elsewhere: false,
-            },
-            unacked_changes: unacked,
-        })
-    }
-
-    /// Active changes this claim has not acked. Reads work for a released claim too.
-    pub fn unacked_changes(&self, claim_id: &str) -> Result<Vec<ChangeView>, StoreError> {
-        let conn = self.conn();
-        let claim = claim_by_id(&conn, claim_id)?;
-        unacked_for_claim(&conn, &claim)
-    }
-
-    // -----------------------------------------------------------------------
-    // Claims
-    // -----------------------------------------------------------------------
-
-    /// Compare-and-set claim with `BEGIN IMMEDIATE`. An active, unexpired claim wins and
-    /// is returned as the conflict holder. Expired unreleased claims are closed as
-    /// `expired` in the same transaction before the new claim is inserted.
-    pub fn claim_task(&self, new: NewClaim) -> Result<ClaimView, StoreError> {
-        let NewClaim {
-            task_id,
-            holder_kind,
-            holder_name,
-            thread_ref,
-            session_ref,
-        } = new;
-
-        let holder_kind = holder_kind.trim();
-        let holder_name = holder_name.trim();
-        if holder_kind.is_empty() {
-            return Err(StoreError::InvalidInput(
-                "claim holder_kind is required".into(),
-            ));
-        }
-        if holder_name.is_empty() {
-            return Err(StoreError::InvalidInput(
-                "claim holder_name is required".into(),
-            ));
-        }
-
-        let mut conn = self.conn();
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let task = task_by_id(&tx, &task_id)?;
-        if task.archived {
-            return Err(StoreError::InvalidInput(format!(
-                "task {task_id} is archived"
-            )));
-        }
-
-        let at = now();
-        if let Some(holder) = active_claim_for_task(&tx, &task.id, &at)? {
-            return Err(StoreError::ClaimConflict {
-                task_id: task.id,
-                holder: Box::new(holder),
-            });
-        }
-
-        for stale in expired_claims_for_task(&tx, &task.id, &at)? {
-            tx.execute(
-                "UPDATE claims SET released_at = ?1, outcome = 'expired' WHERE id = ?2",
-                params![at, stale.id],
-            )?;
-            insert_event(
-                &tx,
-                &stale.task_id,
-                "claim_expired",
-                Some(stale.holder_name.as_str()),
-                Some(stale.holder_kind.as_str()),
-                None,
-                &serde_json::json!({"claimId": stale.id}),
-            )?;
-        }
-
-        let claim = Claim {
-            id: new_id(),
-            task_id: task.id.clone(),
-            holder_kind: holder_kind.to_string(),
-            holder_name: holder_name.to_string(),
-            thread_ref: none_if_blank(thread_ref),
-            session_ref: none_if_blank(session_ref),
-            lease_expires_at: now_plus_minutes(CLAIM_LEASE_MINUTES),
-            released_at: None,
-            outcome: None,
-            created_at: at,
-        };
-        tx.execute(
-            "INSERT INTO claims
-                 (id, task_id, holder_kind, holder_name, thread_ref, session_ref,
-                  lease_expires_at, released_at, outcome, created_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-            params![
-                claim.id,
-                claim.task_id,
-                claim.holder_kind,
-                claim.holder_name,
-                claim.thread_ref,
-                claim.session_ref,
-                claim.lease_expires_at,
-                claim.released_at,
-                claim.outcome,
-                claim.created_at,
-            ],
-        )?;
-        insert_event(
-            &tx,
-            &claim.task_id,
-            "claimed",
-            Some(claim.holder_name.as_str()),
-            Some(claim.holder_kind.as_str()),
-            None,
-            &serde_json::json!({
-                "claimId": claim.id,
-                "threadRef": claim.thread_ref,
-                "sessionRef": claim.session_ref,
-                "leaseExpiresAt": claim.lease_expires_at,
-            }),
-        )?;
-
-        let unacked_changes = unacked_for_claim(&tx, &claim)?;
-        tx.commit()?;
-        Ok(ClaimView {
-            claim,
-            unacked_changes,
-        })
-    }
-
-    pub fn get_claim(&self, claim_id: &str) -> Result<Claim, StoreError> {
-        let conn = self.conn();
-        claim_by_id(&conn, claim_id)
-    }
-
-    /// Extends a live claim's lease by another 30 minutes. A released or expired claim
-    /// cannot heartbeat.
-    pub fn heartbeat(&self, claim_id: &str) -> Result<Claim, StoreError> {
-        let conn = self.conn();
-        let claim = claim_by_id(&conn, claim_id)?;
-        ensure_claim_active(&claim)?;
-        let lease_expires_at = now_plus_minutes(CLAIM_LEASE_MINUTES);
-        conn.execute(
-            "UPDATE claims SET lease_expires_at = ?1 WHERE id = ?2",
-            params![lease_expires_at, claim.id],
-        )?;
-        Ok(Claim {
-            lease_expires_at,
-            ..claim
-        })
-    }
-
-    /// Releases a claim as `blocked` or `abandoned`. Idempotent once released.
-    pub fn release_claim(&self, claim_id: &str, outcome: &str) -> Result<Claim, StoreError> {
-        let outcome = outcome.trim();
-        if !matches!(outcome, "blocked" | "abandoned") {
-            return Err(StoreError::InvalidInput(format!(
-                "release outcome must be `blocked` or `abandoned`, got `{outcome}`"
-            )));
-        }
-
-        let mut conn = self.conn();
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let claim = claim_by_id(&tx, claim_id)?;
-        if claim.released_at.is_some() {
-            // Only a replay of the same release is a no-op; a claim released as
-            // `completed` must not be silently re-released as `blocked`.
-            if claim.outcome.as_deref() == Some(outcome) {
-                tx.commit()?;
-                return Ok(claim);
-            }
-            return Err(StoreError::ClaimReleased(claim.id));
-        }
-
-        let at = now();
-        tx.execute(
-            "UPDATE claims SET released_at = ?1, outcome = ?2 WHERE id = ?3",
-            params![at, outcome, claim.id],
-        )?;
-        insert_event(
-            &tx,
-            &claim.task_id,
-            "released",
-            Some(claim.holder_name.as_str()),
-            Some(claim.holder_kind.as_str()),
-            Some(outcome),
-            &serde_json::json!({"claimId": claim.id, "outcome": outcome}),
-        )?;
-        tx.commit()?;
-        Ok(Claim {
-            released_at: Some(at),
-            outcome: Some(outcome.to_string()),
-            ..claim
-        })
-    }
-
-    /// Moves the task to the project's `review` status (never `done`), stamps
-    /// `completed_at`, releases the claim as `completed` and writes a `completed` event.
-    /// Replaying completion for the same claim is idempotent.
-    pub fn complete_task(&self, claim_id: &str, summary: &str) -> Result<Task, StoreError> {
-        let mut conn = self.conn();
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let claim = claim_by_id(&tx, claim_id)?;
-
-        if claim.released_at.is_some() {
-            if claim.outcome.as_deref() == Some("completed") {
-                let task = task_by_id(&tx, &claim.task_id)?;
-                tx.commit()?;
-                return Ok(task);
-            }
-            return Err(StoreError::ClaimReleased(claim.id));
-        }
-        ensure_claim_active(&claim)?;
-
-        let task = task_by_id(&tx, &claim.task_id)?;
-        let review = review_status_for_project(&tx, &task.project_id)?.ok_or_else(|| {
-            StoreError::InvalidInput(format!("project {} has no review status", task.project_id))
-        })?;
-        let at = now();
-        tx.execute(
-            "UPDATE tasks
-             SET status_id = ?1, rev = rev + 1, updated_at = ?2, completed_at = ?2
-             WHERE id = ?3",
-            params![review.id, at, task.id],
-        )?;
-        let body = summary.trim();
-        insert_event(
-            &tx,
-            &task.id,
-            "completed",
-            Some(claim.holder_name.as_str()),
-            Some(claim.holder_kind.as_str()),
-            if body.is_empty() { None } else { Some(body) },
-            &serde_json::json!({
-                "claimId": claim.id,
-                "statusId": review.id,
-                "outcome": "completed",
-            }),
-        )?;
-        tx.execute(
-            "UPDATE claims SET released_at = ?1, outcome = 'completed' WHERE id = ?2",
-            params![at, claim.id],
-        )?;
-        let completed = task_by_id(&tx, &task.id)?;
-        tx.commit()?;
-        Ok(completed)
-    }
-
-    /// Appends a `progress` event, extends the lease and returns the claim's remaining
-    /// unacked changes. This is the reliable notification path for a working agent.
-    pub fn add_progress(&self, claim_id: &str, note: &str) -> Result<ProgressUpdate, StoreError> {
-        let note = note.trim();
-        if note.is_empty() {
-            return Err(StoreError::InvalidInput("progress note is required".into()));
-        }
-
-        let mut conn = self.conn();
-        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        let claim = claim_by_id(&tx, claim_id)?;
-        ensure_claim_active(&claim)?;
-
-        let lease_expires_at = now_plus_minutes(CLAIM_LEASE_MINUTES);
-        tx.execute(
-            "UPDATE claims SET lease_expires_at = ?1 WHERE id = ?2",
-            params![lease_expires_at, claim.id],
-        )?;
-        let event = insert_event(
-            &tx,
-            &claim.task_id,
-            "progress",
-            Some(claim.holder_name.as_str()),
-            Some(claim.holder_kind.as_str()),
-            Some(note),
-            &serde_json::json!({"claimId": claim.id, "leaseExpiresAt": lease_expires_at}),
-        )?;
-        let claim = Claim {
-            lease_expires_at,
-            ..claim
-        };
-        let unacked_changes = unacked_for_claim(&tx, &claim)?;
-        tx.commit()?;
-        Ok(ProgressUpdate {
-            claim,
-            event,
-            unacked_changes,
-        })
     }
 
     // -----------------------------------------------------------------------
@@ -3183,24 +2810,6 @@ fn statuses_by_project(
     Ok(statuses)
 }
 
-fn review_status_for_project(
-    conn: &Connection,
-    project_id: &str,
-) -> Result<Option<ProjectStatus>, StoreError> {
-    let status = conn
-        .query_row(
-            &format!(
-                "SELECT {STATUS_COLUMNS} FROM project_statuses
-                 WHERE project_id = ?1 AND category = 'review'
-                 ORDER BY position, name LIMIT 1"
-            ),
-            params![project_id],
-            status_from_row,
-        )
-        .optional()?;
-    Ok(status)
-}
-
 fn task_by_id(conn: &Connection, id: &str) -> Result<Task, StoreError> {
     conn.query_row(
         &format!("SELECT {TASK_COLUMNS} FROM tasks WHERE id = ?1"),
@@ -3300,24 +2909,6 @@ fn active_claim_for_task(
     Ok(claim)
 }
 
-fn expired_claims_for_task(
-    conn: &Connection,
-    task_id: &str,
-    at: &str,
-) -> Result<Vec<Claim>, StoreError> {
-    let mut stmt = conn.prepare(&format!(
-        "SELECT {CLAIM_COLUMNS} FROM claims
-         WHERE task_id = ?1 AND released_at IS NULL AND lease_expires_at <= ?2
-         ORDER BY created_at, rowid"
-    ))?;
-    let rows = stmt.query_map(params![task_id, at], claim_from_row)?;
-    let mut claims = Vec::new();
-    for row in rows {
-        claims.push(row?);
-    }
-    Ok(claims)
-}
-
 fn ensure_claim_active(claim: &Claim) -> Result<(), StoreError> {
     if claim.released_at.is_some() {
         return Err(StoreError::ClaimReleased(claim.id.clone()));
@@ -3339,67 +2930,6 @@ fn extend_claim(conn: &Connection, claim: &Claim) -> Result<Claim, StoreError> {
         lease_expires_at,
         ..claim.clone()
     })
-}
-
-fn unacked_for_claim(conn: &Connection, claim: &Claim) -> Result<Vec<ChangeView>, StoreError> {
-    let mut stmt = conn.prepare(
-        "SELECT c.id, c.task_id, c.claim_id, c.kind, c.body, c.excerpt, c.permalink,
-                c.source_kind, c.source_id, c.confidence, c.state, c.created_at,
-                c.acked_at, c.superseded_by,
-                EXISTS (
-                    SELECT 1 FROM change_acks other
-                    WHERE other.change_id = c.id
-                      AND (other.claim_id IS NULL OR other.claim_id <> ?2)
-                ) AS acked_elsewhere
-         FROM task_changes c
-         WHERE c.task_id = ?1 AND c.state = 'active'
-           AND NOT EXISTS (
-               SELECT 1 FROM change_acks mine
-               WHERE mine.change_id = c.id AND mine.claim_id = ?2
-           )
-         ORDER BY c.created_at, c.rowid",
-    )?;
-    let rows = stmt.query_map(params![claim.task_id, claim.id], |row| {
-        Ok(ChangeView {
-            change: change_from_row(row)?,
-            claim_id: Some(claim.id.clone()),
-            acked: false,
-            acked_elsewhere: row.get("acked_elsewhere")?,
-        })
-    })?;
-    let mut changes = Vec::new();
-    for row in rows {
-        changes.push(row?);
-    }
-    Ok(changes)
-}
-
-/// The human queue: active changes nobody has acked yet.
-fn unacked_for_human(conn: &Connection, task_id: &str) -> Result<Vec<ChangeView>, StoreError> {
-    let mut stmt = conn.prepare(
-        "SELECT c.id, c.task_id, c.claim_id, c.kind, c.body, c.excerpt, c.permalink,
-                c.source_kind, c.source_id, c.confidence, c.state, c.created_at,
-                c.acked_at, c.superseded_by, 0 AS acked_elsewhere
-         FROM task_changes c
-         WHERE c.task_id = ?1 AND c.state = 'active'
-           AND NOT EXISTS (
-               SELECT 1 FROM change_acks any_ack WHERE any_ack.change_id = c.id
-           )
-         ORDER BY c.created_at, c.rowid",
-    )?;
-    let rows = stmt.query_map(params![task_id], |row| {
-        Ok(ChangeView {
-            change: change_from_row(row)?,
-            claim_id: None,
-            acked: false,
-            acked_elsewhere: row.get("acked_elsewhere")?,
-        })
-    })?;
-    let mut changes = Vec::new();
-    for row in rows {
-        changes.push(row?);
-    }
-    Ok(changes)
 }
 
 fn insert_event(
@@ -3726,17 +3256,6 @@ mod tests {
             .create_task(NewTask::new(&project.id, title))
             .expect("task is created")
     }
-
-    fn expire_claim(store: &Store, claim_id: &str) {
-        store
-            .conn()
-            .execute(
-                "UPDATE claims SET lease_expires_at = ?1 WHERE id = ?2",
-                params!["2000-01-01T00:00:00.000Z", claim_id],
-            )
-            .unwrap();
-    }
-
     /// A unique file database under the temp directory, removed with its WAL files.
     struct TempDatabase {
         path: PathBuf,
@@ -3815,7 +3334,7 @@ mod tests {
         assert_eq!(task.metadata_json, "{}");
         assert_eq!(store.get_task(&task.id).unwrap(), task);
 
-        let detail = store.get_task_detail(&task.id, None).unwrap();
+        let detail = store.get_task_detail(&task.id).unwrap();
         assert_eq!(detail.task, task);
         assert_eq!(detail.status.category, StatusCategory::Todo);
         assert!(detail.events.iter().any(|event| event.kind == "created"));
@@ -3848,197 +3367,10 @@ mod tests {
         ));
         assert_eq!(store.get_task(&task.id).unwrap().notes, task.notes);
 
-        let detail = store.get_task_detail(&task.id, None).unwrap();
+        let detail = store.get_task_detail(&task.id).unwrap();
         assert_eq!(detail.task.rev, 2);
         assert!(detail.events.iter().any(|event| event.kind == "updated"));
     }
-
-    #[test]
-    fn second_claim_is_rejected_with_the_holder() {
-        let (store, project, _statuses) = store_with_project();
-        let task = create_task(&store, &project, "Claim me");
-
-        let first = store
-            .claim_task(NewClaim::new(&task.id, "agent", "T3 Code"))
-            .unwrap();
-        assert_eq!(first.claim.task_id, task.id);
-        assert!(first.claim.released_at.is_none());
-        assert!(first.unacked_changes.is_empty());
-
-        let error = store
-            .claim_task(NewClaim::new(&task.id, "agent", "OpenCode"))
-            .unwrap_err();
-        match error {
-            StoreError::ClaimConflict { holder, .. } => {
-                assert_eq!(holder.id, first.claim.id);
-                assert_eq!(holder.holder_name, "T3 Code");
-            }
-            other => panic!("expected a claim conflict, got {other:?}"),
-        }
-
-        // A claim from another task cannot read this task's detail or ack its changes.
-        let other_task = create_task(&store, &project, "Another task");
-        let other_claim = store
-            .claim_task(NewClaim::new(&other_task.id, "agent", "OpenCode"))
-            .unwrap();
-        let error = store
-            .get_task_detail(&task.id, Some(&other_claim.claim.id))
-            .unwrap_err();
-        assert!(matches!(error, StoreError::ClaimTaskMismatch { .. }));
-    }
-
-    #[test]
-    fn expired_lease_can_be_reclaimed() {
-        let (store, project, _statuses) = store_with_project();
-        let task = create_task(&store, &project, "Reclaim me");
-
-        let first = store
-            .claim_task(NewClaim::new(&task.id, "agent", "T3 Code"))
-            .unwrap();
-        expire_claim(&store, &first.claim.id);
-
-        let error = store.heartbeat(&first.claim.id).unwrap_err();
-        assert!(matches!(error, StoreError::ClaimExpired(_)));
-
-        let mut late = NewChange::requirement(&task.id, "Late requirement", "slack");
-        late.claim_id = Some(first.claim.id.clone());
-        let error = store.add_change(late).unwrap_err();
-        assert!(
-            matches!(error, StoreError::ClaimExpired(_)),
-            "an expired claim cannot write"
-        );
-
-        let second = store
-            .claim_task(NewClaim::new(&task.id, "agent", "OpenCode"))
-            .unwrap();
-        assert_ne!(second.claim.id, first.claim.id);
-
-        let expired = store.get_claim(&first.claim.id).unwrap();
-        assert!(expired.released_at.is_some());
-        assert_eq!(expired.outcome.as_deref(), Some("expired"));
-
-        let error = store.add_progress(&first.claim.id, "too late").unwrap_err();
-        assert!(matches!(error, StoreError::ClaimReleased(_)));
-
-        // The new claim is the active one.
-        let detail = store.get_task_detail(&task.id, None).unwrap();
-        assert_eq!(detail.active_claim.unwrap().id, second.claim.id);
-    }
-
-    #[test]
-    fn acks_are_isolated_between_claims() {
-        let (store, project, _statuses) = store_with_project();
-        let task = create_task(&store, &project, "Ack me");
-
-        let first = store
-            .claim_task(NewClaim::new(&task.id, "agent", "T3 Code"))
-            .unwrap();
-        let change = store
-            .add_change(NewChange::requirement(
-                &task.id,
-                "Also the RC build",
-                "slack",
-            ))
-            .unwrap();
-
-        let unacked = store.unacked_changes(&first.claim.id).unwrap();
-        assert_eq!(unacked.len(), 1);
-        assert_eq!(unacked[0].change.id, change.id);
-        assert!(!unacked[0].acked);
-
-        let detail = store
-            .get_task_detail(&task.id, Some(&first.claim.id))
-            .unwrap();
-        assert_eq!(detail.active_claim.as_ref().unwrap().id, first.claim.id);
-        assert_eq!(detail.unacked_changes.len(), 1);
-
-        let acked = store.ack_change(Some(&first.claim.id), &change.id).unwrap();
-        assert!(acked.change.acked);
-        assert!(acked.unacked_changes.is_empty());
-        assert!(store.unacked_changes(&first.claim.id).unwrap().is_empty());
-
-        store.release_claim(&first.claim.id, "blocked").unwrap();
-        let second = store
-            .claim_task(NewClaim::new(&task.id, "agent", "OpenCode"))
-            .unwrap();
-        let unacked = store.unacked_changes(&second.claim.id).unwrap();
-        assert_eq!(unacked.len(), 1, "a new claimant does not inherit acks");
-        assert!(unacked[0].acked_elsewhere);
-
-        // A human ack is its own scope: it clears the human queue but not the agent's.
-        let human = store.ack_change(None, &change.id).unwrap();
-        assert!(human.unacked_changes.is_empty());
-        // Replaying the human ack is a no-op, not a unique-index error.
-        assert!(
-            store
-                .ack_change(None, &change.id)
-                .unwrap()
-                .unacked_changes
-                .is_empty()
-        );
-        assert!(
-            store
-                .get_task_detail(&task.id, None)
-                .unwrap()
-                .unacked_changes
-                .is_empty()
-        );
-        assert_eq!(store.unacked_changes(&second.claim.id).unwrap().len(), 1);
-
-        let acked = store
-            .ack_change(Some(&second.claim.id), &change.id)
-            .unwrap();
-        assert!(acked.unacked_changes.is_empty());
-        assert!(store.unacked_changes(&second.claim.id).unwrap().is_empty());
-    }
-
-    #[test]
-    fn complete_moves_to_review_and_releases_the_claim() {
-        let (store, project, statuses) = store_with_project();
-        let task = create_task(&store, &project, "Finish me");
-        let claim = store
-            .claim_task(NewClaim::new(&task.id, "agent", "T3 Code"))
-            .unwrap();
-
-        let completed = store
-            .complete_task(&claim.claim.id, "Opened the PR")
-            .unwrap();
-        assert_eq!(
-            completed.status_id,
-            status(&statuses, StatusCategory::Review).id
-        );
-        assert_eq!(completed.rev, 2);
-        assert!(completed.completed_at.is_some());
-
-        let stored = store.get_claim(&claim.claim.id).unwrap();
-        assert_eq!(stored.outcome.as_deref(), Some("completed"));
-        assert!(stored.released_at.is_some());
-
-        let detail = store.get_task_detail(&task.id, None).unwrap();
-        assert!(detail.active_claim.is_none());
-        let completed_events: Vec<&TaskEvent> = detail
-            .events
-            .iter()
-            .filter(|event| event.kind == "completed")
-            .collect();
-        assert_eq!(completed_events.len(), 1);
-        assert_eq!(completed_events[0].body.as_deref(), Some("Opened the PR"));
-
-        // Replaying completion is harmless; other writes on a released claim are not.
-        let replayed = store
-            .complete_task(&claim.claim.id, "Opened the PR")
-            .unwrap();
-        assert_eq!(replayed.rev, 2);
-        let error = store
-            .add_progress(&claim.claim.id, "still here")
-            .unwrap_err();
-        assert!(matches!(error, StoreError::ClaimReleased(_)));
-        let error = store
-            .release_claim(&claim.claim.id, "abandoned")
-            .unwrap_err();
-        assert!(matches!(error, StoreError::ClaimReleased(_)));
-    }
-
     #[test]
     fn filters_and_substring_search() {
         let store = Store::open_in_memory().unwrap();
@@ -4230,44 +3562,6 @@ mod tests {
         let error = store.retract_change(&old.id).unwrap_err();
         assert!(matches!(error, StoreError::InvalidInput(_)));
     }
-
-    #[test]
-    fn progress_extends_the_lease_and_returns_unacked_changes() {
-        let (store, project, _statuses) = store_with_project();
-        let task = create_task(&store, &project, "Work in progress");
-        let claim = store
-            .claim_task(NewClaim::new(&task.id, "agent", "T3 Code"))
-            .unwrap();
-        let change = store
-            .add_change(NewChange::requirement(
-                &task.id,
-                "Handle the RC build",
-                "slack",
-            ))
-            .unwrap();
-
-        let near = now_plus_minutes(1);
-        store
-            .conn()
-            .execute(
-                "UPDATE claims SET lease_expires_at = ?1 WHERE id = ?2",
-                params![near, claim.claim.id],
-            )
-            .unwrap();
-
-        let update = store
-            .add_progress(&claim.claim.id, "Halfway through")
-            .unwrap();
-        assert!(update.claim.lease_expires_at > near);
-        assert_eq!(update.event.kind, "progress");
-        assert_eq!(update.event.body.as_deref(), Some("Halfway through"));
-        assert_eq!(update.unacked_changes.len(), 1);
-        assert_eq!(update.unacked_changes[0].change.id, change.id);
-
-        let heartbeat = store.heartbeat(&claim.claim.id).unwrap();
-        assert!(heartbeat.lease_expires_at >= update.claim.lease_expires_at);
-    }
-
     #[test]
     fn proposals_apply_only_known_fields() {
         let (store, project, _statuses) = store_with_project();
@@ -4664,172 +3958,6 @@ mod tests {
         let note = store.create_note("Kept", "after the upgrade").unwrap();
         assert_eq!(store.list_notes(Some("upgr"), None).unwrap(), vec![note]);
     }
-
-    #[test]
-    fn upgrade_from_0001_keeps_rows_and_allows_acks() {
-        let db = TempDatabase::new();
-
-        let project_id = new_id();
-        let status_id = new_id();
-        let task_id = new_id();
-        let claim_id = new_id();
-        let change_id = new_id();
-        let at = now();
-        let lease_expires_at = now_plus_minutes(10);
-
-        // Build a v1 database by hand: only 0001, then user_version = 1.
-        {
-            let conn = Connection::open(&db.path).unwrap();
-            conn.execute_batch(MIGRATIONS[0]).unwrap();
-            conn.pragma_update(None, "user_version", 1).unwrap();
-            conn.execute(
-                "INSERT INTO projects (id, name, slug, created_at, updated_at)
-                 VALUES (?1, 'Relay', 'relay', ?2, ?2)",
-                params![project_id, at],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO project_statuses (id, project_id, name, category, position)
-                 VALUES (?1, ?2, 'Todo', 'todo', 0)",
-                params![status_id, project_id],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO tasks (id, project_id, status_id, title, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, 'Upgrade me', ?4, ?4)",
-                params![task_id, project_id, status_id, at],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO claims
-                     (id, task_id, holder_kind, holder_name, lease_expires_at, created_at)
-                 VALUES (?1, ?2, 'agent', 'T3 Code', ?3, ?4)",
-                params![claim_id, task_id, lease_expires_at, at],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO task_changes
-                     (id, task_id, claim_id, kind, body, source_kind, created_at)
-                 VALUES (?1, ?2, ?3, 'requirement', 'Survive the upgrade', 'slack', ?4)",
-                params![change_id, task_id, claim_id, at],
-            )
-            .unwrap();
-        }
-
-        let store = Store::open(&db.path).unwrap();
-        let version: i64 = store
-            .conn()
-            .pragma_query_value(None, "user_version", |row| row.get(0))
-            .unwrap();
-        assert_eq!(version, MIGRATIONS.len() as i64);
-
-        let change_acks_table: i64 = store
-            .conn()
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master
-                 WHERE type = 'table' AND name = 'change_acks'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(change_acks_table, 1, "0002 created change_acks");
-
-        assert_eq!(store.get_task(&task_id).unwrap().title, "Upgrade me");
-        assert_eq!(store.get_claim(&claim_id).unwrap().holder_name, "T3 Code");
-        let changes = store.list_changes(&task_id).unwrap();
-        assert_eq!(changes.len(), 1);
-        assert_eq!(changes[0].id, change_id);
-        assert!(changes[0].acked_at.is_none());
-
-        // The new ack path works on the migrated rows.
-        let acked = store.ack_change(Some(&claim_id), &change_id).unwrap();
-        assert!(acked.change.acked);
-        assert!(acked.unacked_changes.is_empty());
-        let changes = store.list_changes(&task_id).unwrap();
-        assert!(changes[0].acked_at.is_some());
-
-        // Reopening skips 0002 instead of trying to create the table again.
-        drop(store);
-        let reopened = Store::open(&db.path).unwrap();
-        let version: i64 = reopened
-            .conn()
-            .pragma_query_value(None, "user_version", |row| row.get(0))
-            .unwrap();
-        assert_eq!(version, MIGRATIONS.len() as i64);
-        let ack_rows: i64 = reopened
-            .conn()
-            .query_row("SELECT COUNT(*) FROM change_acks", [], |row| row.get(0))
-            .unwrap();
-        assert_eq!(ack_rows, 1);
-    }
-
-    #[test]
-    fn two_connections_race_for_the_same_claim() {
-        let db = TempDatabase::new();
-        let setup = Store::open(&db.path).unwrap();
-        let created = setup
-            .create_project_with_default_workflow(NewProject::new("Relay", "relay", None))
-            .unwrap();
-        let task = setup
-            .create_task(NewTask::new(&created.project.id, "Race me"))
-            .unwrap();
-        drop(setup);
-
-        let barrier = Arc::new(Barrier::new(2));
-        let spawn = |holder: &'static str| {
-            let store = Store::open(&db.path).unwrap();
-            let barrier = Arc::clone(&barrier);
-            let task_id = task.id.clone();
-            thread::spawn(move || {
-                barrier.wait();
-                store.claim_task(NewClaim::new(&task_id, "agent", holder))
-            })
-        };
-        let results: Vec<_> = [spawn("T3 Code"), spawn("OpenCode")]
-            .into_iter()
-            .map(|handle| handle.join().unwrap())
-            .collect();
-
-        let mut winners = results.iter().filter_map(|result| result.as_ref().ok());
-        let winner = winners
-            .next()
-            .unwrap_or_else(|| panic!("no claimant won: {results:?}"));
-        assert!(winners.next().is_none(), "exactly one claimant wins");
-        let error = results
-            .iter()
-            .find_map(|result| result.as_ref().err())
-            .unwrap_or_else(|| panic!("expected one loser: {results:?}"));
-        match error {
-            StoreError::ClaimConflict { task_id, holder } => {
-                assert_eq!(task_id, &task.id);
-                assert_eq!(holder.id, winner.claim.id, "the loser sees the winner");
-                assert_eq!(holder.holder_name, winner.claim.holder_name);
-            }
-            other => panic!("expected a typed claim conflict, got {other:?}"),
-        }
-
-        // One claim row, and it is the winner's.
-        let verify = Store::open(&db.path).unwrap();
-        let claims: i64 = verify
-            .conn()
-            .query_row(
-                "SELECT COUNT(*) FROM claims WHERE task_id = ?1",
-                params![task.id],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(claims, 1);
-        assert_eq!(
-            verify
-                .get_task_detail(&task.id, None)
-                .unwrap()
-                .active_claim
-                .unwrap()
-                .id,
-            winner.claim.id
-        );
-    }
-
     #[test]
     fn concurrent_updates_with_the_same_expected_rev_advance_once() {
         let db = TempDatabase::new();
@@ -4901,74 +4029,6 @@ mod tests {
             .count();
         assert_eq!(updates, 1, "the losing transaction wrote no event");
     }
-
-    #[test]
-    fn human_ack_does_not_clear_an_agent_queue_and_stamps_acked_at() {
-        let (store, project, _statuses) = store_with_project();
-        let task = create_task(&store, &project, "Two ack scopes");
-        let claim = store
-            .claim_task(NewClaim::new(&task.id, "agent", "T3 Code"))
-            .unwrap();
-        let change = store
-            .add_change(NewChange::requirement(
-                &task.id,
-                "Keep the API stable",
-                "slack",
-            ))
-            .unwrap();
-
-        // Current, intentional semantics: a human ack is `claim_id = NULL`.
-        let human = store.ack_change(None, &change.id).unwrap();
-        assert!(human.change.acked);
-        assert_eq!(human.change.claim_id, None);
-        assert!(
-            human.unacked_changes.is_empty(),
-            "the human queue is cleared"
-        );
-
-        let changes = store.list_changes(&task.id).unwrap();
-        assert_eq!(changes.len(), 1);
-        let first_ack = changes[0]
-            .acked_at
-            .clone()
-            .expect("the first ack stamps task_changes.acked_at");
-
-        // The agent's queue is a separate scope: still one unacked change.
-        let agent_queue = store.unacked_changes(&claim.claim.id).unwrap();
-        assert_eq!(
-            agent_queue.len(),
-            1,
-            "a human ack must not clear an agent's queue"
-        );
-        assert!(agent_queue[0].acked_elsewhere);
-        assert!(!agent_queue[0].acked);
-        assert_eq!(
-            store
-                .get_task_detail(&task.id, Some(&claim.claim.id))
-                .unwrap()
-                .unacked_changes
-                .len(),
-            1
-        );
-
-        // The claim's own ack drains it and leaves the first-ack timeline value alone.
-        let agent = store.ack_change(Some(&claim.claim.id), &change.id).unwrap();
-        assert!(agent.unacked_changes.is_empty());
-        assert!(store.unacked_changes(&claim.claim.id).unwrap().is_empty());
-        assert!(
-            store
-                .get_task_detail(&task.id, None)
-                .unwrap()
-                .unacked_changes
-                .is_empty()
-        );
-        assert_eq!(
-            store.list_changes(&task.id).unwrap()[0].acked_at.as_deref(),
-            Some(first_ack.as_str()),
-            "the first ack time is not overwritten"
-        );
-    }
-
     fn raw_message(ts: &str, user: &str, text: &str) -> RawSlackMessage {
         RawSlackMessage {
             channel_id: "D01".into(),

@@ -106,18 +106,27 @@ pub struct ProcessRunner {
 impl Runner for ProcessRunner {
     fn run(&self, request: &RunRequest) -> Result<String, ClaudeError> {
         let settings = core::run_settings_json(&enabled_plugins());
-        self.run_claude(core::cli_args(request, &settings), &core::RUN_ENV)
+        self.run_claude(
+            core::cli_args(request, &settings),
+            &core::RUN_ENV,
+            request.timeout.unwrap_or(RUN_TIMEOUT),
+        )
     }
 }
 
 impl SummaryRunner for ProcessRunner {
     fn run(&self, args: Vec<String>) -> Result<String, ClaudeError> {
-        self.run_claude(args, &summaries::RUN_ENV)
+        self.run_claude(args, &summaries::RUN_ENV, RUN_TIMEOUT)
     }
 }
 
 impl ProcessRunner {
-    fn run_claude(&self, args: Vec<String>, env: &[(&str, &str)]) -> Result<String, ClaudeError> {
+    fn run_claude(
+        &self,
+        args: Vec<String>,
+        env: &[(&str, &str)],
+        deadline: Duration,
+    ) -> Result<String, ClaudeError> {
         let mut command = Command::new(&self.claude);
         command
             .args(args)
@@ -150,7 +159,7 @@ impl ProcessRunner {
         loop {
             match child.try_wait() {
                 Ok(Some(_)) => break,
-                Ok(None) if started.elapsed() > RUN_TIMEOUT => {
+                Ok(None) if started.elapsed() > deadline => {
                     let _ = child.kill();
                     let _ = child.wait();
                     return Err(ClaudeError::Timeout);

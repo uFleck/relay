@@ -1,0 +1,279 @@
+/* v2 workspace: chronological Notebook, flat Tasks list and the read-only Task sheet. */
+
+.notebook,
+.tasks,
+.settings {
+  min-height: 0;
+}
+
+.nb-head,
+.tasks .head,
+.settings .head {
+  border-bottom: 1px solid var(--border-default);
+}
+
+.nb-scroll {
+  padding: 0 18px 24px;
+}
+
+.nb-empty {
+  margin-top: 24px;
+}
+
+.nb-day {
+  padding-top: 16px;
+}
+
+.nb-day-h {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0 0 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border-default);
+  background: var(--bg-page);
+  font: 600 12px var(--font-ui);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+
+.nb-note {
+  position: relative;
+  margin: 0 0 10px 18px;
+  padding: 8px 10px 10px 12px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--r);
+  background: var(--bg-surface);
+}
+
+/* The timeline spine: a dot for each Note, filled when it has Tasks. */
+.nb-note::before {
+  content: "";
+  position: absolute;
+  left: -23px;
+  top: 16px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 2px solid var(--accent);
+  background: var(--bg-page);
+}
+
+.nb-note:has(.nb-branch)::before {
+  background: var(--i3);
+}
+
+.nb-note-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 24px;
+}
+
+/* The source-kind glyph on an imported Note's import day. */
+.nb-kind {
+  color: var(--i3);
+  font-family: var(--mono);
+  font-size: 14px;
+  line-height: 1;
+}
+
+.nb-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.nb-line {
+  min-width: 0;
+  padding: 3px 0;
+}
+
+.nb-line-text {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.nb-refs {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+
+.nb-ref {
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font: 0.8em var(--font-mono);
+  padding: 1px 7px;
+}
+
+.nb-branch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin-top: 4px;
+  padding: 5px 8px;
+  border: 0;
+  border-left: 2px solid var(--accent);
+  border-radius: 4px;
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.nb-branch.mode-act { border-left-color: var(--i3); }
+.nb-branch.mode-wait { border-left-color: var(--i2); }
+.nb-branch.mode-grill { border-left-color: var(--i4); }
+.nb-branch:hover,
+.nb-branch.on { background: var(--sel-bg); }
+.nb-branch.detached { border-style: dashed; }
+
+.nb-sigil {
+  font: 700 0.9em var(--font-mono);
+}
+
+.nb-branch-line {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.nb-status,
+.nb-project {
+  font: 0.8em var(--font-mono);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.nb-composer {
+  margin: 18px 0 0 18px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--r);
+  background: var(--bg-surface);
+}
+
+.nb-composer-label {
+  margin-bottom: 6px;
+}
+
+/* ── Tasks ── */
+
+.ts-scroll {
+  padding: 10px 16px 24px;
+}
+
+.ts-group {
+  margin-bottom: 16px;
+}
+
+.ts-group-h {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 0 8px;
+  font: 600 13px var(--font-ui);
+  color: var(--text-secondary);
+  letter-spacing: 0.01em;
+}
+
+.ts-group-hint {
+  font-weight: 400;
+}
+
+.ts-group-summary {
+  cursor: pointer;
+  list-style: none;
+}
+.ts-group-summary::-webkit-details-marker {
+  display: none;
+}
+.ts-group-summary .ts-group-h::before {
+  content: "▸";
+  margin-right: 2px;
+  font-size: 10px;
+}
+.ts-group.closed[open] .ts-group-h::before {
+  content: "▾";
+}
+.ts-group-rows {
+  display: flex;
+  flex-direction: column;
+}
+
+.ts-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  margin-bottom: 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--r);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ts-row:hover,
+.ts-row.on {
+  border-color: var(--accent);
+  background: var(--sel-bg);
+}
+
+.ts-sigil {
+  width: 22px;
+  font: 700 0.95em var(--font-mono);
+  text-align: center;
+}
+.ts-sigil.mode-act { color: var(--i3); }
+.ts-sigil.mode-wait { color: var(--i2); }
+.ts-sigil.mode-grill { color: var(--i4); }
+
+.ts-main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  gap: 2px;
+}
+.ts-main b,
+.ts-main .meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ts-status,
+.ts-project {
+  font: 0.8em var(--font-mono);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.v2-sheet .tag.mode-act { color: var(--i3); }
+.v2-sheet .tag.mode-wait { color: var(--i2); }
+.v2-sheet .tag.mode-grill { color: var(--i4); }
+
+.settings .provider {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 10px 0;
+  scroll-margin-top: 8px;
+}
+
+.settings .provider h3 {
+  margin: 0;
+}

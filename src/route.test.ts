@@ -1,29 +1,51 @@
 import { describe, expect, it } from "vitest";
-import { episodeRoute, formatRoute, parseRoute, proposalRoute, taskRoute } from "./route";
+import { formatRoute, notebookRoute, parseRoute, settingsRoute, taskRoute } from "./route";
 
 describe("routes", () => {
-  it("reads the routes Rust sends from the tray", () => {
-    expect(parseRoute("/review").view).toBe("review");
-    expect(parseRoute("/settings").view).toBe("settings");
+  it("reads the three v2 routes", () => {
+    expect(parseRoute("/notebook")).toEqual({ view: "notebook", task: null, provider: null });
+    expect(parseRoute("/tasks?task=01J")).toEqual({ view: "tasks", task: "01J", provider: null });
+    expect(parseRoute("/settings?provider=github")).toEqual({
+      view: "settings",
+      task: null,
+      provider: "github",
+    });
   });
 
-  it("reads a task route with its focus", () => {
-    expect(parseRoute("/today?task=01J&focus=changes")).toEqual({ view: "today", task: "01J", focus: "changes", proposal: null, episode: null });
+  it("sends retired v1 routes to Notebook", () => {
+    for (const route of ["/review", "/review?proposal=p1", "/inbox?episode=e1", "/today?task=01J", "/agents", "/nope", ""]) {
+      expect(parseRoute(route).view).toBe(route.startsWith("/today") ? "tasks" : "notebook");
+    }
   });
 
-  it("falls back to Today for an unknown path", () => {
-    expect(parseRoute("/nope").view).toBe("today");
-    expect(parseRoute("").view).toBe("today");
+  it("keeps a task link from a retired route and drops its old focus", () => {
+    expect(parseRoute("/today?task=01J&focus=changes")).toEqual({
+      view: "tasks",
+      task: "01J",
+      provider: null,
+    });
   });
 
-  it("round-trips the hover's links", () => {
-    expect(parseRoute(taskRoute("t1"))).toMatchObject({ view: "today", task: "t1", focus: "changes" });
-    expect(parseRoute(proposalRoute("p1"))).toMatchObject({ view: "review", proposal: "p1" });
-    expect(formatRoute({ view: "agents", task: null, focus: null, proposal: null, episode: null })).toBe("/agents");
+  it("opens Settings at its heading for an unknown or missing provider", () => {
+    expect(parseRoute("/settings?provider=unknown")).toEqual({
+      view: "settings",
+      task: null,
+      provider: null,
+    });
+    expect(parseRoute("/settings").provider).toBeNull();
+    expect(parseRoute("/notebook?provider=slack").provider).toBeNull();
   });
 
-  it("reads an episode transcript route", () => {
-    expect(episodeRoute("e1")).toBe("/inbox?episode=e1");
-    expect(parseRoute("/inbox?episode=e1")).toMatchObject({ view: "inbox", episode: "e1", task: null });
+  it("round-trips the helpers used by the tray, hover and sheets", () => {
+    expect(taskRoute("t1")).toBe("/tasks?task=t1");
+    expect(settingsRoute("slack")).toBe("/settings?provider=slack");
+    expect(settingsRoute()).toBe("/settings");
+    expect(notebookRoute()).toBe("/notebook");
+    expect(parseRoute(taskRoute("t1")).task).toBe("t1");
+    expect(formatRoute({ view: "notebook", task: null, provider: null })).toBe("/notebook");
+  });
+
+  it("treats an empty selected id as no selection", () => {
+    expect(parseRoute("/tasks?task=").task).toBeNull();
   });
 });

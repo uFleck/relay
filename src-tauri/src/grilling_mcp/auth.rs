@@ -1,14 +1,9 @@
-//! Request gate for one MCP endpoint, run before any JSON is read: the `Host` must be exactly this server
-//! (blocks DNS rebinding), a browser `Origin` is refused, and the bearer token must match this endpoint's token
-//! (compared in constant time). Each endpoint has its own gate, so the agent token never opens `/mcp/analyst`
-//! and the analyst token never opens `/mcp`. A refusal carries no detail and no CORS headers.
+//! Loopback request gate for the Grilling read endpoint, run before any JSON is read: the `Host`
+//! must be exactly this server (blocks DNS rebinding), a browser `Origin` is refused, and the
+//! bearer token must match this turn's token (compared in constant time). Each turn has its own
+//! token, so a bearer from another turn is refused. A refusal carries no detail and no CORS headers.
 
-use axum::{
-    extract::{Request, State},
-    http::{HeaderMap, StatusCode, header},
-    middleware::Next,
-    response::{IntoResponse, Response},
-};
+use axum::http::{HeaderMap, StatusCode, header};
 
 #[derive(Clone)]
 pub struct Gate {
@@ -72,18 +67,6 @@ pub fn check(headers: &HeaderMap, gate: &Gate) -> Result<(), StatusCode> {
     }
 }
 
-pub async fn gate(State(gate): State<Gate>, req: Request, next: Next) -> Response {
-    match check(req.headers(), &gate) {
-        Ok(()) => next.run(req).await,
-        Err(StatusCode::UNAUTHORIZED) => (
-            StatusCode::UNAUTHORIZED,
-            [(header::WWW_AUTHENTICATE, "Bearer")],
-        )
-            .into_response(),
-        Err(code) => code.into_response(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -113,39 +96,39 @@ mod tests {
     fn check_needs_local_host_no_browser_origin_and_the_token() {
         let gate = Gate {
             token: "t0k".into(),
-            port: 38547,
+            port: 41234,
         };
         let ok = Some("Bearer t0k");
-        assert_eq!(check(&headers("127.0.0.1:38547", ok, None), &gate), Ok(()));
-        assert_eq!(check(&headers("localhost:38547", ok, None), &gate), Ok(()));
+        assert_eq!(check(&headers("127.0.0.1:41234", ok, None), &gate), Ok(()));
+        assert_eq!(check(&headers("localhost:41234", ok, None), &gate), Ok(()));
         assert_eq!(
-            check(&headers("evil.test:38547", ok, None), &gate),
+            check(&headers("evil.test:41234", ok, None), &gate),
             Err(StatusCode::FORBIDDEN)
         );
         assert_eq!(
             check(
-                &headers("127.0.0.1:38547", ok, Some("https://evil.test")),
+                &headers("127.0.0.1:41234", ok, Some("https://evil.test")),
                 &gate
             ),
             Err(StatusCode::FORBIDDEN)
         );
         assert_eq!(
             check(
-                &headers("127.0.0.1:38547", Some("Bearer nope"), None),
+                &headers("127.0.0.1:41234", Some("Bearer nope"), None),
                 &gate
             ),
             Err(StatusCode::UNAUTHORIZED)
         );
         assert_eq!(
-            check(&headers("127.0.0.1:38547", None, None), &gate),
+            check(&headers("127.0.0.1:41234", None, None), &gate),
             Err(StatusCode::UNAUTHORIZED)
         );
         let empty = Gate {
             token: String::new(),
-            port: 38547,
+            port: 41234,
         };
         assert_eq!(
-            check(&headers("127.0.0.1:38547", Some("Bearer "), None), &empty),
+            check(&headers("127.0.0.1:41234", Some("Bearer "), None), &empty),
             Err(StatusCode::UNAUTHORIZED)
         );
     }
