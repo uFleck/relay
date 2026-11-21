@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { Icon } from "../components/Icon";
 import { BriefPanel } from "../components/BriefPanel";
+import { GrillPanel } from "../components/GrillPanel";
 import { SIGIL } from "../workspace";
 import type { V2Note, V2Project, V2Task } from "../ipc";
 
@@ -86,9 +87,9 @@ export function TaskSheet({ task, project, note, projects, onClose }: Props) {
         </section>
 
         <section className="sec">
-          <h3>Brief</h3>
+          <h3>{task.agentMode === "grill" ? "Grilling" : "Brief"}</h3>
           {task.agentMode === "grill" ? (
-            <p className="desc">{task.brief ?? "No Brief yet."}</p>
+            <GrillPanel taskId={task.id} projects={projects} />
           ) : (
             <BriefPanel taskId={task.id} projects={projects} />
           )}

@@ -5,6 +5,8 @@ mod analyst;
 mod clickup_sync;
 mod commands;
 mod github;
+mod grilling;
+mod grilling_mcp;
 mod hover;
 mod live;
 mod mcp;
@@ -270,6 +272,7 @@ pub fn run() {
         .manage(HoverState::default())
         .manage(mcp::McpState::default())
         .manage(opencode::BriefingState::default())
+        .manage(grilling::GrillingState::default())
         .invoke_handler(tauri::generate_handler![
             show_main_window,
             open_main,
@@ -296,6 +299,13 @@ pub fn run() {
             opencode::v2_briefing_rewrite,
             opencode::v2_briefing_continue_link_only,
             opencode::v2_briefing_retry,
+            grilling::v2_grilling_view,
+            grilling::v2_grilling_start,
+            grilling::v2_grilling_answer,
+            grilling::v2_grilling_retry,
+            grilling::v2_grilling_cancel,
+            grilling::v2_grilling_go,
+            grilling::v2_grilling_continue_link_only,
             settings::v2_provider_status,
             settings::v2_provider_refresh,
             settings::v2_github_set_token,
@@ -418,6 +428,8 @@ pub fn run() {
             github::start(app.handle().clone());
             // #34: an OpenCode attempt abandoned by a previous run becomes a manual Retry.
             opencode::init(app.handle());
+            // #35: an interrupted Grilling turn is retryable without losing its transcript.
+            grilling::init(app.handle());
             // One v2 service owns startup, scheduled and manual Import for both providers.
             note_import::start(app.handle().clone());
             // #33: a first setup or a directory older than seven days gets its metadata scan on a

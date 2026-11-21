@@ -12,6 +12,7 @@ use std::{
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, TransactionBehavior, params};
 
 use super::briefing::{BriefContent, BriefRecord, BriefStatus, TaskLineState};
+use super::grilling::{GrillEntry, GrillRecord, GrillStatus};
 use super::import::{ImportCandidate, ImportOutcome, ImportRefreshTarget, RefreshUpdate};
 use super::model::{
     AgentMode, GrillTurn, ImportRecord, NewImportRecord, NewV2Project, NoteWrite, PreparedLine,
@@ -76,6 +77,10 @@ const MIGRATIONS: &[Migration] = &[
     Migration {
         sql: include_str!("../../migrations/v2/0008_briefing.sql"),
         applied: "EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'briefs')",
+    },
+    Migration {
+        sql: include_str!("../../migrations/v2/0009_grilling.sql"),
+        applied: "EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'grills')",
     },
 ];
 /// 'RELY' as an integer. A non-zero application id marks a file as ours.
@@ -695,33 +700,7 @@ impl V2Store {
         let mut conn = self.conn();
         let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
         task_by_id(&tx, &record.task_id)?;
-        let content_json = match &record.content {
-            Some(content) => serde_json::to_string(content).ok(),
-            None => None,
-        };
-        let link_only =
-            serde_json::to_string(&record.link_only_refs).unwrap_or_else(|_| "[]".into());
-        tx.execute(
-            "INSERT INTO briefs
-                (task_id, revision, source_signature, status, content_json, rendered,
-                 link_only_refs, wait_approval_revision, attempt_id, rewrite_instruction,
-                 failure_stage, failure_reason, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
-             ON CONFLICT(task_id) DO UPDATE SET
-                revision = excluded.revision, source_signature = excluded.source_signature,
-                status = excluded.status, content_json = excluded.content_json,
-                rendered = excluded.rendered, link_only_refs = excluded.link_only_refs,
-                wait_approval_revision = excluded.wait_approval_revision,
-                attempt_id = excluded.attempt_id, rewrite_instruction = excluded.rewrite_instruction,
-                failure_stage = excluded.failure_stage, failure_reason = excluded.failure_reason,
-                updated_at = excluded.updated_at",
-            params![
-                record.task_id, record.revision, record.source_signature, record.status.as_str(),
-                content_json, record.rendered, link_only, record.wait_approval_revision,
-                record.attempt_id, record.rewrite_instruction, record.failure_stage,
-                record.failure_reason, record.created_at, record.updated_at,
-            ],
-        )?;
+        upsert_brief(&tx, record)?;
 
         let task = task_by_id(&tx, &record.task_id)?;
         let has_brief = record
@@ -802,6 +781,136 @@ impl V2Store {
             self.write_brief(&record)?;
         }
         Ok(recovered)
+    }
+
+    // -----------------------------------------------------------------------
+    // Grilling (#35)
+    // -----------------------------------------------------------------------
+
+    /// The live Grilling revision for a Task.
+    pub fn grill(&self, task_id: &str) -> Result<Option<GrillRecord>, V2Error> {
+        Ok(self
+            .conn()
+            .query_row(
+                "SELECT task_id, revision, source_signature, status, attempt_id, question,
+                        transcript, reference_ids, failure_stage, failure_reason,
+                        created_at, updated_at
+                 FROM grills WHERE task_id = ?1 ORDER BY revision DESC LIMIT 1",
+                params![task_id],
+                grill_from_row,
+            )
+            .optional()?)
+    }
+
+    /// One named revision, including exchanges from before a Task-line edit.
+    pub fn grill_at(&self, task_id: &str, revision: i64) -> Result<Option<GrillRecord>, V2Error> {
+        Ok(self
+            .conn()
+            .query_row(
+                "SELECT task_id, revision, source_signature, status, attempt_id, question,
+                        transcript, reference_ids, failure_stage, failure_reason,
+                        created_at, updated_at
+                 FROM grills WHERE task_id = ?1 AND revision = ?2",
+                params![task_id, revision],
+                grill_from_row,
+            )
+            .optional()?)
+    }
+
+    /// Every exchange kept on the Task, oldest revision first.
+    pub fn grills(&self, task_id: &str) -> Result<Vec<GrillRecord>, V2Error> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT task_id, revision, source_signature, status, attempt_id, question,
+                    transcript, reference_ids, failure_stage, failure_reason,
+                    created_at, updated_at
+             FROM grills WHERE task_id = ?1 ORDER BY revision ASC",
+        )?;
+        Ok(stmt
+            .query_map(params![task_id], grill_from_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Attempts abandoned by a restart, for the core recovery rule.
+    pub fn grills_pending(&self) -> Result<Vec<GrillRecord>, V2Error> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT task_id, revision, source_signature, status, attempt_id, question,
+                    transcript, reference_ids, failure_stage, failure_reason,
+                    created_at, updated_at
+             FROM grills WHERE status = 'pending'",
+        )?;
+        Ok(stmt
+            .query_map([], grill_from_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Commits one Grilling state and, when the exchange just ended, its Brief in the same
+    /// transaction. The Task row is mirrored here so both surfaces read one consistent state.
+    pub fn write_grill(
+        &self,
+        record: &GrillRecord,
+        brief: Option<&BriefRecord>,
+    ) -> Result<GrillRecord, V2Error> {
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        task_by_id(&tx, &record.task_id)?;
+        let entries = serde_json::to_string(&record.entries).unwrap_or_else(|_| "[]".to_string());
+        let reference_ids =
+            serde_json::to_string(&record.reference_ids).unwrap_or_else(|_| "[]".to_string());
+        tx.execute(
+            "INSERT INTO grills
+                (task_id, revision, source_signature, status, attempt_id, question,
+                 transcript, reference_ids, failure_stage, failure_reason, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+             ON CONFLICT(task_id, revision) DO UPDATE SET
+                source_signature = excluded.source_signature, status = excluded.status,
+                attempt_id = excluded.attempt_id, question = excluded.question,
+                transcript = excluded.transcript, reference_ids = excluded.reference_ids,
+                failure_stage = excluded.failure_stage, failure_reason = excluded.failure_reason,
+                updated_at = excluded.updated_at",
+            params![
+                record.task_id,
+                record.revision,
+                record.source_signature,
+                record.status.as_str(),
+                record.attempt_id,
+                record.question,
+                entries,
+                reference_ids,
+                record.failure_stage,
+                record.failure_reason,
+                record.created_at,
+                record.updated_at,
+            ],
+        )?;
+        if let Some(brief) = brief {
+            upsert_brief(&tx, brief)?;
+        }
+        let task = task_by_id(&tx, &record.task_id)?;
+        let (status, turn, pending_action, failure_stage, failure_reason) =
+            super::grilling::task_fields(
+                record.status,
+                task.project_id.is_some(),
+                record.failure_stage.clone(),
+                record.failure_reason.clone(),
+            );
+        tx.execute(
+            "UPDATE tasks SET status = ?2, grill_turn = ?3, pending_action = ?4,
+                 failure_stage = ?5, failure_reason = ?6, updated_at = ?7
+             WHERE id = ?1",
+            params![
+                record.task_id,
+                status.as_str(),
+                turn.map(GrillTurn::as_str),
+                pending_action,
+                failure_stage,
+                failure_reason,
+                now(),
+            ],
+        )?;
+        tx.commit()?;
+        Ok(record.clone())
     }
 
     // -----------------------------------------------------------------------
@@ -2576,6 +2685,68 @@ fn note_by_id(conn: &Connection, id: &str) -> Result<V2Note, V2Error> {
         updated_at,
         lines,
         tasks,
+    })
+}
+
+/// The one Brief upsert, shared by #34's writer and #35's final Grilling turn so both take
+/// the same lock and write the same columns.
+fn upsert_brief(tx: &Transaction<'_>, record: &BriefRecord) -> rusqlite::Result<()> {
+    let content_json = match &record.content {
+        Some(content) => serde_json::to_string(content).ok(),
+        None => None,
+    };
+    let link_only = serde_json::to_string(&record.link_only_refs).unwrap_or_else(|_| "[]".into());
+    tx.execute(
+        "INSERT INTO briefs
+            (task_id, revision, source_signature, status, content_json, rendered,
+             link_only_refs, wait_approval_revision, attempt_id, rewrite_instruction,
+             failure_stage, failure_reason, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+         ON CONFLICT(task_id) DO UPDATE SET
+            revision = excluded.revision, source_signature = excluded.source_signature,
+            status = excluded.status, content_json = excluded.content_json,
+            rendered = excluded.rendered, link_only_refs = excluded.link_only_refs,
+            wait_approval_revision = excluded.wait_approval_revision,
+            attempt_id = excluded.attempt_id, rewrite_instruction = excluded.rewrite_instruction,
+            failure_stage = excluded.failure_stage, failure_reason = excluded.failure_reason,
+            updated_at = excluded.updated_at",
+        params![
+            record.task_id,
+            record.revision,
+            record.source_signature,
+            record.status.as_str(),
+            content_json,
+            record.rendered,
+            link_only,
+            record.wait_approval_revision,
+            record.attempt_id,
+            record.rewrite_instruction,
+            record.failure_stage,
+            record.failure_reason,
+            record.created_at,
+            record.updated_at,
+        ],
+    )?;
+    Ok(())
+}
+
+fn grill_from_row(row: &Row<'_>) -> rusqlite::Result<GrillRecord> {
+    let status: String = row.get("status")?;
+    let transcript: String = row.get("transcript")?;
+    let reference_ids: String = row.get("reference_ids")?;
+    Ok(GrillRecord {
+        task_id: row.get("task_id")?,
+        revision: row.get("revision")?,
+        source_signature: row.get("source_signature")?,
+        status: GrillStatus::parse(&status).unwrap_or(GrillStatus::Failed),
+        attempt_id: row.get("attempt_id")?,
+        question: row.get("question")?,
+        entries: serde_json::from_str::<Vec<GrillEntry>>(&transcript).unwrap_or_default(),
+        reference_ids: serde_json::from_str::<Vec<String>>(&reference_ids).unwrap_or_default(),
+        failure_stage: row.get("failure_stage")?,
+        failure_reason: row.get("failure_reason")?,
+        created_at: row.get("created_at")?,
+        updated_at: row.get("updated_at")?,
     })
 }
 

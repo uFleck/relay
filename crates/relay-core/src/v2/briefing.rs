@@ -887,7 +887,10 @@ pub fn dispatch_readiness(
     task_id: &str,
 ) -> Result<Option<BriefReadiness>, V2Error> {
     let state = task_line_state(store, task_id)?;
-    if !matches!(state.task.agent_mode, AgentMode::Act | AgentMode::Wait) {
+    if !matches!(
+        state.task.agent_mode,
+        AgentMode::Act | AgentMode::Wait | AgentMode::Grill
+    ) {
         return Ok(None);
     }
     let Some(project_id) = state.task.project_id.clone() else {
@@ -907,6 +910,17 @@ pub fn dispatch_readiness(
     }
     if record.source_signature != source_signature(&state.line_text, &state.references) {
         return Ok(None);
+    }
+    // Grill adds one more gate: the exchange must have been closed by the single approval.
+    if state.task.agent_mode == AgentMode::Grill {
+        let exchange = store
+            .grill(task_id)?
+            .ok_or_else(|| V2Error::NotFound(format!("grilling exchange for {task_id}")))?;
+        if exchange.status != super::grilling::GrillStatus::Approved
+            || exchange.source_signature != record.source_signature
+        {
+            return Ok(None);
+        }
     }
     let Some(rendered) = record.rendered.filter(|text| !text.trim().is_empty()) else {
         return Ok(None);
@@ -933,7 +947,10 @@ pub fn brief_is_stale(store: &V2Store, task_id: &str) -> Result<bool, V2Error> {
 /// approval, so the UI needs this separate, non-dispatching gate.
 pub fn go_enabled(store: &V2Store, task_id: &str) -> Result<bool, V2Error> {
     let state = task_line_state(store, task_id)?;
-    if !matches!(state.task.agent_mode, AgentMode::Act | AgentMode::Wait) {
+    if !matches!(
+        state.task.agent_mode,
+        AgentMode::Act | AgentMode::Wait | AgentMode::Grill
+    ) {
         return Ok(false);
     }
     let Some(project_id) = state.task.project_id.as_deref() else {
@@ -948,7 +965,13 @@ pub fn go_enabled(store: &V2Store, task_id: &str) -> Result<bool, V2Error> {
     if !matches!(record.status, BriefStatus::Ready | BriefStatus::Approved) {
         return Ok(false);
     }
-    Ok(record.source_signature == source_signature(&state.line_text, &state.references))
+    if record.source_signature != source_signature(&state.line_text, &state.references) {
+        return Ok(false);
+    }
+    if state.task.agent_mode == AgentMode::Grill {
+        return super::grilling::go_enabled(store, task_id);
+    }
+    Ok(true)
 }
 
 /// Marks abandoned attempts from a previous run as interrupted so the UI offers manual Retry.

@@ -120,3 +120,55 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* Grilling exchange (#35). The violet accent matches the ?? sigil in the Dock and Task sheet. */
+
+.grill-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--grill, #a07dff);
+  border-radius: 10px;
+  background: var(--panel, rgba(127, 127, 127, 0.05));
+  font-size: 12px;
+}
+
+.grill-panel.compact {
+  padding: 7px;
+  gap: 6px;
+}
+
+.grill-transcript {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.grill-transcript li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--panel, transparent);
+}
+
+.grill-transcript .grill-question {
+  border-left: 2px solid var(--grill, #a07dff);
+}
+
+.grill-transcript .grill-answer {
+  border-left: 2px solid var(--ok, #19c3b1);
+}
+
+.grill-line {
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

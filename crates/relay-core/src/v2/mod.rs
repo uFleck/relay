@@ -3,6 +3,7 @@
 
 pub mod briefing;
 pub mod composer;
+pub mod grilling;
 pub mod import;
 pub mod live;
 mod model;
@@ -24,6 +25,16 @@ pub use briefing::{
     source_signature, start_rewrite, task_line_state, terminal_outcome, validate,
 };
 pub use composer::{ComposerLineInput, ComposerSaveRequest, ParsedLine};
+pub use grilling::{
+    FAILURE_STAGE as GRILL_FAILURE_STAGE, GrillEntry, GrillModelResult, GrillRecord,
+    GrillReferenceDetail, GrillRole, GrillStatus, GrillTurnInput,
+    MAX_REFERENCE_CHARS as GRILL_MAX_REFERENCE_CHARS, answer, approve_brief, awaiting_answer,
+    begin_attempt as begin_grill_attempt, build_grill_prompt, cancel as cancel_grill,
+    complete_brief, continue_link_only as grill_continue_link_only, fail_turn as fail_grill_turn,
+    go_enabled as grill_go_enabled, grill_reference, parse_model_result as parse_grill_result,
+    record_question, recover_interrupted as recover_interrupted_grills,
+    reference_detail as grill_reference_detail, refresh_task_state, retry as retry_grill,
+};
 pub use import::{
     CLICKUP_REFRESH_MS, GITHUB_REFRESH_MS, ImportCandidate, ImportOutcome, ImportRefreshTarget,
     ImportedState, RefreshUpdate, clickup_imported_state, dedupe_candidates, github_imported_state,

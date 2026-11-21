@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Composer } from "../components/Composer";
 import { BriefPanel } from "../components/BriefPanel";
+import { GrillPanel } from "../components/GrillPanel";
 import { Icon, Mark } from "../components/Icon";
 import {
   getSnapshot,
@@ -57,7 +58,7 @@ export function HoverApp() {
   const [pulsing, setPulsing] = useState(false);
   const [composing, setComposing] = useState(false);
   const [showWaiting, setShowWaiting] = useState(false);
-  /** A Wait Task being briefed inline in the Dock; empty when no panel is open. */
+  /** A Wait or Grill Task with its inline panel open in the Dock; empty when none is open. */
   const [dockBrief, setDockBrief] = useState<string | null>(null);
   const composerActive = useRef(false);
   const update = useUpdater();
@@ -683,9 +684,11 @@ function WaitingList({
             <button
               type="button"
               className="wt"
-              aria-expanded={task.agentMode === "wait" && dockBrief === task.id}
+              aria-expanded={
+                (task.agentMode === "wait" || task.agentMode === "grill") && dockBrief === task.id
+              }
               onClick={() =>
-                task.agentMode === "wait"
+                task.agentMode === "wait" || task.agentMode === "grill"
                   ? onDockBrief(dockBrief === task.id ? null : task.id)
                   : openTask(task.id)
               }
@@ -704,14 +707,18 @@ function WaitingList({
           </div>
         ))}
       </div>
-      {briefed && briefed.agentMode === "wait" && (
+      {briefed && (briefed.agentMode === "wait" || briefed.agentMode === "grill") && (
         <div className="dock-brief" onClick={(event) => event.stopPropagation()}>
-          <BriefPanel
-            compact
-            taskId={briefed.id}
-            projects={projects}
-            onChanged={onDockChanged}
-          />
+          {briefed.agentMode === "grill" ? (
+            <GrillPanel compact taskId={briefed.id} projects={projects} onChanged={onDockChanged} />
+          ) : (
+            <BriefPanel
+              compact
+              taskId={briefed.id}
+              projects={projects}
+              onChanged={onDockChanged}
+            />
+          )}
         </div>
       )}
     </section>

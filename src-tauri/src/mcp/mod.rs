@@ -2,7 +2,7 @@
 //! (`/mcp/analyst`), the two bearer tokens, and the status the setup sheet reads through `mcp_status`.
 
 mod analyst;
-mod auth;
+pub mod auth;
 mod server;
 mod tools;
 

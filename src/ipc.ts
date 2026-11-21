@@ -344,6 +344,77 @@ export const v2BriefingContinueLinkOnly = (taskId: string, revision: number, ide
 export const v2BriefingRetry = (taskId: string) =>
   call<V2BriefView | null>("v2_briefing_retry", { taskId }, () => null);
 
+/* ── Grilling (#35) ── */
+
+export type V2GrillStatus = "pending" | "question" | "brief" | "failed" | "approved" | "cancelled";
+export type V2GrillRole = "question" | "answer";
+
+export interface V2GrillEntry {
+  role: V2GrillRole;
+  text: string;
+  createdAt: string;
+}
+
+/** One saved exchange. A Task-line edit starts a new revision and keeps the earlier one. */
+export interface V2GrillExchange {
+  revision: number;
+  entries: V2GrillEntry[];
+}
+
+/** The whole Grilling read for one Task. It carries no token, bearer or Reference content. */
+export interface V2GrillView {
+  taskId: string;
+  mode: V2AgentMode;
+  taskStatus: V2TaskStatus;
+  revision: number | null;
+  status: V2GrillStatus | null;
+  question: string | null;
+  entries: V2GrillEntry[];
+  exchanges: V2GrillExchange[];
+  missingReferences: string[];
+  canAnswer: boolean;
+  canRetry: boolean;
+  canCancel: boolean;
+  canGo: boolean;
+  dispatchReady: boolean;
+  projectId: string | null;
+  rendered: string | null;
+  pendingAction: string | null;
+  failureStage: string | null;
+  failureReason: string | null;
+  updatedAt: string | null;
+}
+
+export const v2GrillingView = (taskId: string) =>
+  call<V2GrillView | null>("v2_grilling_view", { taskId }, () => null);
+
+/** Starts one Grilling exchange for a fresh ?? Task. Concurrent callers share the attempt. */
+export const v2GrillingStart = (taskId: string) =>
+  call<V2GrillView | null>("v2_grilling_start", { taskId }, () => null);
+
+/** Persists one answer before the next model turn is claimed. */
+export const v2GrillingAnswer = (taskId: string, revision: number, answer: string) =>
+  call<V2GrillView | null>("v2_grilling_answer", { taskId, revision, answer }, () => null);
+
+/** Re-runs the failed turn with the saved transcript replayed. */
+export const v2GrillingRetry = (taskId: string) =>
+  call<V2GrillView | null>("v2_grilling_retry", { taskId }, () => null);
+
+/** Cancels the exchange without deleting its saved transcript. */
+export const v2GrillingCancel = (taskId: string) =>
+  call<V2GrillView | null>("v2_grilling_cancel", { taskId }, () => null);
+
+/** The single closing approval, bound to the displayed Brief revision. */
+export const v2GrillingGo = (taskId: string, revision: number, edited: string | null) =>
+  call<V2GrillView | null>("v2_grilling_go", { taskId, revision, edited }, () => null);
+
+export const v2GrillingContinueLinkOnly = (taskId: string, revision: number, identity: string) =>
+  call<V2GrillView | null>(
+    "v2_grilling_continue_link_only",
+    { taskId, revision, identity },
+    () => null,
+  );
+
 export interface V2NotebookSnapshot {
   notes: V2Note[];
   projects: V2Project[];
@@ -861,6 +932,8 @@ interface Events {
   "relay://slack-directory": SlackDirectoryProgress;
   /** A Brief was generated, edited, approved, retried or recovered. Payload is the Task id; empty means restart recovery. */
   "relay://briefing": string;
+  /** A Grilling question, answer, closing approval or cancellation changed. Payload is the Task id. */
+  "relay://grilling": string;
 }
 
 /** Subscribes to an app event. Returns an unsubscribe; a no-op in the browser. */
