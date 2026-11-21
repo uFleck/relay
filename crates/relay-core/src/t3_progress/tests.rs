@@ -303,6 +303,9 @@ fn a_queued_send_needs_one_new_run_with_the_exact_message() {
     assert!(confirms_send(&send, &observed).is_none());
     observed.messages[1].text = send.message.clone();
     assert_eq!(confirms_send(&send, &observed).as_deref(), Some("run-2"));
+    // The real CLI echoes the stdin line ending; that is not a different message.
+    observed.messages[1].text = format!("{}\r\n", send.message);
+    assert_eq!(confirms_send(&send, &observed).as_deref(), Some("run-2"));
 }
 
 fn make_guard(store: &V2Store, task_id: &str, attempt_id: &str, thread_id: &str) -> CommitGuard {

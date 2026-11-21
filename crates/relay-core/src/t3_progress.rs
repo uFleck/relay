@@ -391,10 +391,13 @@ pub fn confirms_send(send: &SendOperation, observation: &ThreadObservation) -> O
         .latest_run_id
         .as_deref()
         .filter(|id| !id.is_empty())?;
+    // The CLI echoes a user message with the stdin line ending appended. Compare the exact content
+    // modulo that transport newline; any other difference means the message was not delivered.
+    let sent = send.message.trim_end_matches(['\r', '\n']);
     let exact = observation.messages.iter().any(|message| {
         message.role.eq_ignore_ascii_case("user")
             && message.run_id == run_id
-            && message.text == send.message
+            && message.text.trim_end_matches(['\r', '\n']) == sent
     });
     exact.then(|| run_id.to_string())
 }
