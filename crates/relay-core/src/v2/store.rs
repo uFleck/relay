@@ -11,6 +11,7 @@ use std::{
 
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, TransactionBehavior, params};
 
+use super::briefing::{BriefContent, BriefRecord, BriefStatus, TaskLineState};
 use super::import::{ImportCandidate, ImportOutcome, ImportRefreshTarget, RefreshUpdate};
 use super::model::{
     AgentMode, GrillTurn, ImportRecord, NewImportRecord, NewV2Project, NoteWrite, PreparedLine,
@@ -71,6 +72,10 @@ const MIGRATIONS: &[Migration] = &[
     Migration {
         sql: include_str!("../../migrations/v2/0007_slack_directory.sql"),
         applied: "EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'slack_directory')",
+    },
+    Migration {
+        sql: include_str!("../../migrations/v2/0008_briefing.sql"),
+        applied: "EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'briefs')",
     },
 ];
 /// 'RELY' as an integer. A non-zero application id marks a file as ours.
@@ -632,6 +637,171 @@ impl V2Store {
         let updated = task_by_id(&tx, task_id)?;
         tx.commit()?;
         Ok(updated)
+    }
+
+    // -----------------------------------------------------------------------
+    // Briefing (#34)
+    // -----------------------------------------------------------------------
+
+    /// Reads the current Task line and its live Reference snapshots. This is the only input
+    /// the Briefing policy needs to decide whether a saved Brief is still valid.
+    pub fn task_line_state(&self, task_id: &str) -> Result<TaskLineState, V2Error> {
+        let conn = self.conn();
+        let task = task_by_id(&conn, task_id)?;
+        let line_text: String = conn.query_row(
+            "SELECT text FROM note_lines WHERE id = ?1",
+            params![task.source_line_id],
+            |row| row.get(0),
+        )?;
+        let references = refs_for(&conn, "task_refs", "task_id", task_id)?;
+        Ok(TaskLineState {
+            task,
+            line_text,
+            references,
+        })
+    }
+
+    /// True when a project id still resolves. A deleted registered project closes the gate.
+    pub fn project_exists(&self, project_id: &str) -> Result<bool, V2Error> {
+        Ok(self
+            .conn()
+            .query_row(
+                "SELECT 1 FROM projects WHERE id = ?1",
+                params![project_id],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some())
+    }
+
+    /// Reads the persisted Brief for a Task, if one has been started.
+    pub fn brief(&self, task_id: &str) -> Result<Option<BriefRecord>, V2Error> {
+        let conn = self.conn();
+        Ok(conn
+            .query_row(
+                "SELECT task_id, revision, source_signature, status, content_json, rendered,
+                    link_only_refs, wait_approval_revision, attempt_id, rewrite_instruction,
+                    failure_stage, failure_reason, created_at, updated_at
+             FROM briefs WHERE task_id = ?1",
+                params![task_id],
+                brief_from_row,
+            )
+            .optional()?)
+    }
+
+    /// Upserts a Brief and mirrors its gate state onto the Task in one transaction. No policy
+    /// lives here: the caller decides the record, this method only makes the write atomic.
+    pub fn write_brief(&self, record: &BriefRecord) -> Result<BriefRecord, V2Error> {
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        task_by_id(&tx, &record.task_id)?;
+        let content_json = match &record.content {
+            Some(content) => serde_json::to_string(content).ok(),
+            None => None,
+        };
+        let link_only =
+            serde_json::to_string(&record.link_only_refs).unwrap_or_else(|_| "[]".into());
+        tx.execute(
+            "INSERT INTO briefs
+                (task_id, revision, source_signature, status, content_json, rendered,
+                 link_only_refs, wait_approval_revision, attempt_id, rewrite_instruction,
+                 failure_stage, failure_reason, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
+             ON CONFLICT(task_id) DO UPDATE SET
+                revision = excluded.revision, source_signature = excluded.source_signature,
+                status = excluded.status, content_json = excluded.content_json,
+                rendered = excluded.rendered, link_only_refs = excluded.link_only_refs,
+                wait_approval_revision = excluded.wait_approval_revision,
+                attempt_id = excluded.attempt_id, rewrite_instruction = excluded.rewrite_instruction,
+                failure_stage = excluded.failure_stage, failure_reason = excluded.failure_reason,
+                updated_at = excluded.updated_at",
+            params![
+                record.task_id, record.revision, record.source_signature, record.status.as_str(),
+                content_json, record.rendered, link_only, record.wait_approval_revision,
+                record.attempt_id, record.rewrite_instruction, record.failure_stage,
+                record.failure_reason, record.created_at, record.updated_at,
+            ],
+        )?;
+
+        let task = task_by_id(&tx, &record.task_id)?;
+        let has_brief = record
+            .rendered
+            .as_deref()
+            .is_some_and(|text| !text.trim().is_empty());
+        let (status, failure_stage, failure_reason, pending_action) = match record.status {
+            BriefStatus::Pending => (
+                TaskStatus::Briefing,
+                None,
+                None,
+                Some("Writing the Brief…".to_string()),
+            ),
+            BriefStatus::WaitingReference => (
+                TaskStatus::Failed,
+                Some(super::briefing::FAILURE_STAGE.to_string()),
+                Some("A Reference has no readable or cached content. Continue with link only or Retry.".to_string()),
+                Some("Continue with link only, or Retry after the Reference resolves.".to_string()),
+            ),
+            BriefStatus::Failed => (
+                TaskStatus::Failed,
+                record.failure_stage.clone(),
+                record.failure_reason.clone(),
+                Some("Retry the Briefing stage.".to_string()),
+            ),
+            BriefStatus::Ready | BriefStatus::Approved => (
+                super::briefing::derive_task_status(
+                    task.agent_mode,
+                    record.status,
+                    task.project_id.is_some(),
+                    has_brief,
+                ),
+                None,
+                None,
+                None,
+            ),
+        };
+        tx.execute(
+            "UPDATE tasks SET status = ?2, brief = ?3, failure_stage = ?4,
+                 failure_reason = ?5, pending_action = ?6, updated_at = ?7
+             WHERE id = ?1",
+            params![
+                record.task_id,
+                status.as_str(),
+                record.rendered,
+                failure_stage,
+                failure_reason,
+                pending_action,
+                now(),
+            ],
+        )?;
+        tx.commit()?;
+        Ok(record.clone())
+    }
+
+    /// Turns attempts abandoned by a restart into a manual-retry failure. The last saved
+    /// Brief is left intact, so a user never loses what they saw before the exit.
+    pub fn recover_interrupted_briefs(&self) -> Result<usize, V2Error> {
+        let pending = {
+            let conn = self.conn();
+            let mut stmt = conn.prepare(
+                "SELECT task_id, revision, source_signature, status, content_json, rendered,
+                        link_only_refs, wait_approval_revision, attempt_id, rewrite_instruction,
+                        failure_stage, failure_reason, created_at, updated_at
+                 FROM briefs WHERE status = 'pending'",
+            )?;
+            stmt.query_map([], brief_from_row)?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        let recovered = pending.len();
+        for mut record in pending {
+            record.status = BriefStatus::Failed;
+            record.attempt_id = None;
+            record.failure_stage = Some(super::briefing::FAILURE_STAGE.to_string());
+            record.failure_reason =
+                Some("Briefing was interrupted by a restart. Use Retry.".to_string());
+            record.updated_at = now();
+            self.write_brief(&record)?;
+        }
+        Ok(recovered)
     }
 
     // -----------------------------------------------------------------------
@@ -2406,6 +2576,29 @@ fn note_by_id(conn: &Connection, id: &str) -> Result<V2Note, V2Error> {
         updated_at,
         lines,
         tasks,
+    })
+}
+
+fn brief_from_row(row: &Row<'_>) -> rusqlite::Result<BriefRecord> {
+    let content_json: Option<String> = row.get("content_json")?;
+    let content = content_json.and_then(|raw| serde_json::from_str::<BriefContent>(&raw).ok());
+    let link_only: String = row.get("link_only_refs")?;
+    let status: String = row.get("status")?;
+    Ok(BriefRecord {
+        task_id: row.get("task_id")?,
+        revision: row.get("revision")?,
+        source_signature: row.get("source_signature")?,
+        status: BriefStatus::parse(&status).unwrap_or(BriefStatus::Failed),
+        content,
+        rendered: row.get("rendered")?,
+        link_only_refs: serde_json::from_str(&link_only).unwrap_or_default(),
+        wait_approval_revision: row.get("wait_approval_revision")?,
+        attempt_id: row.get("attempt_id")?,
+        rewrite_instruction: row.get("rewrite_instruction")?,
+        failure_stage: row.get("failure_stage")?,
+        failure_reason: row.get("failure_reason")?,
+        created_at: row.get("created_at")?,
+        updated_at: row.get("updated_at")?,
     })
 }
 

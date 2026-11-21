@@ -152,6 +152,7 @@ export default function App() {
             task={selectedTask}
             project={workspace.projects.find((candidate) => candidate.id === selectedTask.projectId)}
             note={workspace.notes.find((candidate) => candidate.id === selectedTask.noteId)}
+            projects={workspace.projects}
             onClose={closeSheet}
           />
         )}

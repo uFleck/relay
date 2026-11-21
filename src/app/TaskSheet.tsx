@@ -1,21 +1,22 @@
 import { useEffect, useRef } from "react";
 import { Icon } from "../components/Icon";
+import { BriefPanel } from "../components/BriefPanel";
 import { SIGIL } from "../workspace";
 import type { V2Note, V2Project, V2Task } from "../ipc";
 
-/* The read-only v2 Task sheet. App resolves the Task by its routed id from the unfiltered
-   workspace on every committed change, so an open sheet refreshes without the filter moving
-   it. Live Brief editing, approvals, questions, retry, Follow-up and closure belong to the
-   #34-#37 producers; this surface only reads what they persisted. */
+/* The v2 Task sheet. App resolves the Task by its routed id from the unfiltered workspace on
+   every committed change, so an open sheet refreshes without the filter moving it. Act and Wait
+   Tasks render the shared Brief panel; Grilling, questions, Follow-up and closure stay with #35-#37. */
 
 interface Props {
   task: V2Task;
   project: V2Project | undefined;
   note: V2Note | undefined;
+  projects: V2Project[];
   onClose: () => void;
 }
 
-export function TaskSheet({ task, project, note, onClose }: Props) {
+export function TaskSheet({ task, project, note, projects, onClose }: Props) {
   const sheetRef = useRef<HTMLElement>(null);
   const sourceLine = note?.lines.find((line) => line.id === task.sourceLineId)?.text;
 
@@ -86,7 +87,11 @@ export function TaskSheet({ task, project, note, onClose }: Props) {
 
         <section className="sec">
           <h3>Brief</h3>
-          <p className="desc">{task.brief ?? "No Brief yet."}</p>
+          {task.agentMode === "grill" ? (
+            <p className="desc">{task.brief ?? "No Brief yet."}</p>
+          ) : (
+            <BriefPanel taskId={task.id} projects={projects} />
+          )}
         </section>
 
         {task.pendingAction && (

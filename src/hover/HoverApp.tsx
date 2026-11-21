@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Composer } from "../components/Composer";
+import { BriefPanel } from "../components/BriefPanel";
 import { Icon, Mark } from "../components/Icon";
 import {
   getSnapshot,
@@ -56,6 +57,8 @@ export function HoverApp() {
   const [pulsing, setPulsing] = useState(false);
   const [composing, setComposing] = useState(false);
   const [showWaiting, setShowWaiting] = useState(false);
+  /** A Wait Task being briefed inline in the Dock; empty when no panel is open. */
+  const [dockBrief, setDockBrief] = useState<string | null>(null);
   const composerActive = useRef(false);
   const update = useUpdater();
   const shell = useRef<HTMLDivElement>(null);
@@ -63,13 +66,14 @@ export function HoverApp() {
   const collapseTimer = useRef<number | undefined>(undefined);
   const dragging = useRef(false);
   // The pointer poll and the timers read these without restarting.
-  const live = useRef({ mode, pinned: flags.pinned, dnd: flags.dnd, composer: false, waiting: false });
+  const live = useRef({ mode, pinned: flags.pinned, dnd: flags.dnd, composer: false, waiting: false, brief: false });
   live.current = {
     mode,
     pinned: flags.pinned,
     dnd: flags.dnd,
     composer: composerActive.current,
     waiting: showWaiting,
+    brief: dockBrief !== null,
   };
 
   const pulse = useCallback(() => {
@@ -155,11 +159,11 @@ export function HoverApp() {
   const scheduleCollapse = useCallback(() => {
     if (
       live.current.pinned || dragging.current || composerActive.current || live.current.waiting ||
-      collapseTimer.current !== undefined
+      live.current.brief || collapseTimer.current !== undefined
     ) return;
     collapseTimer.current = window.setTimeout(() => {
       collapseTimer.current = undefined;
-      if (live.current.pinned || composerActive.current || live.current.waiting) return;
+      if (live.current.pinned || composerActive.current || live.current.waiting || live.current.brief) return;
       setMode("tab");
       setComposing(false);
       void hoverFocus(false);
@@ -302,6 +306,9 @@ export function HoverApp() {
             v2={v2}
             showWaiting={showWaiting}
             onToggleWaiting={() => setShowWaiting((open) => !open)}
+            dockBrief={dockBrief}
+            onDockBrief={setDockBrief}
+            onDockChanged={() => void refreshV2()}
             flags={flags}
             update={update}
             failed={failed}
@@ -345,6 +352,9 @@ interface PanelProps {
   v2: V2WorkspaceSnapshot;
   showWaiting: boolean;
   onToggleWaiting: () => void;
+  dockBrief: string | null;
+  onDockBrief: (id: string | null) => void;
+  onDockChanged: () => void;
   flags: HoverFlags;
   update: UpdateState;
   failed: boolean;
@@ -362,6 +372,9 @@ function Panel({
   v2,
   showWaiting,
   onToggleWaiting,
+  dockBrief,
+  onDockBrief,
+  onDockChanged,
   flags,
   update,
   failed,
@@ -389,7 +402,16 @@ function Panel({
   };
 
   const needsSection = showWaiting ? (
-    <WaitingList key="waiting" tasks={waiting} openTask={openTask} onClose={onToggleWaiting} />
+    <WaitingList
+      key="waiting"
+      tasks={waiting}
+      projects={v2.projects}
+      dockBrief={dockBrief}
+      onDockBrief={onDockBrief}
+      onDockChanged={onDockChanged}
+      openTask={openTask}
+      onClose={onToggleWaiting}
+    />
   ) : (
     <button
       type="button"
@@ -631,13 +653,22 @@ function UpdateBanner({ update, version }: { update: UpdateState; version: strin
 /** The full waiting list from the unfiltered v2 read, newest change first, inside Dock bounds. */
 function WaitingList({
   tasks,
+  projects,
+  dockBrief,
+  onDockBrief,
+  onDockChanged,
   openTask,
   onClose,
 }: {
   tasks: V2WorkspaceSnapshot["tasks"];
+  projects: V2WorkspaceSnapshot["projects"];
+  dockBrief: string | null;
+  onDockBrief: (id: string | null) => void;
+  onDockChanged: () => void;
   openTask: (id: string) => void;
   onClose: () => void;
 }) {
+  const briefed = tasks.find((task) => task.id === dockBrief);
   return (
     <section className="grp waiting" aria-label="Tasks waiting on you">
       <h3>
@@ -648,13 +679,41 @@ function WaitingList({
       </h3>
       <div className="waiting-list">
         {tasks.map((task) => (
-          <button type="button" className="wt" key={task.id} onClick={() => openTask(task.id)}>
-            <span className="t">{task.originalLine}</span>
-            <span className="meta">{task.status.replace(/_/g, " ")}</span>
-            <Icon name="ext" small />
-          </button>
+          <div className="wt-row" key={task.id}>
+            <button
+              type="button"
+              className="wt"
+              aria-expanded={task.agentMode === "wait" && dockBrief === task.id}
+              onClick={() =>
+                task.agentMode === "wait"
+                  ? onDockBrief(dockBrief === task.id ? null : task.id)
+                  : openTask(task.id)
+              }
+            >
+              <span className="t">{task.originalLine}</span>
+              <span className="meta">{task.status.replace(/_/g, " ")}</span>
+            </button>
+            <button
+              type="button"
+              className="ib"
+              title="Open in Relay"
+              onClick={() => openTask(task.id)}
+            >
+              <Icon name="ext" small />
+            </button>
+          </div>
         ))}
       </div>
+      {briefed && briefed.agentMode === "wait" && (
+        <div className="dock-brief" onClick={(event) => event.stopPropagation()}>
+          <BriefPanel
+            compact
+            taskId={briefed.id}
+            projects={projects}
+            onChanged={onDockChanged}
+          />
+        </div>
+      )}
     </section>
   );
 }

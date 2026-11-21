@@ -1,6 +1,7 @@
 //! Relay v2's fresh store. It owns its own file, schema and version, and shares no
 //! table with the v1 [`crate::store::Store`]. No data migration from v1 exists.
 
+pub mod briefing;
 pub mod composer;
 pub mod import;
 pub mod live;
@@ -14,6 +15,14 @@ mod store;
 #[cfg(test)]
 mod tests;
 
+pub use briefing::{
+    BriefContent, BriefError, BriefInput, BriefReadiness, BriefRecord, BriefReference, BriefStatus,
+    ConversationSummary, FAILURE_STAGE, ReferenceInputKind, ReferencePlan, TaskLineState, approve,
+    assistant_text, begin_attempt, build_prompt, build_reference_plan, complete_attempt,
+    continue_with_link_only, dispatch_readiness, fail_attempt, go_enabled, parse_model_output,
+    recover_interrupted, render_brief, retry, sanitize_stage_error, source_signature,
+    start_rewrite, task_line_state, terminal_outcome, validate,
+};
 pub use composer::{ComposerLineInput, ComposerSaveRequest, ParsedLine};
 pub use import::{
     CLICKUP_REFRESH_MS, GITHUB_REFRESH_MS, ImportCandidate, ImportOutcome, ImportRefreshTarget,

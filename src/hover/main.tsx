@@ -6,6 +6,7 @@ import "../styles/base.css";
 import "./hover.css";
 import "../styles/composer.css";
 import "../styles/references.css";
+import "../styles/briefing.css";
 import { HoverApp } from "./HoverApp";
 
 // Browser dev: /hover.html shows the needs-you panel on mock data, /hover.html?calm the idle one.

@@ -1,0 +1,122 @@
+/* Inline Brief panel shared by the Task sheet and the Dock. */
+
+.brief-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line, rgba(127, 127, 127, 0.25));
+  border-radius: 10px;
+  background: var(--panel, rgba(127, 127, 127, 0.05));
+  font-size: 12px;
+}
+
+.brief-panel.compact {
+  padding: 7px;
+  gap: 6px;
+}
+
+.brief-head,
+.brief-row,
+.brief-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.brief-head .push {
+  margin-left: auto;
+}
+
+.brief-row select,
+.brief-row input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 7px;
+  border-radius: 6px;
+  border: 1px solid var(--line, rgba(127, 127, 127, 0.3));
+  background: var(--panel, transparent);
+  color: inherit;
+  font: inherit;
+}
+
+.brief-text {
+  width: 100%;
+  min-height: 120px;
+  box-sizing: border-box;
+  padding: 8px;
+  border-radius: 8px;
+  border: 1px solid var(--line, rgba(127, 127, 127, 0.3));
+  background: var(--panel, transparent);
+  color: inherit;
+  font: inherit;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  resize: vertical;
+}
+
+.brief-panel.compact .brief-text {
+  min-height: 88px;
+}
+
+.brief-text.readonly {
+  margin: 0;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.brief-missing {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.brief-missing button {
+  text-align: left;
+  padding: 5px 8px;
+  border-radius: 6px;
+  border: 1px dashed var(--warn, #ff6a4d);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+}
+
+.brief-refs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.brief-ref {
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: var(--indigo-bg, rgba(99, 102, 241, 0.15));
+  color: var(--indigo-fg, #a5b4fc);
+  text-decoration: none;
+  font-size: 11px;
+}
+
+.brief-ref.input-linkOnly,
+.brief-ref.input-missing {
+  border: 1px solid var(--warn, #ff6a4d);
+}
+
+.brief-error {
+  margin: 0;
+  color: var(--warn, #ff6a4d);
+}
+
+.brief-ready {
+  color: var(--ok, #19c3b1);
+}
+
+.brief-wait {
+  margin: 0;
+  opacity: 0.75;
+}
+
+.brief-actions .btn[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

@@ -690,3 +690,17 @@ button.card:hover {
 .devbar .btn {
   background: var(--bg-surface);
 }
+
+/* Inline Brief panel in the Dock waiting list (#34). */
+.wt-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.wt-row .wt {
+  flex: 1;
+  min-width: 0;
+}
+.dock-brief {
+  margin-top: 6px;
+}

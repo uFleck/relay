@@ -9,6 +9,7 @@ mod hover;
 mod live;
 mod mcp;
 mod note_import;
+mod opencode;
 mod recovery;
 mod secrets;
 mod settings;
@@ -268,6 +269,7 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(HoverState::default())
         .manage(mcp::McpState::default())
+        .manage(opencode::BriefingState::default())
         .invoke_handler(tauri::generate_handler![
             show_main_window,
             open_main,
@@ -288,6 +290,12 @@ pub fn run() {
             slack::directory::v2_slack_search,
             slack::window::v2_slack_window_start,
             commands::v2_task_assign_project,
+            opencode::v2_briefing_view,
+            opencode::v2_briefing_generate,
+            opencode::v2_briefing_approve,
+            opencode::v2_briefing_rewrite,
+            opencode::v2_briefing_continue_link_only,
+            opencode::v2_briefing_retry,
             settings::v2_provider_status,
             settings::v2_provider_refresh,
             settings::v2_github_set_token,
@@ -408,6 +416,8 @@ pub fn run() {
             mcp::start(app.handle().clone(), store.clone(), &dir);
             slack::start(app.handle().clone(), store.clone());
             github::start(app.handle().clone());
+            // #34: an OpenCode attempt abandoned by a previous run becomes a manual Retry.
+            opencode::init(app.handle());
             // One v2 service owns startup, scheduled and manual Import for both providers.
             note_import::start(app.handle().clone());
             // #33: a first setup or a directory older than seven days gets its metadata scan on a

@@ -99,6 +99,9 @@ pub fn v2_composer_save(
     store: State<'_, Arc<V2Store>>,
 ) -> Result<V2Note, CommandError> {
     let saved = composer::save_submission(&store, request)?;
+    // #34: every new Act or Wait Task starts its own Brief attempt right after the commit,
+    // independent of a project and of which window submitted it.
+    crate::opencode::start_for_tasks(&app, &saved);
     let _ = app.emit(V2_CHANGE_EVENT, saved.id.clone());
     Ok(saved)
 }

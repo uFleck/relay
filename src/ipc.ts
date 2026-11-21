@@ -273,6 +273,77 @@ export interface V2Settings {
   updatedAt: string;
 }
 
+/* ── Briefing (#34) ── */
+
+/** How one Reference contributed to this attempt, as reported by the core plan. */
+export type V2BriefRefInput = "content" | "cached" | "linkOnly" | "missing";
+
+export interface V2BriefRefView {
+  identity: string;
+  canonicalUrl: string;
+  title: string | null;
+  input: V2BriefRefInput;
+  summary: string | null;
+}
+
+export interface V2BriefContent {
+  goal: string;
+  decisions: string[];
+  constraints: string[];
+  openRisks: string[];
+  conversationSummaries: { identity: string; summary: string }[];
+}
+
+/** One read drives the inline Brief panel in both the main window and the Dock. */
+export interface V2BriefView {
+  taskId: string;
+  mode: V2AgentMode;
+  taskStatus: V2TaskStatus;
+  briefRevision: number | null;
+  rendered: string | null;
+  content: V2BriefContent;
+  conversationSummaries: { identity: string; summary: string }[];
+  references: V2BriefRefView[];
+  missingReferences: string[];
+  canGo: boolean;
+  canRewrite: boolean;
+  canRetry: boolean;
+  projectId: string | null;
+  failureStage: string | null;
+  failureReason: string | null;
+  rewriteInstruction: string | null;
+  pendingAction: string | null;
+  dispatchReady: boolean;
+  updatedAt: string | null;
+}
+
+export const v2BriefingView = (taskId: string) =>
+  call<V2BriefView | null>("v2_briefing_view", { taskId }, () => null);
+
+/** Starts one generation for a Task line. Concurrent callers share the running attempt. */
+export const v2BriefingGenerate = (taskId: string) =>
+  call<V2BriefView | null>("v2_briefing_generate", { taskId }, () => null);
+
+/** Go: approves the exact revision, including edits submitted with it. */
+export const v2BriefingApprove = (taskId: string, revision: number, edited: string | null) =>
+  call<V2BriefView | null>("v2_briefing_approve", { taskId, revision, edited }, () => null);
+
+/** Requests an OpenCode rewrite. The last saved Brief stays until the new one validates. */
+export const v2BriefingRewrite = (taskId: string, revision: number, instruction: string) =>
+  call<V2BriefView | null>("v2_briefing_rewrite", { taskId, revision, instruction }, () => null);
+
+/** Explicit choice to proceed with a link when a Reference has no content. */
+export const v2BriefingContinueLinkOnly = (taskId: string, revision: number, identity: string) =>
+  call<V2BriefView | null>(
+    "v2_briefing_continue_link_only",
+    { taskId, revision, identity },
+    () => null,
+  );
+
+/** Re-runs the failed Briefing stage. */
+export const v2BriefingRetry = (taskId: string) =>
+  call<V2BriefView | null>("v2_briefing_retry", { taskId }, () => null);
+
 export interface V2NotebookSnapshot {
   notes: V2Note[];
   projects: V2Project[];
@@ -788,6 +859,8 @@ interface Events {
   "relay://reference-change": string;
   /** Directory scan progress, shared by the Dock and Notebook pickers. */
   "relay://slack-directory": SlackDirectoryProgress;
+  /** A Brief was generated, edited, approved, retried or recovered. Payload is the Task id; empty means restart recovery. */
+  "relay://briefing": string;
 }
 
 /** Subscribes to an app event. Returns an unsubscribe; a no-op in the browser. */
