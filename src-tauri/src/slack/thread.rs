@@ -79,6 +79,11 @@ pub async fn persist(
 ) {
     let at = now();
     let ms = now_ms();
+    // A permalink discovered a conversation even when its thread is unreadable. The directory row
+    // carries only the id (a `C` id keeps an unknown kind); it never advances the scan clock.
+    if let relay_core::v2::ReferenceKey::Slack { channel_id, .. } = key {
+        relay_core::v2::note_discovery(store, channel_id, None, &at);
+    }
     if let Some(snapshot) = &resolution.row.snapshot {
         let keep_cached = resolution.thread.is_some()
             || store

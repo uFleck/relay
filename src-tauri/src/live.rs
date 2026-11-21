@@ -67,6 +67,13 @@ pub async fn v2_reference_exact(
         slack::thread::persist(&app, &store, &identity, &resolution).await;
         return Ok(Some(resolution.row));
     }
+    if matches!(identity, ReferenceKey::SlackWindow { .. }) {
+        // A picked conversation is a frozen window: the same command completes the read and hands
+        // #34 the immutable bounds and content through the shared resolved-Reference row.
+        let resolution = slack::window::resolve(&app, &store, &identity).await;
+        slack::window::persist(&app, &store, &identity, &resolution).await;
+        return Ok(Some(resolution.row));
+    }
     let creds = live_credentials(&store).await;
     let Some(row) = read_exact(&identity, &creds, &now()).await.ok() else {
         return Ok(None);

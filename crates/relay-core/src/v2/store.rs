@@ -25,6 +25,9 @@ use super::reference::{
     ReferenceAvailability, ReferenceKey, ReferenceSnapshot, V2PickerGroup, V2PickerRow,
     snapshot_needs_recovery,
 };
+use super::slack_directory::{
+    ConversationKind, DirectoryConversation, DirectoryState, SlackWindow,
+};
 use super::slack_thread::SlackThread;
 use crate::model::{from_unix_millis, new_id, now};
 
@@ -64,6 +67,10 @@ const MIGRATIONS: &[Migration] = &[
     Migration {
         sql: include_str!("../../migrations/v2/0006_slack_thread_cache.sql"),
         applied: "EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'slack_thread_cache')",
+    },
+    Migration {
+        sql: include_str!("../../migrations/v2/0007_slack_directory.sql"),
+        applied: "EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'slack_directory')",
     },
 ];
 /// 'RELY' as an integer. A non-zero application id marks a file as ours.
@@ -131,6 +138,9 @@ pub struct V2Store {
     /// separate from the SQLite write lock and from Slack directory/sync guards, so a cold miss
     /// is fetched once while the CLI runs with no database lock held.
     thread_inflight: Mutex<HashSet<String>>,
+    /// #33: one metadata directory scan at a time. Deliberately separate from the thread gate:
+    /// thread reads, window reads and searches continue while a directory scan holds this.
+    directory_inflight: Mutex<bool>,
 }
 
 /// Clears one in-flight thread key on every outcome, errors and retries included.
@@ -145,6 +155,15 @@ impl Drop for ThreadGuard<'_> {
             .lock()
             .expect("relay v2 thread gate poisoned")
             .remove(&self.key);
+    }
+}
+
+/// Clears the single-flight directory flag on every outcome, errors included.
+pub struct DirectoryGuard<'a>(&'a Mutex<bool>);
+
+impl Drop for DirectoryGuard<'_> {
+    fn drop(&mut self) {
+        *self.0.lock().expect("relay v2 directory gate poisoned") = false;
     }
 }
 
@@ -177,6 +196,7 @@ impl V2Store {
         Ok(Self {
             conn: Mutex::new(conn),
             thread_inflight: Mutex::new(HashSet::new()),
+            directory_inflight: Mutex::new(false),
         })
     }
 
@@ -200,6 +220,20 @@ impl V2Store {
             key,
             inflight: &self.thread_inflight,
         })
+    }
+
+    /// Reserves the single directory scan. `None` means a scan is already running; the caller
+    /// should keep the last directory and report progress instead of starting a second run.
+    pub fn try_begin_directory(&self) -> Option<DirectoryGuard<'_>> {
+        let mut inflight = self
+            .directory_inflight
+            .lock()
+            .expect("relay v2 directory gate poisoned");
+        if *inflight {
+            return None;
+        }
+        *inflight = true;
+        Some(DirectoryGuard(&self.directory_inflight))
     }
 
     // -----------------------------------------------------------------------
@@ -934,6 +968,189 @@ impl V2Store {
     }
 
     // -----------------------------------------------------------------------
+    // Conversation directory and frozen windows (v2 only)
+    // -----------------------------------------------------------------------
+
+    /// The scan clock and the last validated resume cursor. A missing timestamp means a first
+    /// scan is due; a cursor means a previous scan was cut short and can resume.
+    pub fn directory_state(&self) -> Result<DirectoryState, V2Error> {
+        let row: Option<(Option<String>, Option<String>)> = self
+            .conn()
+            .query_row(
+                "SELECT last_success_at, last_cursor FROM slack_directory_state WHERE id = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        Ok(row
+            .map(|(last_success_at, last_cursor)| DirectoryState {
+                last_success_at,
+                last_cursor,
+            })
+            .unwrap_or_default())
+    }
+
+    /// The last committed directory. Discoveries from permalinks and searches live here too.
+    pub fn directory(&self) -> Result<Vec<DirectoryConversation>, V2Error> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, kind, name, members_json, archived, discovered, updated_at
+             FROM slack_directory ORDER BY id",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let members = serde_json::from_str(&row.get::<_, String>(3)?).unwrap_or_default();
+            Ok(DirectoryConversation {
+                id: row.get(0)?,
+                kind: ConversationKind::parse(&row.get::<_, String>(1)?),
+                name: row.get(2)?,
+                members,
+                archived: row.get::<_, i64>(4)? != 0,
+                discovered: row.get::<_, i64>(5)? != 0,
+                updated_at: row.get(6)?,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    /// Replaces the directory in one transaction. `success_at` advances the full-scan clock and
+    /// clears the resume cursor; discoveries pass `None` so they never move that clock. A cursor
+    /// saved on its own keeps the previous directory and freshness time intact.
+    pub fn save_directory(
+        &self,
+        rows: &[DirectoryConversation],
+        success_at: Option<&str>,
+        cursor: Option<&str>,
+    ) -> Result<(), V2Error> {
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if success_at.is_some() || cursor.is_none() {
+            tx.execute("DELETE FROM slack_directory", [])?;
+            for row in rows {
+                let members = serde_json::to_string(&row.members).map_err(|error| {
+                    V2Error::InvalidInput(format!("could not encode directory members: {error}"))
+                })?;
+                tx.execute(
+                    "INSERT INTO slack_directory
+                         (id, kind, name, members_json, archived, discovered, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    params![
+                        row.id,
+                        row.kind.as_str(),
+                        row.name,
+                        members,
+                        row.archived as i64,
+                        row.discovered as i64,
+                        row.updated_at,
+                    ],
+                )?;
+            }
+        }
+        match success_at {
+            Some(at) => {
+                tx.execute(
+                    "UPDATE slack_directory_state SET last_success_at = ?1, last_cursor = NULL
+                     WHERE id = 1",
+                    params![at],
+                )?;
+            }
+            None if cursor.is_some() => {
+                tx.execute(
+                    "UPDATE slack_directory_state SET last_cursor = ?1 WHERE id = 1",
+                    params![cursor],
+                )?;
+            }
+            None => {}
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// The frozen window captured for one local window Reference id.
+    pub fn slack_window(&self, id: &str) -> Result<Option<SlackWindow>, V2Error> {
+        let row: Option<(String, String, String, String, String, i64, String)> = self
+            .conn()
+            .query_row(
+                "SELECT channel_id, selected_at, oldest, latest, messages_json, ready, link
+                 FROM slack_window WHERE id = ?1",
+                params![id],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let Some((channel_id, selected_at, oldest, latest, messages_json, ready, link)) = row
+        else {
+            return Ok(None);
+        };
+        let messages = serde_json::from_str(&messages_json).map_err(|error| {
+            V2Error::InvalidInput(format!("corrupt Slack window messages: {error}"))
+        })?;
+        Ok(Some(SlackWindow {
+            id: id.to_string(),
+            channel_id,
+            selected_at,
+            oldest,
+            latest,
+            messages,
+            link,
+            ready: ready != 0,
+        }))
+    }
+
+    /// Commits the immutable bounds and content of a window. The id is the local Reference, so
+    /// two picks of the same channel are distinct rows that survive reopen and edit.
+    pub fn save_window(&self, window: &SlackWindow) -> Result<(), V2Error> {
+        let messages = serde_json::to_string(&window.messages).map_err(|error| {
+            V2Error::InvalidInput(format!("could not encode window messages: {error}"))
+        })?;
+        if window.id.trim().is_empty()
+            || window.channel_id.trim().is_empty()
+            || window.oldest.trim().is_empty()
+            || window.latest.trim().is_empty()
+        {
+            return Err(V2Error::InvalidInput(
+                "an incomplete Slack window cannot be stored".into(),
+            ));
+        }
+        self.conn().execute(
+            "INSERT INTO slack_window
+                 (id, channel_id, selected_at, oldest, latest, messages_json, link, ready,
+                  created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)
+             ON CONFLICT(id) DO UPDATE SET
+                 channel_id = excluded.channel_id,
+                 selected_at = excluded.selected_at,
+                 oldest = excluded.oldest,
+                 latest = excluded.latest,
+                 messages_json = excluded.messages_json,
+                 link = excluded.link,
+                 ready = excluded.ready,
+                 updated_at = excluded.updated_at",
+            params![
+                window.id,
+                window.channel_id,
+                window.selected_at,
+                window.oldest,
+                window.latest,
+                messages,
+                window.link,
+                window.ready as i64,
+                now(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
     // Reference snapshots and persistent recovery
     // -----------------------------------------------------------------------
 
@@ -1404,6 +1621,71 @@ impl V2Store {
             }
         }
 
+        // #33: the conversation directory. A row is a channel, DM or group DM, not yet a window;
+        // picking it creates a fresh window Reference so two picks stay distinct.
+        {
+            let mut stmt = conn.prepare(
+                "SELECT id, kind, name, members_json, archived, updated_at FROM slack_directory",
+            )?;
+            let found = stmt
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, i64>(4)?,
+                        row.get::<_, String>(5)?,
+                    ))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            for (id, kind, name, members_json, archived, updated_at) in found {
+                let members: Vec<String> = serde_json::from_str(&members_json).unwrap_or_default();
+                let label = if name.trim().is_empty() {
+                    id.clone()
+                } else {
+                    name.clone()
+                };
+                let mut metadata = vec![match kind.as_str() {
+                    "public" => "public channel".to_string(),
+                    "private" => "private channel".to_string(),
+                    "dm" => "direct message".to_string(),
+                    "group" => "group direct message".to_string(),
+                    _ => "conversation".to_string(),
+                }];
+                if !members.is_empty() {
+                    metadata.push(format!("{} members", members.len()));
+                }
+                if archived != 0 {
+                    metadata.push("archived".to_string());
+                }
+                let mut row = V2PickerRow {
+                    key: format!("slackconv:{id}"),
+                    kind: "slackchannel".to_string(),
+                    display_id: if name.trim().is_empty() {
+                        format!("@{id}")
+                    } else if name.starts_with('#') {
+                        format!("@{name}")
+                    } else {
+                        format!("@#{name}")
+                    },
+                    canonical_link: format!("https://slack.com/archives/{id}"),
+                    availability: ReferenceAvailability::Ready,
+                    group: V2PickerGroup::Conversations,
+                    title: label,
+                    state: None,
+                    metadata: metadata.into_iter().take(3).collect(),
+                    snapshot: None,
+                    unavailable_reason: None,
+                    settings_destination: None,
+                    updated_at,
+                    exact_match: false,
+                };
+                row.exact_match = picker_exact(&row, &needle);
+                insert(row, &mut rows);
+            }
+        }
+
         // Notes and Tasks are local Reference targets in their own right.
         for note in notebook_notes(&conn)? {
             let key = ReferenceKey::Note {
@@ -1589,7 +1871,7 @@ fn picker_alias(
     repo_counts: &HashMap<String, usize>,
 ) -> Option<String> {
     match key {
-        ReferenceKey::Slack { .. } => snapshot
+        ReferenceKey::Slack { .. } | ReferenceKey::SlackWindow { .. } => snapshot
             .and_then(|snapshot| snapshot.channel_name.clone())
             .filter(|name| !name.is_empty()),
         ReferenceKey::Github { owner_repo, .. } => {

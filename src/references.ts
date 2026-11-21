@@ -21,6 +21,84 @@ export const GROUP_ORDER: V2PickerGroup[] = [
   "notesTasks",
 ];
 
+/** Stable action-row ids. `slack-search` never moves, so highlighting survives search results. */
+export const SLACK_REFRESH_KEY = "action:slack-refresh";
+export const SLACK_SEARCH_KEY = "action:slack-search";
+
+/** One detailed `slack_search_public_and_private` hit, as returned by the Rust boundary. */
+export interface SlackSearchHit {
+  channelId: string;
+  channelName: string;
+  ts: string;
+  permalink: string;
+  threadTs: string | null;
+  snippet: string;
+}
+
+function actionRow(key: string, displayId: string, title: string): V2PickerRow {
+  return {
+    key,
+    kind: "action",
+    displayId,
+    canonicalLink: "",
+    availability: "ready",
+    group: "conversations",
+    title,
+    state: null,
+    metadata: [],
+    snapshot: null,
+    unavailableReason: null,
+    settingsDestination: null,
+    updatedAt: "1970-01-01T00:00:00.000Z",
+    exactMatch: false,
+  };
+}
+
+/** Conversations always offer Refresh; a nonempty query also gets one Enter-driven search row. */
+export function slackActionRows(query: string): V2PickerRow[] {
+  const rows = [actionRow(SLACK_REFRESH_KEY, "↻", "Refresh conversations")];
+  const trimmed = query.trim();
+  if (trimmed.length > 0) {
+    rows.push(actionRow(SLACK_SEARCH_KEY, "⌕", `Search Slack messages for “${trimmed}”`));
+  }
+  return rows;
+}
+
+export function isSlackAction(row: V2PickerRow | undefined): boolean {
+  return !!row && (row.key === SLACK_REFRESH_KEY || row.key === SLACK_SEARCH_KEY);
+}
+
+/** A search hit is a thread Reference: the permalink carries the root `thread_ts` for a reply. */
+export function slackHitRow(hit: SlackSearchHit): V2PickerRow | null {
+  const parsed = parseUrlValue(hit.permalink);
+  if (!parsed) return null;
+  const firstLine = hit.snippet.split("\n")[0].trim();
+  return {
+    key: parsed.identity,
+    kind: parsed.kind,
+    displayId: parsed.display,
+    canonicalLink: parsed.canonical,
+    availability: "ready",
+    group: "conversations",
+    title: firstLine || "Slack message",
+    state: null,
+    metadata: [hit.channelName || hit.channelId],
+    snapshot: null,
+    unavailableReason: null,
+    settingsDestination: null,
+    updatedAt: new Date().toISOString(),
+    exactMatch: false,
+  };
+}
+
+/** Deduplicates by canonical thread key, refreshing matching rows in place and appending hits. */
+export function mergeSlackHits(rows: V2PickerRow[], hits: SlackSearchHit[]): V2PickerRow[] {
+  return mergeLiveRows(
+    rows,
+    hits.map(slackHitRow).filter((row): row is V2PickerRow => row !== null),
+  );
+}
+
 export interface ReferenceSnapshot {
   title: string | null;
   state: string | null;

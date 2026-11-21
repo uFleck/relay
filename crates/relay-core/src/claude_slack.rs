@@ -74,14 +74,17 @@ pub enum Tool {
     ReadChannel,
     ReadThread,
     UserProfile,
+    /// #33: the conversation directory scan (`slack_list_user_channels`).
+    ListChannels,
 }
 
 impl Tool {
-    pub const ALL: [Tool; 4] = [
+    pub const ALL: [Tool; 5] = [
         Tool::Search,
         Tool::ReadChannel,
         Tool::ReadThread,
         Tool::UserProfile,
+        Tool::ListChannels,
     ];
 
     pub fn full_name(self) -> String {
@@ -90,6 +93,7 @@ impl Tool {
             Tool::ReadChannel => "slack_read_channel",
             Tool::ReadThread => "slack_read_thread",
             Tool::UserProfile => "slack_read_user_profile",
+            Tool::ListChannels => "slack_list_user_channels",
         };
         format!("{PREFIX}{short}")
     }
@@ -157,6 +161,54 @@ impl ToolCall {
         Self {
             tool: Tool::ReadThread,
             input: json!({ "channel_id": channel, "message_ts": message_ts }),
+        }
+    }
+
+    /// #33: a fixed-window read. Twenty messages per page is the window page limit, distinct
+    /// from the v1 sync's `CHANNEL_LIMIT` of 100.
+    pub fn read_window(channel: &str, oldest: &str, cursor: Option<&str>) -> Self {
+        let mut input = json!({
+            "channel_id": channel,
+            "oldest": oldest,
+            "limit": 20,
+        });
+        if let Some(cursor) = cursor {
+            input["cursor"] = json!(cursor);
+        }
+        Self {
+            tool: Tool::ReadChannel,
+            input,
+        }
+    }
+
+    /// #33: one full directory page. The four fixed arguments never change between pages; only
+    /// the cursor advances, and a short page still carries a cursor that must be followed.
+    pub fn list_channels(cursor: Option<&str>) -> Self {
+        let mut input = json!({
+            "types": "public_channel,private_channel,im,mpim",
+            "format": "full",
+            "limit": 200,
+        });
+        if let Some(cursor) = cursor {
+            input["cursor"] = json!(cursor);
+        }
+        Self {
+            tool: Tool::ListChannels,
+            input,
+        }
+    }
+
+    /// #33: one detailed message-search call. `keywords` replaces v1's DM-only `filters` search.
+    pub fn search_messages(query: &str) -> Self {
+        Self {
+            tool: Tool::Search,
+            input: json!({
+                "keywords": [query],
+                "natural_language_query": "",
+                "response_format": "detailed",
+                "include_context": false,
+                "limit": 10,
+            }),
         }
     }
 }
@@ -291,7 +343,7 @@ pub struct StreamData {
     pub connector_status: Option<String>,
 }
 
-fn content_text(content: &Value) -> String {
+pub(crate) fn content_text(content: &Value) -> String {
     match content {
         Value::String(text) => text.clone(),
         Value::Array(items) => items
@@ -1725,6 +1777,7 @@ mod tests {
                 "1790000200.000100",
                 &[(SELF, "1790000260.000100", "nice")],
             )),
+            Tool::ListChannels => None,
         })
     }
 

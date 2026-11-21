@@ -7,7 +7,9 @@ pub mod live;
 mod model;
 pub mod recovery;
 pub mod reference;
+pub mod slack_directory;
 pub mod slack_thread;
+pub mod slack_window;
 mod store;
 #[cfg(test)]
 mod tests;
@@ -37,8 +39,18 @@ pub use reference::{
     GithubItemKind, ReferenceAvailability, ReferenceKey, ReferenceParseResult, ReferenceSnapshot,
     UrlMatch, V2PickerGroup, V2PickerRow, known_key, parse_urls, snapshot_needs_recovery,
 };
+pub use slack_directory::{
+    ConversationKind, DIRECTORY_TIMEOUT, DetailedHit, DirectoryConversation, DirectoryScanResult,
+    DirectoryState, MAX_RUNS, SEARCH_TIMEOUT, STALE_DAYS, SlackWindow, directory_request,
+    discovery, merge_conversations, note_discovery, parse_directory, parse_directory_run,
+    parse_search_detailed, scan_directory, search_messages,
+};
 pub use slack_thread::{
     CachedMessage, ParsedThread, SlackThread, THREAD_TIMEOUT, ThreadFailure, ThreadResolution,
     parse_thread_full, resolve_thread, thread_request,
 };
-pub use store::{ThreadGuard, V2Error, V2Store};
+pub use slack_window::{
+    WINDOW_TIMEOUT, WindowFailure, WindowResolution, bounds as window_bounds, failed_window,
+    freeze_window, resolve_window,
+};
+pub use store::{DirectoryGuard, ThreadGuard, V2Error, V2Store};

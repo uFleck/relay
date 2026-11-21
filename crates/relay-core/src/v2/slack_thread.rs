@@ -564,7 +564,7 @@ mod tests {
     struct Fake {
         responses: RefCell<Vec<Result<String, ClaudeError>>>,
         calls: RefCell<usize>,
-        connector: &'static str,
+        _connector: &'static str,
     }
 
     impl Fake {
@@ -572,7 +572,7 @@ mod tests {
             Self {
                 responses: RefCell::new(responses),
                 calls: RefCell::new(0),
-                connector: "connected",
+                _connector: "connected",
             }
         }
     }

@@ -4,7 +4,12 @@ import { mockSnapshot } from "./data/mock";
 import { sortNotes } from "./notes";
 import type { ProviderKey } from "./route";
 import { parseUrls } from "./references";
-import type { LiveQueryResult, ReferenceParseResult, V2PickerRow } from "./references";
+import type {
+  LiveQueryResult,
+  ReferenceParseResult,
+  SlackSearchHit,
+  V2PickerRow,
+} from "./references";
 import type { ProposalDecision, RepoCandidate, Snapshot } from "./types";
 
 /* Typed wrappers over the Rust commands. Outside Tauri (pnpm dev in a browser), or while a command
@@ -387,9 +392,67 @@ export async function v2ReferencePick(row: V2PickerRow): Promise<void> {
   await invoke<void>("v2_reference_pick", { row });
 }
 
+/* ── Slack directory, explicit search and frozen windows (#33) ── */
+
+export interface SlackDirectoryReport {
+  conversations: number;
+  invocations: number;
+  costUsd: number;
+  scannedAt: string | null;
+  error: string | null;
+  coalesced: boolean;
+}
+
+export interface SlackSearchReport {
+  query: string;
+  hits: SlackSearchHit[];
+  error: string | null;
+}
+
+export interface SlackDirectoryProgress {
+  state: string;
+  conversations: number;
+  error: string | null;
+}
+
+/** Manual Refresh conversations. The core single-flight guard coalesces a second press. */
+export const v2SlackRefresh = () =>
+  call<SlackDirectoryReport>(
+    "v2_slack_refresh",
+    undefined,
+    () => ({
+      conversations: 0,
+      invocations: 0,
+      costUsd: 0,
+      scannedAt: null,
+      error: "Conversations refresh runs in the desktop app.",
+      coalesced: false,
+    }),
+  );
+
+/** Enter-driven explicit search. Typing never calls this. */
+export async function v2SlackSearch(query: string): Promise<SlackSearchReport> {
+  if (!inTauri) return { query, hits: [], error: null };
+  return await invoke<SlackSearchReport>("v2_slack_search", { query });
+}
+
+/** Creates a distinct frozen-window Reference and returns the immediate "fetching…" chip row. */
+export async function v2SlackWindowStart(
+  channelId: string,
+  host: string | null,
+  name: string | null,
+): Promise<V2PickerRow | null> {
+  if (!inTauri) return null;
+  return await invoke<V2PickerRow | null>("v2_slack_window_start", { channelId, host, name });
+}
+
 /** A snapshot changed (picked or recovered) in either window. */
 export const onReferenceChange = (handler: (key: string) => void) =>
   onEvent("relay://reference-change", handler);
+
+/** Directory scan progress. Kept separate from provider search feedback. */
+export const onSlackDirectory = (handler: (progress: SlackDirectoryProgress) => void) =>
+  onEvent("relay://slack-directory", handler);
 
 /* Writes never fall back to a mock: a missing command or a stale revision must surface as
    an error, not as a note that looks saved. In a plain browser there is no store at all. */
@@ -723,6 +786,8 @@ interface Events {
   "relay://settings-change": null;
   /** A picked or recovered Reference snapshot changed; the payload is its canonical key. */
   "relay://reference-change": string;
+  /** Directory scan progress, shared by the Dock and Notebook pickers. */
+  "relay://slack-directory": SlackDirectoryProgress;
 }
 
 /** Subscribes to an app event. Returns an unsubscribe; a no-op in the browser. */

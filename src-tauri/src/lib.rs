@@ -284,6 +284,9 @@ pub fn run() {
             live::v2_reference_search,
             live::v2_reference_exact,
             live::v2_reference_pick,
+            slack::directory::v2_slack_refresh,
+            slack::directory::v2_slack_search,
+            slack::window::v2_slack_window_start,
             commands::v2_task_assign_project,
             settings::v2_provider_status,
             settings::v2_provider_refresh,
@@ -407,6 +410,9 @@ pub fn run() {
             github::start(app.handle().clone());
             // One v2 service owns startup, scheduled and manual Import for both providers.
             note_import::start(app.handle().clone());
+            // #33: a first setup or a directory older than seven days gets its metadata scan on a
+            // dedicated guard; thread reads, window reads and searches stay independent.
+            slack::directory::scan_if_due(app.handle());
 
             build_tray(app.handle())?;
             register_hotkeys(app.handle());

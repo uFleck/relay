@@ -607,7 +607,17 @@ pub async fn v2_provider_refresh(
     app: AppHandle,
     store: State<'_, Arc<V2Store>>,
 ) -> Result<ProviderStatusMap, CommandError> {
-    Ok(refresh_all(&app, &store).await)
+    let statuses = refresh_all(&app, &store).await;
+    // #33: setup completed outside Relay is detected by this explicit Settings recheck. A ready
+    // Slack connector triggers a first/stale metadata scan; the core guard skips it when one is
+    // already running and a signed-out connector is left alone.
+    let slack_ready = statuses.get("slack").is_some_and(|status| {
+        status.source != ProviderSource::None && status.status != ProviderState::Unavailable
+    });
+    if slack_ready {
+        slack::directory::scan_if_ready(&app, true);
+    }
+    Ok(statuses)
 }
 
 #[tauri::command]

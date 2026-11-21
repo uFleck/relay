@@ -6,8 +6,14 @@ import {
   findMarks,
   copyText,
   groupRows,
+  isSlackAction,
   mergeLiveRows,
+  mergeSlackHits,
   parseUrlValue,
+  slackActionRows,
+  slackHitRow,
+  SLACK_REFRESH_KEY,
+  SLACK_SEARCH_KEY,
   rowIndexByKey,
   parseUrls,
   restoreChip,
@@ -159,5 +165,56 @@ describe("picker row grouping and Lens age", () => {
     expect(late).toHaveLength(2);
     expect(late.map((entry) => entry.key)).toEqual(["clickup:1", "clickup:2"]);
     expect(late[0].title).toBe("late");
+  });
+});
+
+describe("Slack picker actions and explicit search", () => {
+  it("shows refresh always and the search row only for a nonempty query", () => {
+    expect(slackActionRows("").map((entry) => entry.key)).toEqual([SLACK_REFRESH_KEY]);
+    const withQuery = slackActionRows("  deploy  ");
+    expect(withQuery.map((entry) => entry.key)).toEqual([
+      SLACK_REFRESH_KEY,
+      SLACK_SEARCH_KEY,
+    ]);
+    expect(withQuery[1].title).toBe('Search Slack messages for “deploy”');
+    expect(withQuery.every((entry) => entry.group === "conversations")).toBe(true);
+    expect(isSlackAction(withQuery[0])).toBe(true);
+  });
+
+  it("a reply hit uses the permalink thread root and shows the first line", () => {
+    const hit = {
+      channelId: "C1",
+      channelName: "#general",
+      ts: "1731000000.000099",
+      permalink:
+        "https://acme.slack.com/archives/C1/p1731000000000099?thread_ts=1731000000.000001&cid=C1",
+      threadTs: "1731000000.000001",
+      snippet: "first line\nmore context",
+    };
+    const row = slackHitRow(hit);
+    expect(row?.key).toBe("slack:C1/1731000000.000001");
+    expect(row?.title).toBe("first line");
+    expect(row?.canonicalLink).toContain("thread_ts=1731000000.000001");
+    expect(row?.group).toBe("conversations");
+  });
+
+  it("deduplicates by canonical thread key and keeps the stable search row highlight", () => {
+    const actions = slackActionRows("deploy");
+    const hit = {
+      channelId: "C1",
+      channelName: "#general",
+      ts: "1731000000.000001",
+      permalink: "https://acme.slack.com/archives/C1/p1731000000000001",
+      threadTs: null,
+      snippet: "a hit",
+    };
+    const once = mergeSlackHits(actions, [hit, { ...hit, snippet: "refreshed" }]);
+    const twice = mergeSlackHits(once, [hit]);
+    const keys = twice.map((entry) => entry.key);
+    expect(keys.filter((key) => key === "slack:C1/1731000000.000001")).toHaveLength(1);
+    expect(twice.find((entry) => entry.key === "slack:C1/1731000000.000001")?.title).toBe(
+      "a hit",
+    );
+    expect(rowIndexByKey(twice, SLACK_SEARCH_KEY)).toBe(1);
   });
 });

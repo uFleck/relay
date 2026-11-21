@@ -50,6 +50,14 @@ pub enum ReferenceKey {
         /// message here while `thread_ts` stays the shared root used for identity and caching.
         permalink_ts: Option<String>,
     },
+    /// #33: a fixed window captured at selection. Identity is the local window id, so two picks
+    /// of the same channel stay distinct References; the conversation link is presentation.
+    SlackWindow {
+        id: String,
+        channel_id: String,
+        host: String,
+        name: Option<String>,
+    },
     Note {
         id: String,
     },
@@ -72,6 +80,7 @@ impl ReferenceKey {
                 thread_ts,
                 ..
             } => format!("slack:{channel_id}/{thread_ts}"),
+            Self::SlackWindow { id, .. } => format!("slackwindow:{id}"),
             Self::Note { id } => format!("note:{id}"),
             Self::Task { id } => format!("task:{id}"),
         }
@@ -84,6 +93,7 @@ impl ReferenceKey {
             Self::Clickup { .. } => "clickup",
             Self::Github { .. } => "github",
             Self::Slack { .. } => "slack",
+            Self::SlackWindow { .. } => "slackwindow",
             Self::Note { .. } => "note",
             Self::Task { .. } => "task",
         }
@@ -101,6 +111,7 @@ impl ReferenceKey {
                 thread_ts,
                 ..
             } => format!("{channel_id}/{thread_ts}"),
+            Self::SlackWindow { id, .. } => id.clone(),
             Self::Note { id } | Self::Task { id } => id.clone(),
         }
     }
@@ -127,6 +138,9 @@ impl ReferenceKey {
                 "https://{host}/archives/{channel_id}/p{}?thread_ts={thread_ts}",
                 compact_ts(permalink_ts.as_deref().unwrap_or(thread_ts))
             ),
+            Self::SlackWindow {
+                channel_id, host, ..
+            } => format!("https://{host}/archives/{channel_id}"),
             Self::Note { id } => format!("relay://note/{id}"),
             Self::Task { id } => format!("relay://task/{id}"),
         }
@@ -159,6 +173,26 @@ impl ReferenceKey {
                     _ => format!("@{channel_id}/{seconds}"),
                 }
             }
+            Self::SlackWindow {
+                id,
+                channel_id,
+                name,
+                ..
+            } => {
+                // The short local id makes two picks of the same conversation distinct chips.
+                let short: String = id
+                    .chars()
+                    .rev()
+                    .take(6)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect();
+                match name.as_deref().filter(|name| !name.is_empty()).or(alias) {
+                    Some(label) => format!("@#{label}/{short}"),
+                    None => format!("@{channel_id}/{short}"),
+                }
+            }
             Self::Note { id } => format!("@N-{id}"),
             Self::Task { id } => format!("@T-{id}"),
         }
@@ -173,6 +207,7 @@ impl ReferenceKey {
                 GithubItemKind::Issue => V2PickerGroup::Issues,
             },
             Self::Slack { .. } => V2PickerGroup::Conversations,
+            Self::SlackWindow { .. } => V2PickerGroup::Conversations,
             Self::Note { .. } | Self::Task { .. } => V2PickerGroup::NotesTasks,
         }
     }
@@ -378,6 +413,22 @@ impl ReferenceKey {
                     thread_ts: normalize_ts(thread_ts)?,
                     host,
                     permalink_ts,
+                })
+            }
+            "slackwindow" => {
+                let rest = canonical_url.and_then(|url| url.strip_prefix("https://"));
+                let (host, path) = rest
+                    .and_then(|rest| rest.split_once('/'))
+                    .unwrap_or(("slack.com", ""));
+                let channel_id = path.trim_end_matches('/').split('/').nth(1).unwrap_or("");
+                if channel_id.is_empty() {
+                    return None;
+                }
+                Some(Self::SlackWindow {
+                    id: target_id.to_string(),
+                    channel_id: channel_id.to_string(),
+                    host: host.to_string(),
+                    name: None,
                 })
             }
             "note" => Some(Self::Note {

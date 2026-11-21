@@ -3,9 +3,14 @@ import {
   convertUrls,
   copyText,
   findMarks,
+  isSlackAction,
   mergeLiveRows,
+  mergeSlackHits,
   parseUrlValue,
   rowIndexByKey,
+  slackActionRows,
+  SLACK_REFRESH_KEY,
+  SLACK_SEARCH_KEY,
   restoreChip,
   type Chip,
   type EditorState,
@@ -19,6 +24,9 @@ import {
   v2ReferencePicker,
   v2ReferencePick,
   v2ReferenceSearch,
+  v2SlackRefresh,
+  v2SlackSearch,
+  v2SlackWindowStart,
 } from "../ipc";
 import { ReferencePicker } from "./ReferencePicker";
 
@@ -69,6 +77,8 @@ export function ReferenceEditor({
   const liveRef = useRef<V2PickerRow[]>([]);
   const rowsRef = useRef<V2PickerRow[]>([]);
   const highlightRef = useRef(0);
+  /** One explicit search per trimmed query per picker session; typing alone never searches. */
+  const searchedRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     if (value === state.text) return;
@@ -93,9 +103,11 @@ export function ReferenceEditor({
     }
   };
 
-  /** Merge local and live rows without moving the highlighted key or the scroll position. */
+  /** Merge local and live rows without moving the highlighted key or the scroll position.
+      Action rows keep stable ids, so a late search result never moves the highlight. */
   const applyRows = () => {
-    const next = mergeLiveRows(localRef.current, liveRef.current);
+    const merged = mergeLiveRows(localRef.current, liveRef.current);
+    const next = [...slackActionRows(queryRef.current), ...merged];
     const key = rowsRef.current[highlightRef.current]?.key;
     rowsRef.current = next;
     setRows(next);
@@ -128,6 +140,7 @@ export function ReferenceEditor({
     setPickerOpen(false);
     setErrorToken(null);
     tokenRange.current = null;
+    searchedRef.current = new Set();
   };
 
   const runLocal = async (query: string) => {
@@ -167,6 +180,46 @@ export function ReferenceEditor({
     }
   };
 
+  /** Manual Refresh conversations. A quiet spinner stays up until the backend settles; the
+      single-flight guard in core makes a second press harmless. */
+  const refreshConversations = async () => {
+    setProgress([{ provider: "slack", state: "searching", reason: null, settingsDestination: null }]);
+    setSlow(false);
+    try {
+      const report = await v2SlackRefresh();
+      if (queryRef.current) void runLocal(queryRef.current);
+      setProgress(
+        report.error
+          ? [{ provider: "slack", state: "unavailable", reason: report.error, settingsDestination: "Settings → Slack" }]
+          : [],
+      );
+    } catch {
+      setProgress([]);
+    }
+  };
+
+  /** One Enter-driven detailed search per query per session. Typing never reaches this path. */
+  const runSlackSearch = async (query: string) => {
+    if (searchedRef.current.has(query)) return;
+    searchedRef.current.add(query);
+    setProgress([{ provider: "slack", state: "searching", reason: null, settingsDestination: null }]);
+    setSlow(false);
+    try {
+      const result = await v2SlackSearch(query);
+      // A response for a closed picker or a different active query is discarded, however late.
+      if (queryRef.current !== query) return;
+      liveRef.current = mergeSlackHits(liveRef.current, result.hits);
+      applyRows();
+      setProgress(
+        result.error
+          ? [{ provider: "slack", state: "unavailable", reason: result.error, settingsDestination: "Settings → Slack" }]
+          : [],
+      );
+    } catch {
+      if (queryRef.current === query) setProgress([]);
+    }
+  };
+
   const trackTypedToken = (text: string, caret: number) => {
     let start = caret;
     while (start > 0 && !/\s/.test(text[start - 1])) start -= 1;
@@ -197,19 +250,37 @@ export function ReferenceEditor({
     trackTypedToken(text, caret);
   };
 
-  const insertChip = (row: V2PickerRow) => {
+  const insertChip = async (row: V2PickerRow) => {
     const range = tokenRange.current;
     if (!range) return;
+    let accepted = row;
+    let pending: V2PickerRow | undefined;
+    if (row.kind === "slackchannel") {
+      // A picked conversation is a fresh frozen window: the id is created before the read starts,
+      // so two picks of the same channel survive reopen and edit as distinct References.
+      const channelId = row.key.slice("slackconv:".length);
+      let host: string | null = null;
+      try {
+        host = new URL(row.canonicalLink).host;
+      } catch {
+        host = null;
+      }
+      const name = row.title && row.title !== channelId ? row.title : null;
+      const started = await v2SlackWindowStart(channelId, host, name);
+      if (!started) return;
+      accepted = started;
+      pending = started;
+    }
     undo.current.push(state);
     lastConversion.current = null;
     lastPaste.current = null;
-    const existing = state.chips.find((chip) => chip.key === row.key);
+    const existing = state.chips.find((chip) => chip.key === accepted.key);
     const chip: Chip = existing ?? {
-      key: row.key,
-      token: row.displayId,
-      kind: row.kind,
-      canonicalUrl: row.canonicalLink,
-      originalUrl: row.displayId,
+      key: accepted.key,
+      token: accepted.displayId,
+      kind: accepted.kind,
+      canonicalUrl: accepted.canonicalLink,
+      originalUrl: accepted.displayId,
     };
     const before = state.text.slice(0, range.start);
     const after = state.text.slice(range.end);
@@ -219,9 +290,11 @@ export function ReferenceEditor({
     };
     commit(next, before.length + chip.token.length);
     // Persist the accepted result now; this writes only a snapshot, never a Note or Task.
-    void v2ReferencePick(row).catch(() => undefined);
+    if (accepted.kind !== "slackwindow") void v2ReferencePick(accepted).catch(() => undefined);
     closePicker();
-    if (row.kind === "slack") startSlackFetch(chip);
+    if (accepted.kind === "slack" || accepted.kind === "slackwindow") {
+      startSlackFetch(chip, pending);
+    }
   };
 
   /** Starts a deduplicated exact read for a known pasted or linked URL while the draft is open. */
@@ -237,8 +310,8 @@ export function ReferenceEditor({
 
   /** A Slack permalink is a thread read, not a work-provider exact read. Keep the Lens open with
       a linked "fetching…" row, then replace that row in place from the shared snapshot path. */
-  const startSlackFetch = (chip: Chip) => {
-    const pending: V2PickerRow = {
+  const startSlackFetch = (chip: Chip, started?: V2PickerRow) => {
+    const pending: V2PickerRow = started ?? {
       key: chip.key,
       kind: "slack",
       displayId: chip.token,
@@ -265,9 +338,7 @@ export function ReferenceEditor({
     clearTimers();
     queryRef.current = "";
     liveRef.current = [pending];
-    const next = mergeLiveRows(localRef.current, liveRef.current);
-    rowsRef.current = next;
-    setRows(next);
+    applyRows();
     highlightRef.current = 0;
     setHighlight(0);
     setPickerOpen(true);
@@ -288,9 +359,7 @@ export function ReferenceEditor({
           },
         };
         liveRef.current = mergeLiveRows(liveRef.current, [resolved]);
-        const merged = mergeLiveRows(localRef.current, liveRef.current);
-        rowsRef.current = merged;
-        setRows(merged);
+        applyRows();
         setProgress([]);
       })
       .catch(() => {
@@ -412,7 +481,16 @@ export function ReferenceEditor({
       if (event.key === "Enter" || event.key === "Tab") {
         event.preventDefault();
         const row = rows[highlightRef.current];
-        if (row) insertChip(row);
+        if (!row) return;
+        if (isSlackAction(row)) {
+          // Only Enter activates an action; a dismissed Tab leaves the draft untouched.
+          if (event.key === "Enter") {
+            if (row.key === SLACK_REFRESH_KEY) void refreshConversations();
+            else if (row.key === SLACK_SEARCH_KEY) void runSlackSearch(queryRef.current.trim());
+          }
+          return;
+        }
+        void insertChip(row);
         return;
       }
     }
