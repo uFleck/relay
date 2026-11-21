@@ -15,7 +15,7 @@ mod settings;
 mod slack;
 mod t3;
 
-use hover::HoverState;
+use hover::{DockRuntime, HoverState};
 use relay_core::model::NewProject;
 use relay_core::store::Store;
 use relay_core::v2::V2Store;
@@ -210,7 +210,9 @@ fn register_hotkeys(app: &AppHandle) {
         .global_shortcut()
         .on_shortcut(HOTKEY, |app, _shortcut, event| {
             if event.state == ShortcutState::Pressed {
-                toggle_main(app);
+                // global-hotkey dispatches `Pressed` synchronously from WM_HOTKEY on the main
+                // thread, so the Dock can capture the foreground window and take focus here.
+                hover::summon(app);
             }
         });
     if let Err(err) = summon {
@@ -267,6 +269,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(HoverState::default())
+        .manage(DockRuntime::default())
         .manage(mcp::McpState::default())
         .invoke_handler(tauri::generate_handler![
             show_main_window,
@@ -349,15 +352,20 @@ pub fn run() {
             clickup_sync::clickup_scope,
             clickup_sync::clickup_set_scope,
             clickup_sync::clickup_sync_now,
-            hover::hover_place,
-            hover::hover_drag,
-            hover::hover_pointer,
-            hover::hover_focus,
-            hover::hover_ready,
+            hover::dock_ready,
+            hover::dock_resize,
+            hover::dock_dismiss,
             hover::hover_set_pinned,
             hover::hover_state,
         ])
         .on_window_event(|window, event| {
+            if window.label() == hover::LABEL {
+                // A native blur means the user clicked elsewhere: hide and keep the focus they chose.
+                if let WindowEvent::Focused(false) = event {
+                    hover::handle_blur(window.app_handle());
+                }
+                return;
+            }
             if window.label() != MAIN {
                 return;
             }
@@ -366,12 +374,6 @@ pub fn run() {
                 WindowEvent::CloseRequested { api, .. } => {
                     api.prevent_close();
                     let _ = window.hide();
-                }
-                // Hiding the main window also blurs it, so this covers hide-to-tray as well.
-                WindowEvent::Focused(focused) => {
-                    window
-                        .state::<HoverState>()
-                        .set_main_focused(window.app_handle(), *focused);
                 }
                 _ => {}
             }
