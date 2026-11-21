@@ -1,16 +1,14 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EMPTY_DRAFT, type DraftSummary } from "../directives";
 import { Composer } from "../components/Composer";
 import { Icon } from "../components/Icon";
 import {
+  dockDismiss,
+  dockReady,
+  dockResize,
   getSnapshot,
-  hoverDrag,
-  hoverFocus,
-  hoverPlace,
-  hoverPointer,
-  hoverReady,
-  hoverSetPinned,
   inTauri,
+  onDockFocus,
   onEvent,
   onV2Change,
   openMain,
@@ -27,17 +25,16 @@ import type { ClaimHolder, HoverEdge, HoverMode, Snapshot } from "../types";
 import type { V2AgentMode } from "../ipc";
 import {
   DockContext,
+  dockCssHeight,
   dockLayoutState,
   SUMMON_CHORD,
   type DockBridge,
   type DockLayoutState,
 } from "./dock";
+import { prefersReducedMotion } from "../ui/motion";
 import { followUpdates, requestInstall, useUpdater, type UpdateState } from "../updater";
 import { needsYouCount, waitingTasks } from "../workspace";
-import { initialPlacement, placeIn, placementAfterDrag, type Anchor, type Screen } from "./place";
 
-const COLLAPSE_GRACE_MS = 400;
-const POINTER_POLL_MS = 50;
 /* Rust does not send `relay://change` yet, so the hover also re-reads the snapshot on a slow timer. */
 const REFRESH_MS = 20_000;
 
@@ -59,16 +56,18 @@ export function HoverApp() {
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [v2, setV2] = useState<V2WorkspaceSnapshot | null>(null);
   const [failed, setFailed] = useState(false);
-  // In the browser there is no hotkey or host window, so /hover.html opens on the Dock with
-  // its Composer ready. The native app still starts collapsed until the registered chord.
-  const [mode, setMode] = useState<HoverMode>(!inTauri && !calm ? "open" : "tab");
+  // The Dock is always mounted so an unsent draft survives Esc, blur and a second summon. The
+  // native window itself is hidden until the hotkey opens a session.
+  const [mode, setMode] = useState<HoverMode>("open");
   const [flags, setFlags] = useState<HoverFlags>({ pinned: false, dnd: false, paused: false, ready: false, visible: false });
-  const [placement, setPlacement] = useState<{ screen: Screen; anchor: Anchor } | null>(null);
   const [pulsing, setPulsing] = useState(false);
-  const [composing, setComposing] = useState(!inTauri && !calm);
+  const [composing, setComposing] = useState(!calm);
   const [showWaiting, setShowWaiting] = useState(false);
   const [dockLayout, setDockLayout] = useState<DockLayoutState>("compact");
   const [draft, setDraft] = useState<DraftSummary>(EMPTY_DRAFT);
+  const [dockVisible, setDockVisible] = useState(!inTauri);
+  const [focusHint, setFocusHint] = useState(false);
+  const [growing, setGrowing] = useState(false);
   const composerActive = useRef(false);
   const update = useUpdater();
   const shell = useRef<HTMLDivElement>(null);
@@ -77,17 +76,15 @@ export function HoverApp() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const escConsumed = useRef(false);
   const waitingIds = useRef<Set<string> | null>(null);
-  const collapseTimer = useRef<number | undefined>(undefined);
-  const dragging = useRef(false);
-  // The pointer poll and the timers read these without restarting.
-  const live = useRef({ mode, pinned: flags.pinned, dnd: flags.dnd, composer: false, waiting: false });
-  live.current = {
-    mode,
-    pinned: flags.pinned,
-    dnd: flags.dnd,
-    composer: composerActive.current,
-    waiting: showWaiting,
-  };
+  // Native session plumbing. Every queued measurement carries the session id it started with.
+  const sessionRef = useRef<number | null>(null);
+  const layoutRef = useRef(dockLayout);
+  layoutRef.current = dockLayout;
+  const pickerOpenRef = useRef(false);
+  const sentHeight = useRef<number | null>(null);
+  const readySent = useRef(false);
+  const live = useRef({ dnd: flags.dnd, waiting: false });
+  live.current = { dnd: flags.dnd, waiting: showWaiting };
 
   const pulse = useCallback(() => {
     if (live.current.dnd) return;
@@ -121,6 +118,73 @@ export function HoverApp() {
     }
   }, [pulse]);
 
+  /** Explicit dismissal keeps the draft: the Composer stays mounted and only the native window hides. */
+  const dismissDock = useCallback(async (reason: "escape" | "saved") => {
+    const id = sessionRef.current;
+    if (id === null) return;
+    sessionRef.current = null;
+    setDockVisible(false);
+    setFocusHint(false);
+    await dockDismiss(id, reason).catch(() => undefined);
+  }, []);
+
+  /** The picker is absolutely positioned above the input, so its settled box is added here. */
+  const measureHeight = useCallback(() => {
+    const content = contentRef.current;
+    if (!content) return 0;
+    const picker = content.querySelector<HTMLElement>(".ref-picker");
+    const pickerHeight = picker && layoutRef.current !== "compact" ? picker.scrollHeight : 0;
+    return dockCssHeight(content.getBoundingClientRect().height, pickerHeight, layoutRef.current);
+  }, []);
+
+  /** A close transition must finish before the window shrinks. Reduced motion skips the wait. */
+  const waitForDockTransition = useCallback(() => {
+    if (prefersReducedMotion()) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      let timer = 0;
+      const done = () => {
+        window.removeEventListener("relay://dock-transition-end", done);
+        window.clearTimeout(timer);
+        resolve();
+      };
+      window.addEventListener("relay://dock-transition-end", done);
+      timer = window.setTimeout(done, 450);
+    });
+  }, []);
+
+  const applyHeight = useCallback(
+    async (force = false) => {
+      if (!inTauri) return;
+      const height = measureHeight();
+      if (!height) return;
+      if (!readySent.current) {
+        readySent.current = true;
+        sentHeight.current = height;
+        await dockReady(height).catch(() => undefined);
+        return;
+      }
+      const previous = sentHeight.current;
+      if (!force && previous === height) return;
+      const id = sessionRef.current;
+      if (id === null) {
+        // No session to resize. Re-measure on the next summon instead.
+        sentHeight.current = null;
+        return;
+      }
+      const growing = previous === null || height > previous;
+      if (growing) setGrowing(true);
+      else await waitForDockTransition();
+      if (sessionRef.current !== id) {
+        setGrowing(false);
+        return;
+      }
+      const ok = await dockResize(height, id).catch(() => false);
+      if (ok) sentHeight.current = height;
+      setGrowing(false);
+    },
+    [measureHeight, waitForDockTransition],
+  );
+
   /* Everything #39 needs to size and focus the native box: the measured content root, the
      three layout states, the picker's settled event, the live input and the save/escape signals. */
   const dock = useMemo<DockBridge>(
@@ -130,6 +194,7 @@ export function HoverApp() {
       inputRef,
       layout: dockLayout,
       reportPicker: (open, lensVisible) => {
+        pickerOpenRef.current = open;
         const next = dockLayoutState(open, lensVisible);
         setDockLayout((current) => (current === next ? current : next));
       },
@@ -145,10 +210,13 @@ export function HoverApp() {
       onPickerTransitionEnd: () => {
         window.dispatchEvent(new CustomEvent("relay://dock-transition-end", { detail: { layout: dockLayout } }));
       },
-      onSaved: () => void refreshV2(),
+      onSaved: () => {
+        void dismissDock("saved");
+        void refreshV2();
+      },
       reportDraft: setDraft,
     }),
-    [dockLayout, refreshV2],
+    [dockLayout, refreshV2, dismissDock],
   );
 
   useEffect(() => {
@@ -171,124 +239,91 @@ export function HoverApp() {
   }, [refresh, refreshV2]);
 
   useEffect(() => {
-    if (!inTauri) return;
-    initialPlacement()
-      .then(setPlacement)
-      .catch((e) => console.error("[relay] hover placement", e));
-  }, []);
-
-  useEffect(() => {
     if (flags.dnd) setPulsing(false);
   }, [flags.dnd]);
 
-  // Rust sizes the window, not the DOM: after each layout change, place the window around what is drawn.
-  // The first placement also tells Rust the page is ready to be shown.
-  useLayoutEffect(() => {
-    const el = shell.current;
-    if (!el || !placement) return;
-    const { screen, anchor } = placement;
-    const rect = placeIn(screen.area, anchor, el.offsetWidth * screen.scale, el.offsetHeight * screen.scale);
-    void hoverPlace(rect)
-      .then(() => (flags.ready ? undefined : hoverReady().then(setFlags)))
-      .catch((e) => console.warn("[relay] hover_place failed", e));
-  }, [mode, placement, update.kind, snap === null, failed, flags.ready, dockLayout]);
+  // Native activation is verified in Rust before this event arrives. A refused activation leaves
+  // the Dock clickable with a hint; an ended session hides it without clearing the draft.
+  useEffect(() => {
+    if (!inTauri) return;
+    return onDockFocus((event) => {
+      sessionRef.current = event.visible ? event.sessionId : null;
+      setDockVisible(event.visible);
+      setFocusHint(event.hint === "click-to-focus");
+      setGrowing(false);
+      if (!event.visible) {
+        sentHeight.current = null;
+        inputRef.current?.blur();
+        return;
+      }
+      if (event.focused) requestAnimationFrame(() => inputRef.current?.focus());
+      // Re-measure for this session: the draft may have grown while the Dock was hidden.
+      void applyHeight(true);
+    });
+  }, [applyHeight]);
 
-  const expand = useCallback(() => {
-    window.clearTimeout(collapseTimer.current);
-    collapseTimer.current = undefined;
-    setMode("open");
-  }, []);
+  useEffect(() => {
+    const content = contentRef.current;
+    if (!content || !inTauri) return;
+    let frame = 0;
+    const observer = new ResizeObserver(() => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => void applyHeight());
+    });
+    observer.observe(content);
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(frame);
+    };
+  }, [applyHeight]);
 
-  const scheduleCollapse = useCallback(() => {
-    if (
-      live.current.pinned || dragging.current || composerActive.current || live.current.waiting ||
-      collapseTimer.current !== undefined
-    ) return;
-    collapseTimer.current = window.setTimeout(() => {
-      collapseTimer.current = undefined;
-      if (live.current.pinned || composerActive.current || live.current.waiting) return;
-      setMode("tab");
-      setComposing(false);
-      void hoverFocus(false);
-    }, COLLAPSE_GRACE_MS);
-  }, []);
+  useEffect(() => {
+    void applyHeight();
+  }, [dockLayout, applyHeight]);
 
-  /** Badge activation expands the Dock and opens the waiting list from the unfiltered read. */
+  useEffect(() => {
+    if (!inTauri) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || pickerOpenRef.current) return;
+      event.preventDefault();
+      void dismissDock("escape");
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [dismissDock]);
+
+  /** Badge activation opens the waiting list from the unfiltered read. */
   const openWaiting = useCallback(() => {
-    window.clearTimeout(collapseTimer.current);
-    collapseTimer.current = undefined;
     setMode("open");
     setShowWaiting(true);
   }, []);
 
-  // A click-to-compose control takes keyboard focus for the shared Composer. While it is
-  // focused or saving, the panel stays open and the hotkey keeps summoning the main window.
   const openComposer = useCallback(() => {
-    window.clearTimeout(collapseTimer.current);
-    collapseTimer.current = undefined;
     setMode("open");
     setComposing(true);
-    void hoverFocus(true);
   }, []);
 
   const closeComposer = useCallback(() => {
-    setComposing(false);
-    composerActive.current = false;
-    void hoverFocus(false);
-    scheduleCollapse();
-  }, [scheduleCollapse]);
-
-  // The webview misreports hover once focus has moved elsewhere, so in the app the page asks Rust where
-  // the cursor is. Only while the window is on screen.
-  useEffect(() => {
-    if (!inTauri || !flags.visible) return;
-    let asking = false;
-    const timer = window.setInterval(() => {
-      if (asking || dragging.current) return;
-      asking = true;
-      hoverPointer()
-        .then((at) => (at ? expand() : live.current.mode === "open" && scheduleCollapse()))
-        .catch(() => undefined)
-        .finally(() => (asking = false));
-    }, POINTER_POLL_MS);
-    return () => window.clearInterval(timer);
-  }, [flags.visible, expand, scheduleCollapse]);
-
-  const drag = useCallback(async () => {
-    if (!inTauri) return;
-    dragging.current = true;
-    window.clearTimeout(collapseTimer.current);
-    collapseTimer.current = undefined;
-    try {
-      await hoverDrag();
-      const next = await placementAfterDrag();
-      if (next) setPlacement(next);
-    } catch (error) {
-      console.warn("[relay] hover drag failed", error);
-    } finally {
-      dragging.current = false;
-    }
-  }, []);
-
-  const togglePin = useCallback(async () => {
-    const next = await hoverSetPinned(!flags.pinned).catch(() => null);
-    if (next) setFlags(next);
-    if (next && !next.pinned) scheduleCollapse();
-  }, [flags.pinned, scheduleCollapse]);
+    void dismissDock("escape");
+  }, [dismissDock]);
 
   const toggleDnd = useCallback(async () => {
     const next = await setDnd(!flags.dnd).catch(() => null);
     if (next) setFlags(next);
   }, [flags.dnd]);
 
-  const edge: HoverEdge = placement?.anchor.edge ?? "right";
-  const devEdge = useState<HoverEdge>("right");
-  const shownEdge = inTauri ? edge : devEdge[0];
+  const shownEdge: HoverEdge = "right";
 
   if (!snap || !v2) {
     // Nothing to count yet: a quiet tab that still places itself, so the window can be shown.
     return (
-      <div className={`hroot${inTauri ? "" : " dev"}`} data-edge={shownEdge} data-mode="tab">
+      <div
+        className={`hroot${inTauri ? "" : " dev"}`}
+        data-edge={shownEdge}
+        data-mode="tab"
+        data-visible={dockVisible ? "true" : "false"}
+        data-growing="false"
+      >
         <div ref={shell} className="tab" aria-label={failed ? "Relay: data unavailable" : "Relay: loading"}>
           <span className="cnt">{failed ? "!" : "·"}</span>
         </div>
@@ -302,12 +337,19 @@ export function HoverApp() {
   const fit = update.kind !== "idle" && update.kind !== "checking";
 
   return (
-    <div className={`hroot${inTauri ? "" : " dev"}`} data-edge={shownEdge} data-mode={mode}>
+    <div
+      className={`hroot${inTauri ? "" : " dev"}`}
+      data-edge={shownEdge}
+      data-mode={mode}
+      data-visible={dockVisible ? "true" : "false"}
+      data-growing={growing ? "true" : "false"}
+      data-focus-hint={focusHint ? "click-to-focus" : undefined}
+    >
       {mode === "tab" ? (
         <div
           ref={shell}
           className={`tab${pulsing ? " pulse" : ""}`}
-          onMouseEnter={inTauri ? undefined : expand}
+          onMouseEnter={inTauri ? undefined : () => setMode("open")}
           onAnimationEnd={() => setPulsing(false)}
           aria-label={`Relay: ${scope.total} today, ${scope.inProgress} in progress, ${needsYou} need you`}
         >
@@ -342,8 +384,6 @@ export function HoverApp() {
           className={`hov dock${fit ? " fit" : ""}`}
           data-compose={composing ? "on" : undefined}
           data-dock-state={dockLayout}
-          onMouseEnter={inTauri ? undefined : expand}
-          onMouseLeave={inTauri ? undefined : scheduleCollapse}
         >
           <Panel
             dock={dock}
@@ -355,22 +395,19 @@ export function HoverApp() {
             flags={flags}
             update={update}
             failed={failed}
-            onPin={() => void togglePin()}
             onDnd={() => void toggleDnd()}
-            onDrag={() => void drag()}
             composing={composing}
             onCompose={openComposer}
             onCloseComposer={closeComposer}
             onComposerActive={(active) => {
               composerActive.current = active;
-              if (active) {
-                window.clearTimeout(collapseTimer.current);
-                collapseTimer.current = undefined;
-              } else {
-                scheduleCollapse();
-              }
             }}
           />
+          {focusHint && (
+            <div className="focus-hint" role="status">
+              Click to focus
+            </div>
+          )}
         </div>
       )}
       {!inTauri && (
@@ -380,9 +417,6 @@ export function HoverApp() {
           </button>
           <button type="button" className="btn" onClick={() => setMode((m) => (m === "tab" ? "open" : "tab"))}>
             {mode === "tab" ? "Open" : "Collapse"}
-          </button>
-          <button type="button" className="btn" onClick={() => devEdge[1]((e) => (e === "right" ? "left" : "right"))}>
-            Edge: {shownEdge}
           </button>
         </div>
       )}
@@ -398,9 +432,7 @@ interface PanelProps {
   flags: HoverFlags;
   update: UpdateState;
   failed: boolean;
-  onPin: () => void;
   onDnd: () => void;
-  onDrag: () => void;
   composing: boolean;
   onCompose: () => void;
   onCloseComposer: () => void;
@@ -417,9 +449,7 @@ function Panel({
   flags,
   update,
   failed,
-  onPin,
   onDnd,
-  onDrag,
   composing,
   onCompose,
   onCloseComposer,
@@ -434,13 +464,6 @@ function Panel({
   const due = nextDue(snap, now);
   const claims = liveClaims(snap.tasks);
   const openTask = (task: string) => void openMain(taskRoute(task));
-
-  // Drag from the header or grip, but not from its buttons.
-  const startDrag = (e: React.PointerEvent) => {
-    if (e.button !== 0 || (e.target as HTMLElement).closest("button")) return;
-    e.preventDefault();
-    onDrag();
-  };
 
   const needsSection = showWaiting ? (
     <WaitingList key="waiting" tasks={waiting} openTask={openTask} onClose={onToggleWaiting} />
@@ -512,7 +535,7 @@ function Panel({
       <div className="dock-viewport" ref={dock.viewportRef}>
         <div className="dock-scroll">
           <div className="dock-content" ref={dock.contentRef} data-layout={dock.layout}>
-            <div className="hh" onPointerDown={startDrag}>
+            <div className="hh">
               <span className="wordmark" data-mode={draftMode ?? undefined}>
                 relay<span className="dot" key={draftMode ?? "none"}>.</span>
               </span>
@@ -524,13 +547,7 @@ function Panel({
         <button type="button" className={`rb${flags.dnd ? " on" : ""}`} title="Do not disturb" aria-pressed={flags.dnd} onClick={onDnd}>
           <Icon name="moon" />
         </button>
-        <button type="button" className={`rb${flags.pinned ? " on" : ""}`} title="Pin open" aria-pressed={flags.pinned} onClick={onPin}>
-          <Icon name="pin" />
-        </button>
-        <span className="rb grip" title="Drag to another edge">
-          <Icon name="grip" />
-        </span>
-      </div>
+        </div>
 
       <UpdateBanner update={update} version={snap.version} />
 

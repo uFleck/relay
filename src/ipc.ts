@@ -72,10 +72,6 @@ export interface HoverFlags {
 let browserFlags: HoverFlags = { pinned: false, dnd: false, paused: false, ready: true, visible: true };
 const browserSet = (patch: Partial<HoverFlags>) => () => (browserFlags = { ...browserFlags, ...patch });
 
-export const hoverReady = () => call<HoverFlags>("hover_ready", undefined, () => browserFlags);
-
-export const hoverState = () => call<HoverFlags>("hover_state", undefined, () => browserFlags);
-
 export const hoverSetPinned = (pinned: boolean) =>
   call<HoverFlags>("hover_set_pinned", { pinned }, browserSet({ pinned }));
 
@@ -83,18 +79,29 @@ export const setDnd = (dnd: boolean) => call<HoverFlags>("set_dnd", { dnd }, bro
 
 export const setPaused = (paused: boolean) => call<HoverFlags>("set_paused", { paused }, browserSet({ paused }));
 
-/** Moves and sizes the hover in one step. Every value is in physical pixels. */
-export const hoverPlace = (rect: { x: number; y: number; width: number; height: number }) =>
-  call<void>("hover_place", rect, () => undefined);
+/* ── Dock session (native activation, measured height, dismissal) ── */
 
-/** Runs the OS move loop and resolves when the user lets go. */
-export const hoverDrag = () => call<void>("hover_drag", undefined, () => undefined);
+/** The Dock-only focus/session signal. The page focuses the input only on a verified activation. */
+export interface DockFocusEvent {
+  sessionId: number;
+  visible: boolean;
+  focused: boolean;
+  hint: "click-to-focus" | null;
+}
 
-/** The cursor inside the hover in physical pixels, or null when it is outside or covered. */
-export const hoverPointer = () => call<[number, number] | null>("hover_pointer", undefined, () => null);
+/** Registers the page's listeners and reports the measured compact CSS height. */
+export const dockReady = (height: number) => call<boolean>("dock_ready", { height }, () => true);
 
-/** Only for a field that needs the keyboard; pass false to hand focus back. */
-export const hoverFocus = (focus: boolean) => call<void>("hover_focus", { focus }, () => undefined);
+/** Applies a measured CSS height to a session; the reply arrives after the native resize. */
+export const dockResize = (height: number, sessionId: number) =>
+  call<boolean>("dock_resize", { height, sessionId }, () => false);
+
+/** Explicit dismissal from an unconsumed Escape or a successful local save. */
+export const dockDismiss = (sessionId: number, reason: "escape" | "saved") =>
+  call<boolean>("dock_dismiss", { sessionId, reason }, () => false);
+
+export const onDockFocus = (handler: (event: DockFocusEvent) => void) =>
+  onEvent("relay://dock-focus", handler);
 
 /* ── MCP ── */
 
@@ -714,6 +721,7 @@ interface Events {
   /** A committed v2 write; the payload is the saved Note id. */
   "relay://v2-change": string;
   "relay://state": HoverFlags;
+  "relay://dock-focus": DockFocusEvent;
   "mcp://status": McpStatus;
   "slack://status": SlackStatus;
   "github://status": GithubStatus;

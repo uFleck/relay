@@ -4,6 +4,11 @@ import { useEffect, useRef, useState } from "react";
    previous snapshot get the entering class, so ordinary typing and unchanged refreshes stay
    quiet. `useEntering` clears the set once the animation has played. */
 
+/** Read at decision time: a transition cannot fire `transitionend` when CSS disables it. */
+export function prefersReducedMotion(): boolean {
+  return typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
 export function addedKeys(previous: ReadonlySet<string>, current: Iterable<string>): Set<string> {
   const added = new Set<string>();
   for (const key of current) {

@@ -10,6 +10,20 @@ export type DockLayoutState = "compact" | "picker" | "picker-lens";
 /** The chosen prototype's preferred width, clamped to the native window's available width. */
 export const DOCK_PREFERRED_WIDTH = 760;
 
+/** The picker floats above the input; its settled box and gap must be added to the measured root. */
+export const PICKER_MAX_HEIGHT = 320;
+export const PICKER_GAP = 6;
+
+/** The CSS height the native window needs, rounded up once before it becomes physical pixels. */
+export function dockCssHeight(
+  contentHeight: number,
+  pickerHeight: number,
+  layout: DockLayoutState,
+): number {
+  const extra = layout === "compact" ? 0 : Math.min(pickerHeight, PICKER_MAX_HEIGHT) + PICKER_GAP;
+  return Math.ceil(contentHeight + extra);
+}
+
 /** Registered in src-tauri/src/lib.rs as `ctrl+alt+r`. */
 export const SUMMON_CHORD = "Ctrl+Alt+R";
 

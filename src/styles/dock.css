@@ -236,7 +236,11 @@
 /* ── the Dock viewport: bottom-aligned, internally scrolling, clipped ── */
 
 .hov.dock {
+  position: absolute;
+  inset: 0;
   display: block;
+  width: 100%;
+  height: 100%;
   padding: 0;
   border: 0;
   border-radius: 0;
@@ -245,6 +249,27 @@
 }
 .hov.dock > * {
   animation: none;
+}
+/* The native session owns visibility; an unsent draft stays mounted while the window is hidden. */
+.hroot[data-visible="false"] .hov,
+.hroot[data-visible="false"] .tab {
+  visibility: hidden;
+}
+/* Grow the native window before revealing the picker that needs the extra space. */
+.hroot[data-growing="true"] .ref-picker {
+  visibility: hidden;
+}
+.focus-hint {
+  position: absolute;
+  right: 16px;
+  bottom: 8px;
+  z-index: 40;
+  padding: 4px 10px;
+  border-radius: 12px;
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  font: 500 11px var(--font-mono);
+  pointer-events: none;
 }
 .dock-viewport {
   position: absolute;
