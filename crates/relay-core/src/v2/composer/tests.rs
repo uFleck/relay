@@ -452,3 +452,38 @@ fn stale_revision_and_create_replay_are_guarded_against_sqlite() {
     let reopened = V2Store::open(dir.file("relay-v2.db")).unwrap();
     assert_eq!(reopened.notebook_snapshot().unwrap().notes, vec![updated]);
 }
+
+#[test]
+fn typed_chips_and_urls_become_line_references_and_infer_projects() {
+    let (_dir, store) = store_at("chips");
+    let project_id = project(&store, "Sample", "sample", "sample/app");
+    let saved = save_submission(
+        &store,
+        create("chips", "!ship @CU-8x1 and @app#142\nplain @N-12"),
+    )
+    .unwrap();
+    assert_eq!(saved.lines.len(), 2);
+    let first = &saved.lines[0];
+    assert_eq!(first.references.len(), 2);
+    assert_eq!(first.references[0].target_id, "CU-8x1");
+    assert_eq!(first.references[1].target_id, "sample/app#142");
+    assert_eq!(
+        first.references[1].canonical_url,
+        "https://github.com/sample/app/pull/142"
+    );
+    let task = &saved.tasks[0];
+    assert_eq!(task.references.len(), 2);
+    assert_eq!(task.project_id.as_deref(), Some(project_id.as_str()));
+    let second = &saved.lines[1];
+    assert_eq!(second.references.len(), 1);
+    assert_eq!(second.references[0].target_id, "12");
+}
+
+#[test]
+fn ambiguous_short_repo_chip_resolves_to_no_reference() {
+    let (_dir, store) = store_at("ambiguous-chip");
+    project(&store, "Alpha", "alpha", "alpha/app");
+    project(&store, "Beta", "beta", "beta/app");
+    let saved = save_submission(&store, create("ambiguous", "!ship @app#1")).unwrap();
+    assert!(saved.lines[0].references.is_empty());
+}

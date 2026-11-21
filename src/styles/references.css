@@ -1,0 +1,259 @@
+/* Reference chips, caret picker and Lens. Shared by the main window Composer and the Dock. */
+
+.ref-editor {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+}
+
+.ref-editor-surface {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+}
+
+.ref-editor-input,
+.ref-editor-decoration {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  border: 1px solid var(--border-default);
+  border-radius: var(--r);
+  padding: 8px 10px;
+  font: inherit;
+  font-size: inherit;
+  line-height: 1.45;
+  letter-spacing: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  tab-size: inherit;
+}
+
+.ref-editor-input {
+  display: block;
+  min-height: 64px;
+  max-height: 160px;
+  resize: vertical;
+  overflow: auto;
+  background: transparent;
+  color: var(--text-primary);
+  outline: none;
+}
+
+.ref-editor-input.single {
+  min-height: 34px;
+  height: 34px;
+  resize: none;
+  overflow: hidden;
+}
+
+.hov .ref-editor-input {
+  max-height: 104px;
+  resize: none;
+}
+
+.ref-editor-input:focus {
+  border-color: var(--accent);
+  box-shadow: var(--ring);
+}
+
+/* The overlay paints chip backgrounds and error underlines behind the real text. */
+.ref-editor-decoration {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-color: transparent;
+  color: transparent;
+  overflow: hidden;
+  z-index: 0;
+}
+
+.ref-chip {
+  border-radius: 5px;
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px rgba(125, 152, 255, 0.45);
+  color: transparent;
+}
+
+.ref-token-error {
+  text-decoration: underline wavy var(--err);
+  text-underline-offset: 3px;
+  color: transparent;
+}
+
+.ref-picker {
+  position: absolute;
+  z-index: 30;
+  bottom: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 42%);
+  max-height: 320px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-lg);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop);
+  overflow: hidden;
+}
+
+.ref-picker-results {
+  overflow: auto;
+  min-width: 0;
+  padding: 4px;
+}
+
+.ref-picker-group-title {
+  padding: 6px 8px 2px;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 0.72em;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.ref-picker-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  border-radius: var(--r);
+  background: transparent;
+  color: var(--text-primary);
+  padding: 5px 8px;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.ref-picker-row:hover,
+.ref-picker-row.active {
+  background: var(--accent-soft);
+}
+
+.ref-picker-row.unavailable {
+  color: var(--text-secondary);
+}
+
+.ref-picker-id {
+  font-family: var(--font-mono);
+  color: var(--accent-text);
+  flex: none;
+}
+
+.ref-picker-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.ref-picker-state {
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 0.8em;
+  flex: none;
+}
+
+.ref-lens {
+  border-left: 1px solid var(--border-default);
+  padding: 10px 12px;
+  overflow: auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ref-lens-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ref-lens-kind {
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 0.75em;
+  text-transform: uppercase;
+}
+
+.ref-lens-id {
+  color: var(--accent-text);
+  font-family: var(--font-mono);
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+
+.ref-lens-close {
+  border: 0;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 1.1em;
+  cursor: pointer;
+}
+
+.ref-lens-title {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.ref-lens-state,
+.ref-lens-meta,
+.ref-lens-metadata,
+.ref-lens-destination {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.8em;
+  overflow-wrap: anywhere;
+}
+
+.ref-lens-metadata div + div {
+  margin-top: 2px;
+}
+
+.ref-lens-unavailable {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--err);
+  font-size: 0.9em;
+}
+
+.ref-lens-content {
+  color: var(--text-secondary);
+}
+
+.ref-lens-destination {
+  color: var(--accent-text);
+}
+
+.ref-lens-link {
+  margin-top: auto;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 0.7em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ref-lens-empty {
+  color: var(--text-tertiary);
+  font-size: 0.85em;
+}
+
+@media (max-width: 560px) {
+  .ref-picker {
+    grid-template-columns: minmax(0, 1fr);
+    max-height: 240px;
+  }
+  .ref-lens {
+    display: none;
+  }
+}

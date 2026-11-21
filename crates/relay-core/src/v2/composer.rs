@@ -54,10 +54,16 @@ pub struct ParsedLine {
 /// Parses one line. `??` is matched before `?` and `!`, and only at column one. A sigil
 /// needs no following space; a leading space makes the line plain.
 pub fn parse_line(text: &str) -> ParsedLine {
+    parse_line_with_projects(text, &[])
+}
+
+/// The project-aware parse used at save time. Registered repos disambiguate a short
+/// `@repo#n` chip; an ambiguous short name resolves to no Reference rather than guessing.
+pub fn parse_line_with_projects(text: &str, projects: &[V2Project]) -> ParsedLine {
     ParsedLine {
         text: text.to_string(),
         agent_mode: directive(text),
-        references: find_references(text),
+        references: find_references(text, projects),
         project_token: find_project_token(text),
     }
 }
@@ -104,122 +110,87 @@ fn is_space(ch: char) -> bool {
     ch.is_whitespace()
 }
 
-/// Recognises GitHub pull/issue URLs, ClickUp card URLs and Slack permalinks in text order.
-/// Other URLs stay text. Duplicate targets on one line keep their first position, because
+/// Recognises canonical URLs and typed `@` chip tokens in text order. Canonical parsing
+/// lives in `reference`; this function only maps it onto #25's write contract. Other URLs
+/// and unmatched tokens stay text. Duplicate targets keep their first position because
 /// `line_refs` is keyed by line plus Reference.
-fn find_references(text: &str) -> Vec<PreparedReference> {
-    let lower = text.to_ascii_lowercase();
-    let mut found = Vec::new();
-    let mut seen = HashSet::new();
+fn find_references(text: &str, projects: &[V2Project]) -> Vec<PreparedReference> {
+    use super::reference::ReferenceKey;
+
+    let mut ordered: Vec<(usize, ReferenceKey)> = Vec::new();
+    for url in super::reference::parse_urls(text).urls {
+        if let Some(key) = ReferenceKey::parse_url(&url.value) {
+            ordered.push((url.start, key));
+        }
+    }
+
     let mut from = 0;
-    while let Some(relative) = lower[from..].find("https://") {
-        let start = from + relative;
-        let mut end = text.len();
-        for (offset, ch) in text[start..].char_indices() {
-            if ch.is_ascii_whitespace() || matches!(ch, '<' | '>' | '"' | '\'' | '`') {
-                end = start + offset;
-                break;
+    while let Some(relative) = text[from..].find('@') {
+        let at = from + relative;
+        from = at + 1;
+        if at != 0 && !text[..at].chars().last().is_some_and(char::is_whitespace) {
+            continue;
+        }
+        let rest = &text[at + 1..];
+        let len = rest
+            .char_indices()
+            .take_while(|(_, ch)| {
+                !ch.is_whitespace()
+                    && !matches!(
+                        ch,
+                        ',' | ';' | ':' | '.' | '!' | ')' | ']' | '}' | '"' | '\''
+                    )
+            })
+            .map(|(offset, ch)| offset + ch.len_utf8())
+            .last()
+            .unwrap_or(0);
+        if len == 0 {
+            continue;
+        }
+        let token = &rest[..len];
+        let Some(mut key) = ReferenceKey::parse_typed(token) else {
+            continue;
+        };
+        if let ReferenceKey::Github {
+            owner_repo,
+            number,
+            item,
+        } = &key
+        {
+            if let Some(repo) = owner_repo.strip_prefix("?/") {
+                let candidates: Vec<&str> = projects
+                    .iter()
+                    .filter_map(|project| project.owner_repo.as_deref())
+                    .filter(|owner_repo| {
+                        owner_repo
+                            .split('/')
+                            .nth(1)
+                            .is_some_and(|candidate| candidate.eq_ignore_ascii_case(repo))
+                    })
+                    .collect();
+                if candidates.len() != 1 {
+                    continue;
+                }
+                key = ReferenceKey::Github {
+                    owner_repo: candidates[0].to_ascii_lowercase(),
+                    number: *number,
+                    item: *item,
+                };
             }
         }
-        let raw = &text[start..end];
-        let url = trim_url_tail(raw);
-        let url = url.split(['?', '#']).next().unwrap_or(url);
-        let parsed = github_reference(url)
-            .or_else(|| clickup_reference(url))
-            .or_else(|| slack_reference(url));
-        if let Some((kind, target_id, canonical_url)) = parsed
-            && seen.insert((kind.to_string(), target_id.clone()))
-        {
-            found.push(PreparedReference {
-                kind: kind.to_string(),
-                target_id,
-                canonical_url,
-                snapshot_json: None,
-            });
+        let position = text[..at].chars().count();
+        ordered.push((position, key));
+    }
+
+    ordered.sort_by_key(|(position, _)| *position);
+    let mut seen = HashSet::new();
+    let mut found = Vec::new();
+    for (_, key) in ordered {
+        if seen.insert(key.identity()) {
+            found.push(key.to_prepared(None));
         }
-        from = start + 8;
     }
     found
-}
-
-fn trim_url_tail(mut url: &str) -> &str {
-    loop {
-        let Some((_, ch)) = url.char_indices().last() else {
-            break;
-        };
-        if !matches!(
-            ch,
-            '.' | ',' | ';' | ':' | '!' | '?' | ')' | ']' | '}' | '"'
-        ) {
-            break;
-        }
-        url = &url[..url.len() - ch.len_utf8()];
-    }
-    url
-}
-
-/// `(kind, target id, canonical url)`. The owner/repo on a GitHub target is what project
-/// inference matches against the registry.
-fn github_reference(url: &str) -> Option<(&'static str, String, String)> {
-    let path = url.strip_prefix("https://github.com/")?;
-    let segments: Vec<&str> = path.split('/').collect();
-    let [owner, repo, kind, number] = segments.as_slice() else {
-        return None;
-    };
-    if owner.is_empty()
-        || repo.is_empty()
-        || !matches!(*kind, "pull" | "issues")
-        || number.is_empty()
-        || !number.bytes().all(|b| b.is_ascii_digit())
-    {
-        return None;
-    }
-    let target_id = format!("{owner}/{repo}#{number}");
-    let canonical_url = format!("https://github.com/{owner}/{repo}/{kind}/{number}");
-    Some(("github", target_id, canonical_url))
-}
-
-fn clickup_reference(url: &str) -> Option<(&'static str, String, String)> {
-    let path = url.strip_prefix("https://app.clickup.com/t/")?;
-    let id = path.trim_end_matches('/');
-    if id.is_empty() || id.contains('/') {
-        return None;
-    }
-    Some((
-        "clickup",
-        format!("CU-{id}"),
-        format!("https://app.clickup.com/t/{id}"),
-    ))
-}
-
-fn slack_reference(url: &str) -> Option<(&'static str, String, String)> {
-    let rest = url.strip_prefix("https://")?;
-    let (host, path) = rest.split_once('/')?;
-    if !(host == "slack.com" || host.ends_with(".slack.com")) {
-        return None;
-    }
-    let segments: Vec<&str> = path.split('/').collect();
-    let [archives, channel, permalink] = segments.as_slice() else {
-        return None;
-    };
-    if *archives != "archives" || channel.is_empty() {
-        return None;
-    }
-    let raw_ts = permalink.strip_prefix('p')?;
-    if raw_ts.is_empty() || !raw_ts.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
-    }
-    let ts = if raw_ts.len() > 10 && !raw_ts.contains('.') {
-        let split = raw_ts.len() - 6;
-        format!("{}.{}", &raw_ts[..split], &raw_ts[split..])
-    } else {
-        raw_ts.to_string()
-    };
-    Some((
-        "slack",
-        format!("{channel}/{ts}"),
-        format!("https://{host}/archives/{channel}/p{raw_ts}"),
-    ))
 }
 
 /// Explicit `+slug` wins, even when it is unknown; otherwise the first GitHub Reference on
@@ -265,7 +236,7 @@ pub fn save_submission(store: &V2Store, request: ComposerSaveRequest) -> Result<
                 ));
             }
             for line in text.split('\n') {
-                lines.push((None, parse_line(line)));
+                lines.push((None, parse_line_with_projects(line, &projects)));
             }
             NoteWrite::Create { submission_key }
         }
@@ -275,7 +246,10 @@ pub fn save_submission(store: &V2Store, request: ComposerSaveRequest) -> Result<
             lines: inputs,
         } => {
             for input in inputs {
-                lines.push((input.line_id, parse_line(&normalize_newlines(&input.text))));
+                lines.push((
+                    input.line_id,
+                    parse_line_with_projects(&normalize_newlines(&input.text), &projects),
+                ));
             }
             NoteWrite::Edit {
                 note_id,

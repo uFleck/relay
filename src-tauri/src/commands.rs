@@ -4,8 +4,8 @@
 use relay_core::model::{Note, ProposalDecision, Task};
 use relay_core::store::{Store, StoreError};
 use relay_core::v2::{
-    ComposerSaveRequest, V2Error, V2Note, V2NotebookSnapshot, V2Store, V2Task, V2WorkspaceSnapshot,
-    WorkspaceSearchResult, composer,
+    ComposerSaveRequest, ReferenceParseResult, V2Error, V2Note, V2NotebookSnapshot, V2PickerRow,
+    V2Store, V2Task, V2WorkspaceSnapshot, WorkspaceSearchResult, composer, parse_urls,
 };
 use relay_core::view::Snapshot;
 use serde::Serialize;
@@ -101,6 +101,23 @@ pub fn v2_composer_save(
     let saved = composer::save_submission(&store, request)?;
     let _ = app.emit(V2_CHANGE_EVENT, saved.id.clone());
     Ok(saved)
+}
+
+/// The local `@` picker query. Core owns the ranking and grouping; this command is a thin
+/// read over the v2 store so a missing IPC binding cannot be mistaken for an empty result.
+#[tauri::command(async)]
+pub fn v2_reference_picker(
+    query: String,
+    store: State<'_, Arc<V2Store>>,
+) -> Result<Vec<V2PickerRow>, CommandError> {
+    Ok(store.reference_picker(&query)?)
+}
+
+/// Canonical URL recognition over free text. The Composer calls this on paste and on a
+/// typed delimiter so chip conversion uses the same parser as #25's saved submission.
+#[tauri::command(async)]
+pub fn v2_reference_parse(text: String) -> Result<ReferenceParseResult, CommandError> {
+    Ok(parse_urls(&text))
 }
 
 /// Names a project for an unassigned Task. A repeat of the same choice is a no-op.

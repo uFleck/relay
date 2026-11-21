@@ -277,6 +277,8 @@ pub fn run() {
             commands::v2_workspace_snapshot,
             commands::v2_workspace_search,
             commands::v2_composer_save,
+            commands::v2_reference_picker,
+            commands::v2_reference_parse,
             commands::v2_task_assign_project,
             settings::v2_provider_status,
             settings::v2_provider_refresh,

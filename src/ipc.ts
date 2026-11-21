@@ -3,6 +3,8 @@ import { emit, listen } from "@tauri-apps/api/event";
 import { mockSnapshot } from "./data/mock";
 import { sortNotes } from "./notes";
 import type { ProviderKey } from "./route";
+import { parseUrls } from "./references";
+import type { ReferenceParseResult, V2PickerRow } from "./references";
 import type { ProposalDecision, RepoCandidate, Snapshot } from "./types";
 
 /* Typed wrappers over the Rust commands. Outside Tauri (pnpm dev in a browser), or while a command
@@ -321,6 +323,29 @@ export const v2WorkspaceSearch = (query: string) =>
     noteIds: [],
     taskIds: [],
   }));
+
+export type {
+  Chip,
+  EditorState,
+  ReferenceAvailability,
+  ReferenceParseResult,
+  ReferenceSnapshot,
+  UrlMatch,
+  V2PickerGroup,
+  V2PickerRow,
+} from "./references";
+
+/* These two are registered through Tauri and never fall back to a mock while running in
+   the app: a missing command must fail loudly instead of looking like an empty picker. */
+export async function v2ReferencePicker(query: string): Promise<V2PickerRow[]> {
+  if (!inTauri) return [];
+  return await invoke<V2PickerRow[]>("v2_reference_picker", { query });
+}
+
+export async function v2ReferenceParse(text: string): Promise<ReferenceParseResult> {
+  if (!inTauri) return parseUrls(text);
+  return await invoke<ReferenceParseResult>("v2_reference_parse", { text });
+}
 
 /* Writes never fall back to a mock: a missing command or a stale revision must surface as
    an error, not as a note that looks saved. In a plain browser there is no store at all. */

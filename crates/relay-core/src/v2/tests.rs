@@ -902,7 +902,11 @@ fn a_version_one_v2_file_gains_the_progress_columns() {
 /// Build a real `user_version = 2` file from one branch of the parallel v2 work.
 /// `second_migration` is whichever `0002` that branch shipped; data is seeded so an
 /// upgrade must preserve it rather than starting over.
-fn version_two_fixture(tag: &str, second_migration: &str, with_opencode: bool) -> (TempDir, PathBuf) {
+fn version_two_fixture(
+    tag: &str,
+    second_migration: &str,
+    with_opencode: bool,
+) -> (TempDir, PathBuf) {
     let dir = TempDir::new(tag);
     let path = dir.file("relay-v2.db");
     let conn = rusqlite::Connection::open(&path).unwrap();
@@ -963,7 +967,9 @@ fn version_two_fixture(tag: &str, second_migration: &str, with_opencode: bool) -
 
 fn has_column(store: &V2Store, table: &str, column: &str) -> bool {
     let conn = store.conn();
-    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})")).unwrap();
+    let mut stmt = conn
+        .prepare(&format!("PRAGMA table_info({table})"))
+        .unwrap();
     stmt.query_map([], |row| row.get::<_, String>(1))
         .unwrap()
         .map(|row| row.unwrap())
@@ -1039,4 +1045,222 @@ fn a_provider_settings_version_two_file_gains_task_progress_without_losing_data(
         )
         .unwrap();
     assert_eq!(grill.as_deref(), Some("agent"));
+}
+
+// --- #29: local picker query ------------------------------------------------------
+
+fn snapshot(title: &str, extra: &str) -> String {
+    if extra.is_empty() {
+        format!(r#"{{"title":"{title}"}}"#)
+    } else {
+        format!(r#"{{"title":"{title}",{extra}}}"#)
+    }
+}
+
+fn ref_with(kind: &str, target: &str, snap: Option<&str>) -> PreparedReference {
+    PreparedReference {
+        kind: kind.to_string(),
+        target_id: target.to_string(),
+        canonical_url: format!("https://example.invalid/{kind}/{target}"),
+        snapshot_json: snap.map(str::to_string),
+    }
+}
+
+#[test]
+fn picker_groups_in_order_and_deduplicates_by_key() {
+    let dir = TempDir::new("picker-groups");
+    let store = V2Store::open(dir.file("relay-v2.db")).unwrap();
+    let clickup = ref_with("clickup", "CU-8x1", Some(&snapshot("Ship chips", "")));
+    let pr = ref_with(
+        "github",
+        "sample/app#142",
+        Some(&snapshot("Add picker", "")),
+    );
+    let slack = ref_with(
+        "slack",
+        "C1/1731000000.000001",
+        Some(&snapshot("Thread", "")),
+    );
+    store
+        .save_note(create(
+            "picker",
+            vec![
+                plain(
+                    "see https://example.com/x",
+                    vec![clickup.clone(), pr.clone(), slack],
+                ),
+                plain("again https://app.clickup.com/t/8x1", vec![clickup]),
+                directive("!do the thing", AgentMode::Act, None),
+            ],
+        ))
+        .unwrap();
+
+    let rows = store.reference_picker("@").unwrap();
+    let keys: Vec<&str> = rows.iter().map(|row| row.key.as_str()).collect();
+    let unique: std::collections::HashSet<&str> = keys.iter().copied().collect();
+    assert_eq!(unique.len(), keys.len(), "picker must deduplicate by key");
+    let ranks: Vec<u8> = rows.iter().map(|row| row.group.rank()).collect();
+    assert!(
+        ranks.windows(2).all(|w| w[0] <= w[1]),
+        "groups out of order: {ranks:?}"
+    );
+    assert!(keys.contains(&"clickup:8x1"));
+    assert!(keys.contains(&"github:sample/app#142"));
+    assert!(keys.contains(&"slack:C1/1731000000.000001"));
+    assert!(keys.iter().any(|key| key.starts_with("note:")));
+    assert!(keys.iter().any(|key| key.starts_with("task:")));
+}
+
+#[test]
+fn picker_scopes_narrow_to_cards_issues_and_local_rows() {
+    let dir = TempDir::new("picker-scopes");
+    let store = V2Store::open(dir.file("relay-v2.db")).unwrap();
+    store
+        .save_note(create(
+            "scopes",
+            vec![plain(
+                "refs",
+                vec![
+                    ref_with("clickup", "CU-42", None),
+                    ref_with("github", "sample/app#142", None),
+                    ref_with("github", "sample/app#7", None),
+                ],
+            )],
+        ))
+        .unwrap();
+
+    let prs = store.reference_picker("#142").unwrap();
+    assert!(
+        prs.iter()
+            .all(|row| { row.group == V2PickerGroup::Prs || row.group == V2PickerGroup::Issues })
+    );
+    assert!(prs.iter().any(|row| row.key == "github:sample/app#142"));
+    let cards = store.reference_picker("CU-").unwrap();
+    assert!(cards.iter().all(|row| row.group == V2PickerGroup::Cards));
+    let local = store.reference_picker("N-").unwrap();
+    assert!(
+        local
+            .iter()
+            .all(|row| row.group == V2PickerGroup::NotesTasks)
+    );
+}
+
+#[test]
+fn picker_matches_titles_case_insensitively_and_exact_first() {
+    let dir = TempDir::new("picker-title");
+    let store = V2Store::open(dir.file("relay-v2.db")).unwrap();
+    store
+        .save_note(create(
+            "titles",
+            vec![plain(
+                "refs",
+                vec![
+                    ref_with(
+                        "github",
+                        "sample/app#1",
+                        Some(&snapshot("Picker panel", "")),
+                    ),
+                    ref_with(
+                        "github",
+                        "sample/app#2",
+                        Some(&snapshot("Refactor notes", "")),
+                    ),
+                ],
+            )],
+        ))
+        .unwrap();
+    let rows = store.reference_picker("picker").unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].key, "github:sample/app#1");
+    let exact = store.reference_picker("@sample/app#1").unwrap();
+    assert!(
+        exact
+            .iter()
+            .any(|row| row.exact_match && row.key == "github:sample/app#1")
+    );
+}
+
+#[test]
+fn picker_qualifies_duplicate_short_repo_names_with_owner() {
+    let dir = TempDir::new("picker-alias");
+    let store = V2Store::open(dir.file("relay-v2.db")).unwrap();
+    store
+        .register_project(NewV2Project {
+            name: "Alpha app".into(),
+            slug: "alpha-app".into(),
+            repo_path: None,
+            owner_repo: Some("alpha/app".into()),
+            t3_target: None,
+        })
+        .unwrap();
+    store
+        .register_project(NewV2Project {
+            name: "Beta app".into(),
+            slug: "beta-app".into(),
+            repo_path: None,
+            owner_repo: Some("beta/app".into()),
+            t3_target: None,
+        })
+        .unwrap();
+    store
+        .save_note(create(
+            "aliases",
+            vec![plain(
+                "refs",
+                vec![
+                    ref_with("github", "alpha/app#1", None),
+                    ref_with("github", "beta/app#1", None),
+                ],
+            )],
+        ))
+        .unwrap();
+    let rows = store.reference_picker("app#1").unwrap();
+    let displays: Vec<&str> = rows.iter().map(|row| row.display_id.as_str()).collect();
+    assert!(displays.contains(&"@alpha#1"));
+    assert!(displays.contains(&"@beta#1"));
+}
+
+#[test]
+fn picker_unavailable_snapshot_keeps_identity_and_settings_destination() {
+    let dir = TempDir::new("picker-unavailable");
+    let store = V2Store::open(dir.file("relay-v2.db")).unwrap();
+    let snap = snapshot(
+        "Known card",
+        r#""reason":"signed out","content":"cached body","cachedAt":"2026-11-21T00:00:00Z""#,
+    );
+    store
+        .save_note(create(
+            "unavailable",
+            vec![plain(
+                "refs",
+                vec![ref_with("clickup", "CU-known", Some(&snap))],
+            )],
+        ))
+        .unwrap();
+    let rows = store.reference_picker("@").unwrap();
+    let row = rows.iter().find(|row| row.key == "clickup:known").unwrap();
+    assert_eq!(row.availability, ReferenceAvailability::Unavailable);
+    assert_eq!(row.unavailable_reason.as_deref(), Some("signed out"));
+    assert_eq!(
+        row.settings_destination.as_deref(),
+        Some("Settings → ClickUp")
+    );
+    assert_eq!(
+        row.snapshot.as_ref().unwrap().content.as_deref(),
+        Some("cached body")
+    );
+    assert_eq!(
+        row.snapshot.as_ref().unwrap().cached_at.as_deref(),
+        Some("2026-11-21T00:00:00Z")
+    );
+}
+
+#[test]
+fn picker_known_typed_id_without_a_local_row_links_immediately() {
+    let dir = TempDir::new("picker-known");
+    let store = V2Store::open(dir.file("relay-v2.db")).unwrap();
+    let rows = store.reference_picker("@CU-brand-new").unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].key, "clickup:brand-new");
+    assert_eq!(rows[0].display_id, "@CU-brand-new");
 }

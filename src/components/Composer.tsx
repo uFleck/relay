@@ -7,6 +7,7 @@ import {
   type V2LineInput,
   type V2Note,
 } from "../ipc";
+import { ReferenceEditor } from "./ReferenceEditor";
 
 /* One input for both surfaces. Create sends text; Edit sends fields keyed by the saved
    lineId, so a promoted Task keeps its source line even after the text is rewritten. */
@@ -108,35 +109,23 @@ export function Composer({
     }
   };
 
-  const keyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
-      event.preventDefault();
-      void submit();
-    }
-  };
-
   return (
     <div className={`composer${compact ? " compact" : ""}`}>
       {note ? (
         <div className="composer-lines">
           {lines.map((line) => (
             <div className="composer-line" key={line.key}>
-              <input
-                className="composer-line-input"
-                value={line.text}
-                aria-label="Note line"
-                placeholder="! Act · ? Wait · ?? Grill · plain text"
-                data-line-id={line.lineId ?? "new"}
-                onChange={(event) => changeLine(line.key, event.target.value)}
-                onFocus={() => setFocused(true)}
-                onBlur={() => setFocused(false)}
-                onKeyDown={(event) => {
-                  if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
-                    event.preventDefault();
-                    void submit();
-                  }
-                }}
-              />
+              <div data-line-id={line.lineId ?? "new"} className="composer-line-editor">
+                <ReferenceEditor
+                  multiline={false}
+                  value={line.text}
+                  ariaLabel="Note line"
+                  placeholder="! Act · ? Wait · ?? Grill · plain text"
+                  onChange={(text) => changeLine(line.key, text)}
+                  onSubmit={() => void submit()}
+                  onActiveChange={setFocused}
+                />
+              </div>
               <button
                 type="button"
                 className="ib"
@@ -153,16 +142,14 @@ export function Composer({
           </button>
         </div>
       ) : (
-        <textarea
-          className="composer-input"
+        <ReferenceEditor
           value={text}
           placeholder="Capture a note. ! Act · ? Wait · ?? Grill"
-          aria-label="Composer"
+          ariaLabel="Composer"
           autoFocus={autoFocus}
-          onChange={(event) => setText(event.target.value)}
-          onKeyDown={keyDown}
-          onFocus={() => setFocused(true)}
-          onBlur={() => setFocused(false)}
+          onChange={setText}
+          onSubmit={() => void submit()}
+          onActiveChange={setFocused}
         />
       )}
       {error && (

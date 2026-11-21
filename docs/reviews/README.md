@@ -84,6 +84,7 @@ Then state the commit reviewed and any follow-up package that should be opened.
 | 2026-11-17 | [On-demand Slack sync](2026-11-17-sync-now.md) | `ed38883` | DeepSeek V4.1 | Awaiting Opus review |
 | 2026-11-21 | [v2 Settings, provider recovery and T3 mapping](2026-11-21-v2-settings.md) | `63ff83f5b046213de139142de3e54b3bf86f5a24` | T3 Code / hy4-flash-free | Local implementation complete; awaiting Opus review |
 | 2026-11-21 | [v2 prerequisite integration (#27 + #28)](2026-11-21-v2-prerequisite-integration.md) | local merge on `relay-v2/29-local-references` | T3 Code / hy4-flash-free | Local implementation complete; awaiting Opus review |
+| 2026-11-21 | [Local Reference picker, Lens and URL chips](2026-11-21-local-references.md) | local commit on `relay-v2/29-local-references` | T3 Code / hy4-flash-free | Local implementation complete; live UI deferred; awaiting Opus review |
 
 The release audit is a section of the scaffold record because it audits the
 scaffold's release pipeline; it does not change the scaffold commit.

@@ -2,7 +2,7 @@
 //! `application_id` and `user_version`, and no shared table with the v1 store.
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
     sync::{Mutex, MutexGuard},
@@ -16,6 +16,9 @@ use super::model::{
     PreparedNoteWrite, PreparedReference, T3Target, TaskProgressUpdate, TaskStatus, V2Note,
     V2NoteLine, V2NotebookSnapshot, V2Project, V2Reference, V2Settings, V2SettingsUpdate, V2Task,
     V2WorkspaceSnapshot, WorkspaceSearchResult,
+};
+use super::reference::{
+    ReferenceAvailability, ReferenceKey, ReferenceSnapshot, V2PickerGroup, V2PickerRow,
 };
 use crate::model::{new_id, now};
 
@@ -784,6 +787,181 @@ impl V2Store {
         })
     }
 
+    /// The one local query behind the `@` picker. It reads only the v2 store: picked
+    /// snapshots, references already used on Notes and Tasks, imported targets, the Notes
+    /// and Tasks themselves and registered project metadata. Provider-backed rows arrive
+    /// in later slices; this query stays local and immediate.
+    pub fn reference_picker(&self, raw_query: &str) -> Result<Vec<V2PickerRow>, V2Error> {
+        let (needle, scope) = picker_scope(raw_query);
+        let conn = self.conn();
+        let projects = {
+            let mut stmt = conn.prepare(
+                "SELECT slug, owner_repo FROM projects ORDER BY updated_at DESC, seq DESC",
+            )?;
+            stmt.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        let mut repo_counts: HashMap<String, usize> = HashMap::new();
+        for (_, owner_repo) in &projects {
+            if let Some(owner_repo) = owner_repo {
+                let lower = owner_repo.to_ascii_lowercase();
+                if let Some((_, repo)) = lower.split_once('/') {
+                    *repo_counts.entry(repo.to_string()).or_default() += 1;
+                }
+            }
+        }
+
+        let mut rows: HashMap<String, V2PickerRow> = HashMap::new();
+        let insert =
+            |row: V2PickerRow, rows: &mut HashMap<String, V2PickerRow>| match rows.get(&row.key) {
+                Some(existing) if existing.updated_at >= row.updated_at => {}
+                _ => {
+                    rows.insert(row.key.clone(), row);
+                }
+            };
+
+        // Picked snapshots and every Reference already used on a Note or Task.
+        {
+            let mut stmt = conn.prepare(
+                "SELECT r.id, r.kind, r.target_id, r.canonical_url, r.snapshot_json,
+                        COALESCE(
+                            (SELECT MAX(n.updated_at) FROM line_refs lr
+                             JOIN note_lines nl ON nl.id = lr.line_id
+                             JOIN notes n ON n.id = nl.note_id WHERE lr.ref_id = r.id),
+                            (SELECT MAX(t.updated_at) FROM task_refs tr
+                             JOIN tasks t ON t.id = tr.task_id WHERE tr.ref_id = r.id),
+                            r.created_at)
+                 FROM ref_targets r",
+            )?;
+            let found = stmt
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                        row.get::<_, String>(5)?,
+                    ))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            for (_, kind, target_id, canonical_url, snapshot_json, updated_at) in found {
+                let Some(key) =
+                    ReferenceKey::from_storage(&kind, &target_id, canonical_url.as_deref())
+                else {
+                    continue;
+                };
+                let snapshot = snapshot_json.as_deref().map(ReferenceSnapshot::from_json);
+                let alias = picker_alias(&key, snapshot.as_ref(), &repo_counts);
+                insert(
+                    picker_row_from_key(
+                        &key,
+                        snapshot.as_ref(),
+                        alias.as_deref(),
+                        &updated_at,
+                        &needle,
+                    ),
+                    &mut rows,
+                );
+            }
+        }
+
+        // Notes and Tasks are local Reference targets in their own right.
+        for note in notebook_notes(&conn)? {
+            let key = ReferenceKey::Note {
+                id: note.id.clone(),
+            };
+            let title = note
+                .lines
+                .first()
+                .map(|line| line.text.clone())
+                .unwrap_or_else(|| note.body.clone());
+            insert(
+                local_row(key, title, "Note", None, note.updated_at, &needle),
+                &mut rows,
+            );
+            for task in note.tasks {
+                let key = ReferenceKey::Task {
+                    id: task.id.clone(),
+                };
+                insert(
+                    local_row(
+                        key,
+                        task.original_line.clone(),
+                        "Task",
+                        Some(task.status.as_str()),
+                        task.updated_at,
+                        &needle,
+                    ),
+                    &mut rows,
+                );
+            }
+        }
+
+        // The Import ledger outlives its Note, so an imported target stays pickable even
+        // after the Note was deleted.
+        {
+            let mut stmt = conn.prepare(
+                "SELECT source_kind, target_id, COALESCE(
+                    (SELECT n.updated_at FROM notes n WHERE n.id = import_ledger.note_id),
+                    import_ledger.created_at)
+                 FROM import_ledger",
+            )?;
+            let found = stmt
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            for (source_kind, target_id, updated_at) in found {
+                // Import ledger ids already include their CU- prefix for cards.
+                let storage_id = if source_kind == "clickup" && !target_id.starts_with("CU-") {
+                    format!("CU-{target_id}")
+                } else {
+                    target_id.clone()
+                };
+                let Some(key) = ReferenceKey::from_storage(&source_kind, &storage_id, None) else {
+                    continue;
+                };
+                if rows.contains_key(&key.identity()) {
+                    continue;
+                }
+                let alias = picker_alias(&key, None, &repo_counts);
+                insert(
+                    picker_row_from_key(&key, None, alias.as_deref(), &updated_at, &needle),
+                    &mut rows,
+                );
+            }
+        }
+
+        // A typed URL or id names a known key immediately, even when it has no local row.
+        if let Some(key) = super::reference::known_key(raw_query) {
+            let identity = key.identity();
+            rows.entry(identity.clone())
+                .or_insert_with(|| picker_row_from_key(&key, None, None, &now(), &needle));
+        }
+
+        let mut result: Vec<V2PickerRow> = rows
+            .into_values()
+            .filter(|row| scope.allows(row.group))
+            .filter(|row| picker_matches(row, &needle))
+            .collect();
+        result.sort_by(|a, b| {
+            a.group
+                .rank()
+                .cmp(&b.group.rank())
+                .then_with(|| b.exact_match.cmp(&a.exact_match))
+                .then_with(|| b.updated_at.cmp(&a.updated_at))
+                .then_with(|| a.key.cmp(&b.key))
+        });
+        Ok(result)
+    }
+
     /// FTS5 over the plain Note body. Each token is a quoted literal, so FTS operators
     /// and wildcards in user text stay text.
     pub fn search_notes(&self, text: &str, limit: usize) -> Result<Vec<V2Note>, V2Error> {
@@ -832,6 +1010,186 @@ impl V2Store {
 }
 
 // ---------------------------------------------------------------------------
+// Picker helpers: query scopes, ranking and the shared Lens row contract
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Copy)]
+enum PickerScope {
+    All,
+    Cards,
+    GitHub,
+    Local,
+}
+
+impl PickerScope {
+    fn allows(self, group: V2PickerGroup) -> bool {
+        match self {
+            Self::All => true,
+            Self::Cards => group == V2PickerGroup::Cards,
+            Self::GitHub => group == V2PickerGroup::Prs || group == V2PickerGroup::Issues,
+            Self::Local => group == V2PickerGroup::NotesTasks,
+        }
+    }
+}
+
+fn picker_scope(raw: &str) -> (String, PickerScope) {
+    let token = raw.strip_prefix('@').unwrap_or(raw).trim();
+    if token.len() > 1 && token.starts_with('#') && token[1..].bytes().all(|b| b.is_ascii_digit()) {
+        return (token.to_ascii_lowercase(), PickerScope::GitHub);
+    }
+    let lower = token.to_ascii_lowercase();
+    if lower.starts_with("cu-") {
+        return (lower, PickerScope::Cards);
+    }
+    if lower.starts_with("n-") || lower.starts_with("t-") {
+        return (lower, PickerScope::Local);
+    }
+    (lower, PickerScope::All)
+}
+
+fn picker_alias(
+    key: &ReferenceKey,
+    snapshot: Option<&ReferenceSnapshot>,
+    repo_counts: &HashMap<String, usize>,
+) -> Option<String> {
+    match key {
+        ReferenceKey::Slack { .. } => snapshot
+            .and_then(|snapshot| snapshot.channel_name.clone())
+            .filter(|name| !name.is_empty()),
+        ReferenceKey::Github { owner_repo, .. } => {
+            let (owner, repo) = owner_repo.rsplit_once('/')?;
+            (repo_counts.get(repo).copied().unwrap_or(0) > 1).then(|| owner.to_string())
+        }
+        _ => None,
+    }
+}
+
+fn picker_row_from_key(
+    key: &ReferenceKey,
+    snapshot: Option<&ReferenceSnapshot>,
+    alias: Option<&str>,
+    updated_at: &str,
+    needle: &str,
+) -> V2PickerRow {
+    let title = snapshot
+        .and_then(|snapshot| snapshot.title.clone())
+        .unwrap_or_else(|| key.target_id());
+    let state = snapshot.and_then(|snapshot| snapshot.state.clone());
+    let mut metadata = snapshot
+        .map(|snapshot| snapshot.metadata.clone())
+        .unwrap_or_default();
+    metadata.truncate(3);
+    let reason = snapshot.and_then(|snapshot| snapshot.reason.clone());
+    let availability = if reason.is_some() {
+        ReferenceAvailability::Unavailable
+    } else {
+        ReferenceAvailability::Ready
+    };
+    let settings_destination = (availability == ReferenceAvailability::Unavailable).then(|| {
+        match key.kind() {
+            "slack" => "Settings → Slack",
+            "github" => "Settings → GitHub",
+            "clickup" => "Settings → ClickUp",
+            _ => "Settings",
+        }
+        .to_string()
+    });
+    let mut row = V2PickerRow {
+        key: key.identity(),
+        kind: key.kind().to_string(),
+        display_id: key.display_id(alias),
+        canonical_link: key.canonical_url(),
+        availability,
+        group: key.group(),
+        title,
+        state,
+        metadata,
+        snapshot: snapshot.cloned(),
+        unavailable_reason: reason,
+        settings_destination,
+        updated_at: updated_at.to_string(),
+        exact_match: false,
+    };
+    row.exact_match = picker_exact(&row, needle);
+    row
+}
+
+fn local_row(
+    key: ReferenceKey,
+    title: String,
+    label: &str,
+    state: Option<&str>,
+    updated_at: String,
+    needle: &str,
+) -> V2PickerRow {
+    let mut row = V2PickerRow {
+        key: key.identity(),
+        kind: key.kind().to_string(),
+        display_id: key.display_id(None),
+        canonical_link: key.canonical_url(),
+        availability: ReferenceAvailability::Ready,
+        group: key.group(),
+        title,
+        state: state.map(str::to_string),
+        metadata: vec![label.to_string()],
+        snapshot: None,
+        unavailable_reason: None,
+        settings_destination: None,
+        updated_at,
+        exact_match: false,
+    };
+    row.exact_match = picker_exact(&row, needle);
+    row
+}
+
+fn picker_exact(row: &V2PickerRow, needle: &str) -> bool {
+    if needle.is_empty() {
+        return false;
+    }
+    let needle = needle.trim_start_matches('@');
+    let target = row
+        .key
+        .split_once(':')
+        .map(|(_, target)| target)
+        .unwrap_or(&row.key);
+    [
+        target,
+        row.display_id.trim_start_matches('@'),
+        row.title.as_str(),
+    ]
+    .iter()
+    .any(|value| value.eq_ignore_ascii_case(needle))
+}
+
+fn picker_matches(row: &V2PickerRow, needle: &str) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    [
+        row.key.as_str(),
+        row.display_id.as_str(),
+        row.title.as_str(),
+        row.canonical_link.as_str(),
+    ]
+    .iter()
+    .any(|value| value.to_ascii_lowercase().contains(needle))
+        || row
+            .snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.content.as_deref())
+            .is_some_and(|content| content.to_ascii_lowercase().contains(needle))
+}
+
+fn notebook_notes(conn: &Connection) -> Result<Vec<V2Note>, V2Error> {
+    let ids = {
+        let mut stmt = conn.prepare("SELECT id FROM notes ORDER BY created_at, seq")?;
+        stmt.query_map([], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    ids.iter().map(|id| note_by_id(conn, id)).collect()
+}
+
+// ---------------------------------------------------------------------------
 // Boot: inspect before touching journal mode
 // ---------------------------------------------------------------------------
 
@@ -867,11 +1225,10 @@ fn migrate(conn: &Connection) -> Result<(), V2Error> {
     // the two parallel `0002` layouts from leaving a half-upgraded file behind.
     let tx = conn.unchecked_transaction()?;
     for migration in MIGRATIONS {
-        let applied: bool = tx.query_row(
-            &format!("SELECT ({})", migration.applied),
-            [],
-            |row| row.get(0),
-        )?;
+        let applied: bool =
+            tx.query_row(&format!("SELECT ({})", migration.applied), [], |row| {
+                row.get(0)
+            })?;
         if !applied {
             tx.execute_batch(migration.sql)?;
         }

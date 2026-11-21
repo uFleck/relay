@@ -3,6 +3,7 @@
 
 pub mod composer;
 mod model;
+pub mod reference;
 mod store;
 #[cfg(test)]
 mod tests;
@@ -14,5 +15,9 @@ pub use model::{
     TaskProgressUpdate, TaskStatus, V2ImportScope, V2Note, V2NoteLine, V2NotebookSnapshot,
     V2Project, V2Reference, V2Settings, V2SettingsUpdate, V2Task, V2WorkspaceSnapshot,
     WorkspaceSearchResult,
+};
+pub use reference::{
+    ReferenceAvailability, ReferenceKey, ReferenceParseResult, ReferenceSnapshot, UrlMatch,
+    V2PickerGroup, V2PickerRow, known_key, parse_urls,
 };
 pub use store::{V2Error, V2Store};
