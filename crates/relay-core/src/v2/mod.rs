@@ -2,6 +2,7 @@
 //! table with the v1 [`crate::store::Store`]. No data migration from v1 exists.
 
 pub mod composer;
+pub mod import;
 pub mod live;
 mod model;
 pub mod recovery;
@@ -11,9 +12,14 @@ mod store;
 mod tests;
 
 pub use composer::{ComposerLineInput, ComposerSaveRequest, ParsedLine};
+pub use import::{
+    CLICKUP_REFRESH_MS, GITHUB_REFRESH_MS, ImportCandidate, ImportOutcome, ImportRefreshTarget,
+    ImportedState, RefreshUpdate, clickup_imported_state, dedupe_candidates, github_imported_state,
+    refresh_failure_update, refresh_snapshot, refresh_success_update,
+};
 pub use live::{
-    LiveCredentials, LiveQueryResult, ProviderProgress, ProviderProgressState, exact_clickup,
-    exact_github, live_eligible, live_query, read_exact,
+    ExactItem, LiveCredentials, LiveQueryResult, ProviderProgress, ProviderProgressState,
+    exact_clickup, exact_github, live_eligible, live_query, read_exact, read_exact_item,
 };
 pub use model::{
     AgentMode, GrillTurn, ImportRecord, NewImportRecord, NewV2Project, NoteWrite, PreparedLine,
@@ -27,7 +33,7 @@ pub use recovery::{
     STALE_SNAPSHOT_MS, decide_failure, decide_success, next_delay_ms,
 };
 pub use reference::{
-    ReferenceAvailability, ReferenceKey, ReferenceParseResult, ReferenceSnapshot, UrlMatch,
-    V2PickerGroup, V2PickerRow, known_key, parse_urls, snapshot_needs_recovery,
+    GithubItemKind, ReferenceAvailability, ReferenceKey, ReferenceParseResult, ReferenceSnapshot,
+    UrlMatch, V2PickerGroup, V2PickerRow, known_key, parse_urls, snapshot_needs_recovery,
 };
 pub use store::{V2Error, V2Store};

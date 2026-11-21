@@ -9,14 +9,15 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use relay_core::git::{self, GitState};
-use relay_core::github::{FoundPull, GithubClient, GithubError};
+use relay_core::github::{GithubClient, GithubError};
 use relay_core::model::TaskLink;
-use relay_core::repos;
 use relay_core::store::Store;
+use relay_core::v2::V2Store;
 use relay_core::view::{SyncSource, SyncState};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use crate::note_import;
 use crate::secrets;
 
 const TOKEN_KEY: &str = "github-token";
@@ -111,11 +112,6 @@ where
 async fn credentials(refresh: bool) -> Credentials {
     let stored = secrets::read(TOKEN_KEY);
     resolve_with(stored, || gh_session(refresh)).await
-}
-
-/// The token for a one-off call such as the issue import.
-pub async fn current_token() -> Option<String> {
-    credentials(false).await.token
 }
 
 /// The login behind the user's `gh` session, when the CLI reports one. Settings uses
@@ -309,46 +305,16 @@ async fn poll_links(
     Ok(out)
 }
 
-async fn search_pulls(creds: &Credentials) -> Result<Vec<FoundPull>, GithubError> {
-    GithubClient::new(creds.token.clone())?
-        .search_my_pulls()
-        .await
-}
-
-/// Turns open PRs you authored or were asked to review, in repos that have a project,
-/// into tasks. Skipped without a token: the search endpoint needs `@me` to mean someone.
-async fn discover(store: &Arc<Store>, creds: &mut Credentials) -> Result<usize, String> {
-    if creds.token.is_none() {
-        return Ok(0);
-    }
-    let mut search = search_pulls(creds).await;
-    if creds.source == AuthSource::Gh
-        && matches!(search, Err(GithubError::Status { status: 401, .. }))
-    {
-        *creds = credentials(true).await;
-        search = search_pulls(creds).await;
-    }
-    let found = search.map_err(|error| format!("PR discovery: {error}"))?;
-    let store = store.clone();
-    // `discover_pull_tasks` runs `git` for every project, so keep it off the async threads.
-    tauri::async_runtime::spawn_blocking(move || repos::discover_pull_tasks(&store, &found))
-        .await
-        .map_err(|error| error.to_string())?
-        .map_err(|error| format!("PR discovery: {error}"))
-}
-
 async fn poll_once(app: &AppHandle) -> Result<usize, String> {
     let store = app.state::<Arc<Store>>().inner().clone();
+    let v2_store = app.state::<Arc<V2Store>>().inner().clone();
     let mut creds = credentials(false).await;
     let mut errors = Vec::new();
     let mut synced = 0;
-    let mut discovered = 0;
-    // Before the early return below: a fresh repo has no PR links yet.
-    match discover(&store, &mut creds).await {
-        Ok(created) => {
-            synced += created;
-            discovered = created;
-        }
+    // PR discovery now creates v2 Notes through the shared Import service, behind its toggle
+    // and signed-in identity. The v1 Task-creating discover path is gone.
+    match note_import::run_github(app, &v2_store).await {
+        Ok(run) => synced += run.created,
         Err(error) => errors.push(error),
     }
     let links = store
@@ -366,9 +332,6 @@ async fn poll_once(app: &AppHandle) -> Result<usize, String> {
     }
     if synced > 0 {
         let _ = app.emit("relay://change", ());
-    }
-    if discovered > 0 {
-        crate::slack::reanalyze_in_background(app.clone());
     }
     if errors.is_empty() {
         Ok(synced)

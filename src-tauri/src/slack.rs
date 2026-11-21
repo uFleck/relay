@@ -1202,15 +1202,6 @@ async fn reanalyze_recent(app: &AppHandle) -> Result<ReanalyzeReport, String> {
     Ok(report)
 }
 
-/// For after a sync or import created tasks. Silent when JEV is off or a sweep runs.
-pub(crate) fn reanalyze_in_background(app: AppHandle) {
-    tauri::async_runtime::spawn(async move {
-        if let Err(error) = reanalyze_recent(&app).await {
-            eprintln!("relay: re-analysis skipped: {error}");
-        }
-    });
-}
-
 /// Redoes one conversation live, replacing a shadow, ignored or reviewed result.
 #[tauri::command]
 pub async fn slack_reanalyze(

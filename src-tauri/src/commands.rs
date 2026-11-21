@@ -13,8 +13,8 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 
+use crate::clickup_sync;
 use crate::github::{self, GithubState};
-use crate::imports;
 use crate::slack::SlackState;
 
 /// The IPC error shape the UI logs. `kind` is a stable code; `message` is for humans.
@@ -147,7 +147,7 @@ pub fn relay_snapshot(
         slack,
         jev,
         github::sync_source(&app.state::<GithubState>().get()),
-        imports::sync_source(),
+        clickup_sync::sync_source(),
     ];
     Ok(store.ui_snapshot(&version, sync)?)
 }

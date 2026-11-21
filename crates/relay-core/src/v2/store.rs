@@ -11,6 +11,7 @@ use std::{
 
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, TransactionBehavior, params};
 
+use super::import::{ImportCandidate, ImportOutcome, ImportRefreshTarget, RefreshUpdate};
 use super::model::{
     AgentMode, GrillTurn, ImportRecord, NewImportRecord, NewV2Project, NoteWrite, PreparedLine,
     PreparedNoteWrite, PreparedReference, T3Target, TaskProgressUpdate, TaskStatus, V2Note,
@@ -24,7 +25,7 @@ use super::reference::{
     ReferenceAvailability, ReferenceKey, ReferenceSnapshot, V2PickerGroup, V2PickerRow,
     snapshot_needs_recovery,
 };
-use crate::model::{new_id, now};
+use crate::model::{from_unix_millis, new_id, now};
 
 /// One v2 migration and the SQL predicate that is true once its change is on disk.
 /// `applied` is a marker, not a version number: #27 and #28 both shipped a `0002`
@@ -54,6 +55,10 @@ const MIGRATIONS: &[Migration] = &[
     Migration {
         sql: include_str!("../../migrations/v2/0004_reference_recovery.sql"),
         applied: "EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'ref_recovery')",
+    },
+    Migration {
+        sql: include_str!("../../migrations/v2/0005_import_refresh.sql"),
+        applied: "EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'import_refresh')",
     },
 ];
 /// 'RELY' as an integer. A non-zero application id marks a file as ours.
@@ -596,6 +601,216 @@ impl V2Store {
         })?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
             .map_err(Into::into)
+    }
+
+    /// Creates one imported Note for a canonical target. The whole change is one transaction:
+    /// the ledger key is reserved first with conflict handling scoped to that key, so a racing
+    /// run can commit at most one Note. Any later failure rolls the reservation back. The Note
+    /// text is the provider's literal title, bypassing Composer directive parsing entirely, and
+    /// carries exactly one source Reference and one seeded snapshot.
+    pub fn import_note(&self, candidate: &ImportCandidate) -> Result<ImportOutcome, V2Error> {
+        let (source_kind, target_id) = candidate.ledger_key();
+        if !matches!(source_kind.as_str(), "clickup" | "github") {
+            return Err(V2Error::InvalidInput("unsupported Import source".into()));
+        }
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let at = now();
+
+        let changed = tx.execute(
+            "INSERT INTO import_ledger (source_kind, target_id, note_id, created_at)
+             VALUES (?1, ?2, NULL, ?3)
+             ON CONFLICT(source_kind, target_id) DO NOTHING",
+            params![source_kind, target_id, at],
+        )?;
+        if changed == 0 {
+            tx.commit()?;
+            return Ok(ImportOutcome::AlreadyImported);
+        }
+
+        // Past the reservation point. Any error from here unwinds the whole transaction,
+        // including the ledger row, so a retry can create the Note.
+        let title = candidate.title.trim();
+        if title.is_empty() {
+            return Err(V2Error::InvalidInput(
+                "an imported Note needs a title".into(),
+            ));
+        }
+        let canonical_url = candidate.canonical_url.trim();
+        if canonical_url.is_empty() {
+            return Err(V2Error::InvalidInput(
+                "an imported Reference needs a canonical URL".into(),
+            ));
+        }
+        let identity = candidate.identity();
+        let (kind, stored_target) = storage_identity(&identity)
+            .ok_or_else(|| V2Error::InvalidInput("unsupported Import Reference".into()))?;
+
+        let note_id = new_id();
+        tx.execute(
+            "INSERT INTO notes (id, rev, source, body, created_at, updated_at)
+             VALUES (?1, 0, 'import', ?2, ?3, ?3)",
+            params![note_id, title, at],
+        )?;
+        let line_id = new_id();
+        tx.execute(
+            "INSERT INTO note_lines (id, note_id, text, position, created_at, updated_at)
+             VALUES (?1, ?2, ?3, 0, ?4, ?4)",
+            params![line_id, note_id, title, at],
+        )?;
+        tx.execute(
+            "INSERT INTO ref_targets (id, kind, target_id, canonical_url, snapshot_json, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(kind, target_id) DO UPDATE SET
+                 canonical_url = excluded.canonical_url,
+                 snapshot_json = COALESCE(ref_targets.snapshot_json, excluded.snapshot_json)",
+            params![
+                new_id(),
+                kind,
+                stored_target,
+                canonical_url,
+                candidate.snapshot_json,
+                at,
+            ],
+        )?;
+        let ref_id: String = tx.query_row(
+            "SELECT id FROM ref_targets WHERE kind = ?1 AND target_id = ?2",
+            params![kind, stored_target],
+            |row| row.get(0),
+        )?;
+        tx.execute(
+            "INSERT INTO line_refs (line_id, ref_id, position) VALUES (?1, ?2, 0)",
+            params![line_id, ref_id],
+        )?;
+
+        // Enrol the live link for exact reads at the provider cadence. This is independent of
+        // discovery and its toggles and survives deletion of the Note it came with.
+        let due_ms = rfc3339_ms(&at).saturating_add(candidate.refresh_ms());
+        let due_at = from_unix_millis(due_ms).unwrap_or_else(crate::model::now);
+        tx.execute(
+            "INSERT OR IGNORE INTO import_refresh
+                 (key, kind, target_id, canonical_url, provider, account_id, attempts,
+                  next_due_at, next_due_ms, reason, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7, ?8, NULL, ?9)",
+            params![
+                candidate.identity(),
+                kind,
+                stored_target,
+                canonical_url,
+                source_kind,
+                candidate.account_id,
+                due_at,
+                due_ms,
+                at,
+            ],
+        )?;
+        tx.execute(
+            "UPDATE import_ledger SET note_id = ?1 WHERE source_kind = ?2 AND target_id = ?3",
+            params![note_id, source_kind, target_id],
+        )?;
+        tx.commit()?;
+        Ok(ImportOutcome::Created { note_id })
+    }
+
+    // -----------------------------------------------------------------------
+    // Imported Reference refresh
+    // -----------------------------------------------------------------------
+
+    /// The read-only snapshot currently stored for a canonical Reference identity. The refresh
+    /// worker uses it to keep title and metadata while updating only live state.
+    pub fn reference_snapshot_json(
+        &self,
+        kind: &str,
+        target_id: &str,
+    ) -> Result<Option<String>, V2Error> {
+        Ok(self
+            .conn()
+            .query_row(
+                "SELECT snapshot_json FROM ref_targets WHERE kind = ?1 AND target_id = ?2",
+                params![kind, target_id],
+                |row| row.get(0),
+            )
+            .optional()?)
+    }
+
+    /// Due imported links. The connection is released with this call, so the worker can await a
+    /// provider without holding the SQLite write lock.
+    pub fn due_import_refreshes(
+        &self,
+        now_ms: i64,
+        limit: usize,
+    ) -> Result<Vec<ImportRefreshTarget>, V2Error> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT key, kind, target_id, canonical_url, provider, account_id, attempts,
+                    next_due_at, next_due_ms, reason, updated_at
+             FROM import_refresh WHERE next_due_ms <= ?1
+             ORDER BY next_due_ms, key LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![now_ms, limit as i64], |row| {
+            Ok(ImportRefreshTarget {
+                key: row.get(0)?,
+                kind: row.get(1)?,
+                target_id: row.get(2)?,
+                canonical_url: row.get(3)?,
+                provider: row.get(4)?,
+                account_id: row.get(5)?,
+                attempts: row.get(6)?,
+                next_due_at: row.get(7)?,
+                next_due_ms: row.get(8)?,
+                reason: row.get(9)?,
+                updated_at: row.get(10)?,
+            })
+        })?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    /// Applies a worker decision. `expected_updated_at` is what the worker read; a newer
+    /// completion discards this one. A successful read only touches the snapshot and the
+    /// refresh schedule, never a Note, a Task or the Import ledger.
+    pub fn record_import_refresh(
+        &self,
+        key: &str,
+        expected_updated_at: &str,
+        snapshot_json: Option<&str>,
+        update: &RefreshUpdate,
+        now: &str,
+    ) -> Result<bool, V2Error> {
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let current: Option<String> = tx
+            .query_row(
+                "SELECT updated_at FROM import_refresh WHERE key = ?1",
+                params![key],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if current.as_deref() != Some(expected_updated_at) {
+            return Ok(false);
+        }
+        if let Some(json) = snapshot_json
+            && let Some((kind, target_id)) = storage_identity(key)
+        {
+            tx.execute(
+                "UPDATE ref_targets SET snapshot_json = ?1 WHERE kind = ?2 AND target_id = ?3",
+                params![json, kind, target_id],
+            )?;
+        }
+        tx.execute(
+            "UPDATE import_refresh SET attempts = ?2, next_due_at = ?3, next_due_ms = ?4,
+                 reason = ?5, updated_at = ?6 WHERE key = ?1",
+            params![
+                key,
+                update.attempts,
+                update.next_due_at,
+                update.next_due_ms,
+                update.reason,
+                now,
+            ],
+        )?;
+        tx.commit()?;
+        Ok(true)
     }
 
     // -----------------------------------------------------------------------

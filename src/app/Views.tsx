@@ -6,7 +6,7 @@ import { claimState, clock, elapsed, liveClaims, plural, statusOf, useNow } from
 import type { Proposal, ProposalDecision, Snapshot, StatusCategory, Task } from "../types";
 import { checkForUpdates, downloadUpdate, installUpdate, type UpdateState } from "../updater";
 import { GithubSettings, ProjectRepo } from "./Github";
-import { ClickupSettings, ImportPanel } from "./Import";
+import { ClickupSettings } from "./Import";
 import { McpSetup } from "./McpSetup";
 import { FromSlack, JevSettings, SlackSettings } from "./Slack";
 import { TaskGroups } from "./Today";
@@ -163,7 +163,10 @@ export function ProjectsView({ snap, selectedId, onSelect, renderTask }: Project
         </header>
         <div className="scroll">
           {tab === "import" ? (
-            <ImportPanel key={current.id} project={current} />
+            <div className="ws-empty">
+              <b>Import moved to Settings</b>
+              <p>Enable a source and run Import now. Each imported item becomes one Note with its source Reference.</p>
+            </div>
           ) : total === 0 ? (
             <div className="ws-empty">
               <b>{current.name} has no tasks yet</b>

@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Icon } from "../components/Icon";
-import { openT3, v2WorkspaceSnapshot, type V2Project, type V2Settings } from "../ipc";
+import {
+  openT3,
+  v2ImportNow,
+  v2WorkspaceSnapshot,
+  type ImportRunResult,
+  type V2Project,
+  type V2Settings,
+} from "../ipc";
 import type { ProviderKey } from "../route";
 import {
   checkT3Mapping,
@@ -558,8 +565,8 @@ function T3Section({ projects, status }: { projects: V2Project[]; status?: Provi
   );
 }
 
-/* Import preferences are saved on their own. Saving scope never starts a provider
-   call, and the v1 manual task-sync action stays unavailable until #31 lands. */
+/* Import preferences are saved on their own. Saving scope never starts a provider call;
+   Import now is the single manual path and creates Notes, never Tasks. */
 function ImportSection({
   projects,
   settings,
@@ -576,6 +583,7 @@ function ImportSection({
   const [spaces, setSpaces] = useState<{ id: string; name: string }[]>([]);
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [runResult, setRunResult] = useState<ImportRunResult | null>(null);
 
   useEffect(() => {
     if (!settings) return;
@@ -603,6 +611,23 @@ function ImportSection({
       setWorkspaces(await clickupWorkspaces());
     } catch (error) {
       setMessage(errorText(error));
+    }
+  };
+
+  const run = async () => {
+    setBusy(true);
+    setMessage(null);
+    try {
+      const result = await v2ImportNow();
+      setRunResult(result);
+      if (result.clickupError || result.githubError) {
+        setMessage([result.clickupError, result.githubError].filter(Boolean).join(" "));
+      }
+      if (result.created > 0) await onSaved();
+    } catch (error) {
+      setMessage(errorText(error));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -678,8 +703,17 @@ function ImportSection({
         <button type="button" className="btn pri" disabled={busy} onClick={() => void save()}>
           Save Import settings
         </button>
-        <span className="meta">Manual sync that creates Tasks is not available yet.</span>
+        <button type="button" className="btn" disabled={busy} onClick={() => void run()}>
+          {busy ? "Importing…" : "Import now"}
+        </button>
       </div>
+      {runResult && (
+        <p className="meta" role="status">
+          Created {runResult.created} Notes, skipped {runResult.skipped}
+          {runResult.truncated ? " · ClickUp results were truncated" : ""}
+        </p>
+      )}
+      <p className="meta">Enable a source, then run Import now. It creates one Note per assigned card or open PR, never a Task.</p>
       {message && <p className="perr" role="alert">{message}</p>}
     </div>
   );

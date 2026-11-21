@@ -324,6 +324,24 @@ export const v2WorkspaceSearch = (query: string) =>
     taskIds: [],
   }));
 
+/** The result of a create-only Note Import run, one line per enabled source. */
+export interface ImportRunResult {
+  created: number;
+  skipped: number;
+  truncated: boolean;
+  clickupError: string | null;
+  githubError: string | null;
+}
+
+export const v2ImportNow = () =>
+  call<ImportRunResult>("v2_import_now", undefined, () => ({
+    created: 0,
+    skipped: 0,
+    truncated: false,
+    clickupError: null,
+    githubError: null,
+  }));
+
 export type {
   Chip,
   EditorState,
@@ -647,9 +665,6 @@ export const clickupSetToken = (token: string) =>
 export const clickupClearToken = () =>
   call<ConnectorStatus>("clickup_clear_token", undefined, () => ({ configured: false }));
 
-export const clickupImport = (args: { projectId: string; listId: string; includeClosed?: boolean }) =>
-  call<ImportCount>("clickup_import", args, () => emptyImport);
-
 export interface ClickupNamed {
   id: string;
   name: string;
@@ -687,9 +702,6 @@ export const clickupSetScope = (scope: ClickupScope) => call<void>("clickup_set_
 
 export const clickupSyncNow = () =>
   call<ClickupSyncResult>("clickup_sync_now", undefined, () => ({ created: 0, updated: 0, archived: 0, truncated: false }));
-
-export const githubImportIssues = (args: { projectId: string; owner: string; repo: string }) =>
-  call<ImportCount>("github_import_issues", args, () => emptyImport);
 
 export const reposScan = (folders: string[]) => call<RepoCandidate[]>("repos_scan", { folders }, () => []);
 

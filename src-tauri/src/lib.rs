@@ -6,9 +6,9 @@ mod clickup_sync;
 mod commands;
 mod github;
 mod hover;
-mod imports;
 mod live;
 mod mcp;
+mod note_import;
 mod recovery;
 mod secrets;
 mod settings;
@@ -299,6 +299,9 @@ pub fn run() {
             settings::v2_opencode_clear_key,
             settings::v2_repos_scan,
             settings::v2_repos_register,
+            settings::repos_scan,
+            settings::repos_import,
+            note_import::v2_import_now,
             settings::v2_t3_set_target,
             settings::v2_t3_check_target,
             commands::ack_change,
@@ -338,18 +341,14 @@ pub fn run() {
             github::sync_prs_now,
             github::project_git_state,
             github::project_set_repo,
-            imports::clickup_status,
-            imports::clickup_set_token,
-            imports::clickup_clear_token,
-            imports::clickup_import,
+            clickup_sync::clickup_status,
+            clickup_sync::clickup_set_token,
+            clickup_sync::clickup_clear_token,
             clickup_sync::clickup_workspaces,
             clickup_sync::clickup_spaces,
             clickup_sync::clickup_scope,
             clickup_sync::clickup_set_scope,
             clickup_sync::clickup_sync_now,
-            imports::github_import_issues,
-            imports::repos_scan,
-            imports::repos_import,
             hover::hover_place,
             hover::hover_drag,
             hover::hover_pointer,
@@ -406,7 +405,8 @@ pub fn run() {
             mcp::start(app.handle().clone(), store.clone(), &dir);
             slack::start(app.handle().clone(), store.clone());
             github::start(app.handle().clone());
-            clickup_sync::start(app.handle().clone());
+            // One v2 service owns startup, scheduled and manual Import for both providers.
+            note_import::start(app.handle().clone());
 
             build_tray(app.handle())?;
             register_hotkeys(app.handle());

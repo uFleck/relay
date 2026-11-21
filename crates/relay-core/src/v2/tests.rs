@@ -1517,3 +1517,209 @@ fn successful_recovery_updates_the_snapshot_without_touching_notes_or_the_ledger
     assert_eq!(after.len(), 1);
     assert_eq!(after[0].attempts, 1);
 }
+
+// ---------------------------------------------------------------------------
+// #31: create-only Note Import
+// ---------------------------------------------------------------------------
+
+fn import_card(id: &str, title: &str) -> ImportCandidate {
+    ImportCandidate {
+        key: ReferenceKey::Clickup { id: id.into() },
+        source_kind: "clickup".into(),
+        title: title.into(),
+        canonical_url: format!("https://app.clickup.com/t/{id}"),
+        snapshot_json: Some(
+            ReferenceSnapshot::from_provider(
+                title,
+                "open",
+                vec!["list Sprint".into()],
+                "2026-11-21T00:00:00.000Z",
+            )
+            .to_json(),
+        ),
+        account_id: Some("42".into()),
+    }
+}
+
+#[test]
+fn import_is_transactional_racy_and_survives_edit_delete_restart() {
+    use std::sync::Arc;
+    use std::thread;
+
+    let dir = TempDir::new("import");
+    let path = dir.file("relay-v2.db");
+    let store = Arc::new(V2Store::open(&path).unwrap());
+
+    // A failure after the ledger reservation rolls the whole transaction back.
+    let mut broken = import_card("fail", "will fail");
+    broken.title = String::new();
+    assert!(store.import_note(&broken).is_err());
+    assert!(store.list_imports().unwrap().is_empty());
+    assert!(store.workspace_snapshot().unwrap().notes.is_empty());
+    // Retry succeeds with no residue from the failed transaction.
+    let created = store
+        .import_note(&import_card("fail", "recovered"))
+        .unwrap();
+    assert!(matches!(created, ImportOutcome::Created { .. }));
+    assert_eq!(store.list_imports().unwrap().len(), 1);
+
+    // One successful first Note: literal title, one Reference, zero Tasks.
+    let candidate = import_card("8x1", "! Ship the RC");
+    let note_id = match store.import_note(&candidate).unwrap() {
+        ImportOutcome::Created { note_id } => note_id,
+        ImportOutcome::AlreadyImported => panic!("first import must create"),
+    };
+    let note = store
+        .workspace_snapshot()
+        .unwrap()
+        .notes
+        .into_iter()
+        .find(|note| note.id == note_id)
+        .unwrap();
+    assert_eq!(note.source, "import");
+    assert_eq!(note.body, "! Ship the RC");
+    assert_eq!(
+        note.tasks.len(),
+        0,
+        "a sigil in a provider title creates no Task"
+    );
+    assert_eq!(note.lines.len(), 1);
+    assert_eq!(note.lines[0].text, "! Ship the RC");
+    assert_eq!(note.lines[0].references.len(), 1);
+    assert_eq!(note.lines[0].references[0].target_id, "CU-8x1");
+    let snapshot = ReferenceSnapshot::from_json(
+        note.lines[0].references[0]
+            .snapshot_json
+            .as_deref()
+            .unwrap(),
+    );
+    assert_eq!(snapshot.title.as_deref(), Some("! Ship the RC"));
+    assert!(store.import_recorded("clickup", "CU-8x1").unwrap());
+
+    // Two concurrent runs for one key commit at most one Note.
+    let racer = Arc::clone(&store);
+    let a = thread::spawn(move || racer.import_note(&import_card("race", "Race")).unwrap());
+    let b_store = Arc::clone(&store);
+    let b = thread::spawn(move || b_store.import_note(&import_card("race", "Race")).unwrap());
+    let outcomes = vec![a.join().unwrap(), b.join().unwrap()];
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter(|outcome| matches!(outcome, ImportOutcome::Created { .. }))
+            .count(),
+        1
+    );
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter(|outcome| matches!(outcome, ImportOutcome::AlreadyImported))
+            .count(),
+        1
+    );
+    let race_notes = store
+        .workspace_snapshot()
+        .unwrap()
+        .notes
+        .iter()
+        .filter(|note| note.body == "Race")
+        .count();
+    assert_eq!(race_notes, 1);
+
+    // Editing and deleting the Note leaves the ledger alone. A later run must not recreate it.
+    let edited = store
+        .save_note(edit(
+            &note_id,
+            note.revision,
+            vec![plain("user edit", vec![])],
+        ))
+        .unwrap();
+    assert_eq!(edited.body, "user edit");
+    store.delete_note(&note_id).unwrap();
+    assert!(matches!(
+        store.import_note(&candidate).unwrap(),
+        ImportOutcome::AlreadyImported
+    ));
+    assert_eq!(
+        store
+            .workspace_snapshot()
+            .unwrap()
+            .notes
+            .iter()
+            .filter(|note| note.body == "! Ship the RC")
+            .count(),
+        0
+    );
+
+    // Restart against the same file: the key is still reserved and nothing was recreated.
+    drop(store);
+    let reopened = V2Store::open(&path).unwrap();
+    assert!(reopened.import_recorded("clickup", "CU-8x1").unwrap());
+    assert!(matches!(
+        reopened
+            .import_note(&import_card("8x1", "! Ship the RC"))
+            .unwrap(),
+        ImportOutcome::AlreadyImported
+    ));
+    assert!(
+        reopened
+            .workspace_snapshot()
+            .unwrap()
+            .notes
+            .iter()
+            .all(|note| note.id != note_id)
+    );
+}
+
+#[test]
+fn import_refresh_changes_only_the_reference_snapshot() {
+    let store = V2Store::open_in_memory().unwrap();
+    store.import_note(&import_card("rr", "Refresh me")).unwrap();
+    let before = store.workspace_snapshot().unwrap();
+    let note = &before.notes[0];
+    let key = "clickup:rr";
+    let current = store
+        .conn()
+        .query_row(
+            "SELECT updated_at FROM import_refresh WHERE key = ?1",
+            params![key],
+            |row| row.get::<_, String>(0),
+        )
+        .unwrap();
+    let refreshed = ReferenceSnapshot::from_provider(
+        "Refresh me",
+        ImportedState::Reassigned.as_str(),
+        vec!["list Sprint".into()],
+        "2026-11-21T00:10:00.000Z",
+    );
+    let update = RefreshUpdate {
+        attempts: 0,
+        next_due_at: "2026-11-21T00:20:00.000Z".into(),
+        next_due_ms: 0,
+        reason: None,
+    };
+    assert!(
+        store
+            .record_import_refresh(
+                key,
+                &current,
+                Some(&refreshed.to_json()),
+                &update,
+                "2026-11-21T00:10:00.000Z"
+            )
+            .unwrap()
+    );
+
+    let after = store.workspace_snapshot().unwrap();
+    assert_eq!(after.notes.len(), 1);
+    assert_eq!(after.notes[0].id, note.id);
+    assert_eq!(after.notes[0].body, note.body);
+    assert_eq!(after.notes[0].revision, note.revision);
+    let snapshot = after.notes[0].lines[0].references[0]
+        .snapshot_json
+        .as_deref()
+        .map(ReferenceSnapshot::from_json)
+        .unwrap();
+    assert_eq!(snapshot.state.as_deref(), Some("unassigned"));
+    assert_eq!(snapshot.title.as_deref(), Some("Refresh me"));
+    assert!(store.import_recorded("clickup", "CU-rr").unwrap());
+}

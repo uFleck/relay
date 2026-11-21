@@ -200,13 +200,21 @@ pub async fn live_query(query: &str, creds: &LiveCredentials, cached_at: &str) -
     result
 }
 
-/// One exact read for a known key, used by the pasted-URL read and the recovery worker.
-/// The typed failure is preserved so the worker can schedule a pause or a retry correctly.
-pub async fn read_exact(
+/// The raw provider item behind an exact read. Import refresh needs the original fields to
+/// distinguish closed/merged PRs and to compare ClickUp assignees with the discovery account;
+/// the picker and recovery worker only need the shared row.
+pub enum ExactItem {
+    Github(GithubHit),
+    Clickup(crate::clickup::ClickUpTask),
+}
+
+/// One exact read for a known key, used by the pasted-URL read, the recovery worker and Import
+/// refresh. The typed failure is preserved so a worker can schedule a pause or a retry correctly.
+pub async fn read_exact_item(
     key: &ReferenceKey,
     creds: &LiveCredentials,
     cached_at: &str,
-) -> Result<V2PickerRow, ProviderFailure> {
+) -> Result<(V2PickerRow, ExactItem), ProviderFailure> {
     match key {
         ReferenceKey::Github {
             owner_repo,
@@ -223,7 +231,10 @@ pub async fn read_exact(
                 GithubItemKind::Issue => client.issue_or_pull(owner, repo, *number).await,
             }
             .map_err(|error| error.failure())?;
-            Ok(github_row(&hit, &creds.registered_repos, "", cached_at))
+            Ok((
+                github_row(&hit, &creds.registered_repos, "", cached_at),
+                ExactItem::Github(hit),
+            ))
         }
         ReferenceKey::Clickup { id } => {
             let token = creds
@@ -236,10 +247,21 @@ pub async fn read_exact(
                 .task(id)
                 .await
                 .map_err(|error| error.failure())?;
-            Ok(clickup_row(&task, "", cached_at))
+            Ok((clickup_row(&task, "", cached_at), ExactItem::Clickup(task)))
         }
         _ => Err(ProviderFailure::Unavailable),
     }
+}
+
+/// The picker and recovery worker's exact read, unchanged in behaviour.
+pub async fn read_exact(
+    key: &ReferenceKey,
+    creds: &LiveCredentials,
+    cached_at: &str,
+) -> Result<V2PickerRow, ProviderFailure> {
+    read_exact_item(key, creds, cached_at)
+        .await
+        .map(|(row, _)| row)
 }
 
 /// Option-returning wrapper for the picker's pasted-URL read; any cached copy stays intact.

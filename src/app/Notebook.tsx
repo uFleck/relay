@@ -179,6 +179,19 @@ function NoteCard({
     <article className="nb-note" data-note-id={note.id} data-revision={note.revision}>
       <div className="nb-note-head">
         <span className="nb-dot" aria-hidden="true" />
+        {note.source === "import" && note.lines[0]?.references[0] && (
+          <span
+            className="nb-kind"
+            title={
+              note.lines[0].references[0].kind === "github"
+                ? "Imported GitHub pull request"
+                : "Imported ClickUp card"
+            }
+            aria-label="Imported source kind"
+          >
+            {note.lines[0].references[0].kind === "github" ? "⌗" : "◇"}
+          </span>
+        )}
         <span className="meta">{new Date(note.createdAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}</span>
         <span className="meta">{note.tasks.length ? `${note.tasks.length} task${note.tasks.length === 1 ? "" : "s"}` : "note"}</span>
         <span className="push" />

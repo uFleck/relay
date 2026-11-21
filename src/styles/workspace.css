@@ -74,6 +74,14 @@
   min-height: 24px;
 }
 
+/* The source-kind glyph on an imported Note's import day. */
+.nb-kind {
+  color: var(--i3);
+  font-family: var(--mono);
+  font-size: 14px;
+  line-height: 1;
+}
+
 .nb-lines {
   display: flex;
   flex-direction: column;
