@@ -34,7 +34,16 @@ export function Rail({ view, onView, version, needsYou, notice }: Props) {
         Relay<span className="ver meta">{version}</span>
       </div>
       {item("notebook", "pencil", "Notebook")}
-      {item("tasks", "check", "Tasks", !!needsYou && <span className="bdg warn">{needsYou}</span>)}
+      {item(
+        "tasks",
+        "check",
+        "Tasks",
+        !!needsYou && (
+          <span className="bdg warn" aria-label={`${needsYou} tasks need you`}>
+            {needsYou}
+          </span>
+        ),
+      )}
       <div className="sp" />
       {notice}
       {item("settings", "gear", "Settings")}

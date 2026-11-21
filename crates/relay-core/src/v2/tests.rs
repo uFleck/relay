@@ -698,3 +698,345 @@ fn settings_and_t3_mapping_persist_across_reopen() {
     assert_eq!(reopened.t3_target(&project.id).unwrap(), None);
     assert!(reopened.settings().unwrap().import_clickup_enabled);
 }
+
+/// Test-only fixture writer: set the stored lifecycle status directly, the way a later
+/// producer would, so every status round-trips through the real SQLite read path.
+fn force_status(store: &V2Store, task_id: &str, status: &str) {
+    let at = crate::model::now();
+    store
+        .conn()
+        .execute(
+            "UPDATE tasks SET status = ?2, updated_at = ?3 WHERE id = ?1",
+            params![task_id, status, at],
+        )
+        .unwrap();
+}
+
+#[test]
+fn stored_progress_round_trips_every_status_and_the_grill_turn_flip() {
+    let dir = TempDir::new("progress");
+    let path = dir.file("relay-v2.db");
+    let store = V2Store::open(&path).unwrap();
+    assert_eq!(
+        {
+            let v: i64 = store
+                .conn()
+                .pragma_query_value(None, "user_version", |row| row.get(0))
+                .unwrap();
+            v
+        },
+        USER_VERSION
+    );
+
+    let statuses = [
+        "briefing",
+        "grilling",
+        "needs_project",
+        "awaiting_approval",
+        "dispatched",
+        "needs_answer",
+        "returned",
+        "failed",
+        "done",
+        "cancelled",
+    ];
+    let note = store
+        .save_note(create(
+            "all-statuses",
+            (0..statuses.len())
+                .map(|i| directive(&format!("!task {i}"), AgentMode::Act, None))
+                .collect(),
+        ))
+        .unwrap();
+    let ids: Vec<String> = note.tasks.iter().map(|t| t.id.clone()).collect();
+    for (id, status) in ids.iter().zip(statuses) {
+        force_status(&store, id, status);
+    }
+
+    // A Grill Task is created on the agent's turn and stays that way until a producer
+    // writes otherwise. All progress fields are optional and start unset.
+    let grill = store
+        .save_note(create(
+            "grill",
+            vec![directive("??clarify", AgentMode::Grill, None)],
+        ))
+        .unwrap()
+        .tasks
+        .into_iter()
+        .next()
+        .unwrap();
+    assert_eq!(grill.status, TaskStatus::Grilling);
+    assert_eq!(grill.grill_turn, Some(GrillTurn::Agent));
+    assert_eq!(grill.pending_action, None);
+    assert_eq!(grill.thread_url, None);
+
+    let waiting = store
+        .update_task_progress(
+            &grill.id,
+            TaskProgressUpdate {
+                grill_turn: Some(GrillTurn::UserQuestion),
+                pending_action: Some("Answer the question in the thread".into()),
+                ..TaskProgressUpdate::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(waiting.grill_turn, Some(GrillTurn::UserQuestion));
+    assert_eq!(waiting.status, TaskStatus::Grilling);
+    assert_eq!(
+        waiting.pending_action.as_deref(),
+        Some("Answer the question in the thread")
+    );
+    assert!(waiting.updated_at >= grill.updated_at);
+
+    let failed = store
+        .update_task_progress(
+            &ids[7],
+            TaskProgressUpdate {
+                failure_stage: Some("dispatch".into()),
+                failure_reason: Some("T3 is not running".into()),
+                thread_url: Some("http://localhost/thread/1".into()),
+                ..TaskProgressUpdate::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(failed.status, TaskStatus::Failed);
+    assert_eq!(failed.failure_stage.as_deref(), Some("dispatch"));
+    assert_eq!(failed.failure_reason.as_deref(), Some("T3 is not running"));
+    assert_eq!(
+        failed.thread_url.as_deref(),
+        Some("http://localhost/thread/1")
+    );
+
+    // Reopen: every field and every status survives a real file round-trip.
+    drop(store);
+    let reopened = V2Store::open(&path).unwrap();
+    let workspace = reopened.workspace_snapshot().unwrap();
+    assert_eq!(workspace.tasks.len(), statuses.len() + 1);
+    let by_id: std::collections::HashMap<_, _> = workspace
+        .tasks
+        .iter()
+        .map(|task| (task.id.as_str(), task))
+        .collect();
+    for (id, status) in ids.iter().zip(statuses) {
+        assert_eq!(by_id[id.as_str()].status.as_str(), status);
+    }
+    assert_eq!(
+        by_id[grill.id.as_str()].grill_turn,
+        Some(GrillTurn::UserQuestion)
+    );
+    assert_eq!(
+        by_id[ids[7].as_str()].failure_stage.as_deref(),
+        Some("dispatch")
+    );
+
+    // The fixture harness flips the turn back to the agent; the status does not change.
+    let back = reopened
+        .update_task_progress(
+            &grill.id,
+            TaskProgressUpdate {
+                grill_turn: Some(GrillTurn::Agent),
+                pending_action: None,
+                ..TaskProgressUpdate::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(back.grill_turn, Some(GrillTurn::Agent));
+    assert_eq!(back.status, TaskStatus::Grilling);
+    assert_eq!(back.pending_action, None);
+
+    // IPC JSON keeps the documented camelCase contract.
+    let json = serde_json::to_string(&back).unwrap();
+    assert!(json.contains("\"grillTurn\":\"agent\""));
+    assert!(json.contains("\"threadUrl\""));
+    assert!(json.contains("\"status\":\"grilling\""));
+}
+
+#[test]
+fn a_version_one_v2_file_gains_the_progress_columns() {
+    let dir = TempDir::new("migrate");
+    let path = dir.file("relay-v2.db");
+    // Build the 0001 schema only, using the real migration file.
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    conn.execute_batch(include_str!("../../migrations/v2/0001_init.sql"))
+        .unwrap();
+    conn.execute(
+        "INSERT INTO settings (id, import_clickup_enabled, import_github_enabled, import_scope, updated_at)
+         VALUES (1, 0, 0, NULL, '2026-11-21T00:00:00Z')",
+        [],
+    )
+    .unwrap();
+    conn.pragma_update(None, "application_id", super::store::APPLICATION_ID)
+        .unwrap();
+    conn.pragma_update(None, "user_version", 1_i64).unwrap();
+    drop(conn);
+
+    let store = V2Store::open(&path).unwrap();
+    let columns: Vec<String> = store
+        .conn()
+        .prepare("PRAGMA table_info(tasks)")
+        .unwrap()
+        .query_map([], |row| row.get::<_, String>(1))
+        .unwrap()
+        .map(|row| row.unwrap())
+        .collect();
+    for column in [
+        "grill_turn",
+        "pending_action",
+        "failure_stage",
+        "failure_reason",
+        "thread_url",
+    ] {
+        assert!(
+            columns.iter().any(|name| name == column),
+            "missing {column}"
+        );
+    }
+    assert_eq!(
+        store.notebook_snapshot().unwrap().settings.updated_at,
+        "2026-11-21T00:00:00Z"
+    );
+}
+
+// --- Prerequisite integration: the two parallel `0002` layouts -----------------
+
+/// Build a real `user_version = 2` file from one branch of the parallel v2 work.
+/// `second_migration` is whichever `0002` that branch shipped; data is seeded so an
+/// upgrade must preserve it rather than starting over.
+fn version_two_fixture(tag: &str, second_migration: &str, with_opencode: bool) -> (TempDir, PathBuf) {
+    let dir = TempDir::new(tag);
+    let path = dir.file("relay-v2.db");
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    conn.execute_batch(include_str!("../../migrations/v2/0001_init.sql"))
+        .unwrap();
+    conn.execute_batch(second_migration).unwrap();
+    let at = "2026-11-21T00:00:00Z";
+    if with_opencode {
+        conn.execute(
+            "INSERT INTO settings (id, import_clickup_enabled, import_github_enabled, import_scope, opencode_model, updated_at)
+             VALUES (1, 1, 0, NULL, 'opencode/gpt-5-nano', ?1)",
+            params![at],
+        )
+        .unwrap();
+    } else {
+        conn.execute(
+            "INSERT INTO settings (id, import_clickup_enabled, import_github_enabled, import_scope, updated_at)
+             VALUES (1, 0, 1, NULL, ?1)",
+            params![at],
+        )
+        .unwrap();
+    }
+    conn.execute(
+        "INSERT INTO notes (id, rev, source, body, created_at, updated_at)
+         VALUES ('note-1', 1, 'composer', '!do work', ?1, ?1)",
+        params![at],
+    )
+    .unwrap();
+    for (id, mode) in [("act-task", "act"), ("grill-task", "grill")] {
+        let line_id = format!("line-{id}");
+        conn.execute(
+            "INSERT INTO note_lines (id, note_id, text, position, created_at, updated_at)
+             VALUES (?1, 'note-1', '!do work', NULL, ?2, ?2)",
+            params![line_id, at],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO tasks (id, source_line_id, original_line, agent_mode, status, created_at, updated_at)
+             VALUES (?1, ?2, '!do work', ?3, 'briefing', ?4, ?4)",
+            params![id, line_id, mode, at],
+        )
+        .unwrap();
+    }
+    if !with_opencode {
+        // #27's store sets grill_turn at task creation; mimic that for its on-disk shape.
+        conn.execute(
+            "UPDATE tasks SET grill_turn = 'agent' WHERE agent_mode = 'grill'",
+            [],
+        )
+        .unwrap();
+    }
+    conn.pragma_update(None, "application_id", APPLICATION_ID)
+        .unwrap();
+    conn.pragma_update(None, "user_version", 2_i64).unwrap();
+    drop(conn);
+    (dir, path)
+}
+
+fn has_column(store: &V2Store, table: &str, column: &str) -> bool {
+    let conn = store.conn();
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})")).unwrap();
+    stmt.query_map([], |row| row.get::<_, String>(1))
+        .unwrap()
+        .map(|row| row.unwrap())
+        .any(|name| name == column)
+}
+
+#[test]
+fn a_task_progress_version_two_file_gains_provider_settings_without_losing_data() {
+    let (_dir, path) = version_two_fixture(
+        "v2-progress-upgrade",
+        include_str!("../../migrations/v2/0002_task_progress.sql"),
+        false,
+    );
+    let store = V2Store::open(&path).unwrap();
+    assert!(has_column(&store, "settings", "opencode_model"));
+    assert!(has_column(&store, "tasks", "grill_turn"));
+    let version: i64 = store
+        .conn()
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, USER_VERSION);
+    let settings = store.settings().unwrap();
+    assert_eq!(settings.opencode_model, None);
+    assert!(settings.import_github_enabled);
+    assert_eq!(settings.updated_at, "2026-11-21T00:00:00Z");
+    let status: String = store
+        .conn()
+        .query_row(
+            "SELECT status FROM tasks WHERE id = 'act-task'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(status, "briefing");
+    let grill: Option<String> = store
+        .conn()
+        .query_row(
+            "SELECT grill_turn FROM tasks WHERE id = 'grill-task'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(grill.as_deref(), Some("agent"));
+}
+
+#[test]
+fn a_provider_settings_version_two_file_gains_task_progress_without_losing_data() {
+    let (_dir, path) = version_two_fixture(
+        "v2-provider-upgrade",
+        include_str!("../../migrations/v2/0003_provider_settings.sql"),
+        true,
+    );
+    let store = V2Store::open(&path).unwrap();
+    assert!(has_column(&store, "tasks", "grill_turn"));
+    assert!(has_column(&store, "tasks", "thread_url"));
+    assert!(has_column(&store, "settings", "opencode_model"));
+    let version: i64 = store
+        .conn()
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, USER_VERSION);
+    assert_eq!(
+        store.settings().unwrap().opencode_model.as_deref(),
+        Some("opencode/gpt-5-nano")
+    );
+    assert!(store.settings().unwrap().import_clickup_enabled);
+    let grill: Option<String> = store
+        .conn()
+        .query_row(
+            "SELECT grill_turn FROM tasks WHERE id = 'grill-task'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(grill.as_deref(), Some("agent"));
+}

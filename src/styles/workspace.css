@@ -164,6 +164,44 @@
   padding: 10px 16px 24px;
 }
 
+.ts-group {
+  margin-bottom: 16px;
+}
+
+.ts-group-h {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 0 8px;
+  font: 600 13px var(--font-ui);
+  color: var(--text-secondary);
+  letter-spacing: 0.01em;
+}
+
+.ts-group-hint {
+  font-weight: 400;
+}
+
+.ts-group-summary {
+  cursor: pointer;
+  list-style: none;
+}
+.ts-group-summary::-webkit-details-marker {
+  display: none;
+}
+.ts-group-summary .ts-group-h::before {
+  content: "▸";
+  margin-right: 2px;
+  font-size: 10px;
+}
+.ts-group.closed[open] .ts-group-h::before {
+  content: "▾";
+}
+.ts-group-rows {
+  display: flex;
+  flex-direction: column;
+}
+
 .ts-row {
   display: flex;
   align-items: center;

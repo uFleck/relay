@@ -62,11 +62,13 @@ svg.i {
   min-width: 22px;
   height: 18px;
   padding: 0 5px;
+  border: 0;
   border-radius: 9px;
   background: var(--warn);
   color: #1a1200;
   font: 700 10.5px/18px var(--font-ui);
   text-align: center;
+  cursor: pointer;
 }
 .tab .b.upd {
   background: var(--accent);
@@ -296,9 +298,72 @@ svg.i {
   background: var(--c);
 }
 .chip.need {
+  border: 0;
   background: color-mix(in srgb, var(--warn) 15%, transparent);
   color: var(--warn);
   font-weight: 600;
+  cursor: pointer;
+}
+
+/* Needs-you surfaces: the collapsed summary row and the full waiting list. */
+.need-toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  background: var(--bg-page);
+  color: var(--text-secondary);
+  font: 12px var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+}
+.need-toggle.has {
+  border-color: color-mix(in srgb, var(--warn) 45%, var(--border-default));
+  color: var(--warn);
+}
+.need-toggle:disabled {
+  cursor: default;
+}
+.wait-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--warn);
+}
+.waiting-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 158px;
+  overflow-y: auto;
+}
+.wt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 26px;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-primary);
+  font: 12px var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+}
+.wt:hover {
+  background: var(--hover-tint);
+}
+.wt .t {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .hb {

@@ -1,0 +1,19 @@
+# v2 prerequisite integration (#27 + #28)
+
+Status: complete locally; independent review pending.
+
+- **Agent / model** - T3 Code thread `dd6c97b9-1b0a-4b0a-8521-1f445242eb6c`, `opencode-go/hy4-flash-free`. No subagents, threads, worktrees or background agents launched.
+- **Commit(s)** - integration merge made locally on `relay-v2/29-local-references`. Sources: #27 `0dda338e2e3e2d7885bf35249517813bec9344df` (branch `relay-v2/27-tasks`, implementation `7c23803`) and #28 starting point `744cef83ae7726d2701e34630e40e05a0b6528cf` (branch `relay-v2/29-local-references`). Base SHA `744cef83ae7726d2701e34630e40e05a0b6528cf` confirmed with `git rev-parse HEAD` before any edit; `git merge-base --is-ancestor 0dda338... HEAD` returned false, so #27 was merged locally before #29 work.
+- **Files** - `crates/relay-core/migrations/v2/{0002_task_progress.sql,0003_provider_settings.sql}`, `crates/relay-core/src/v2/{mod,model,store,tests}.rs`, plus the already-merged #27 frontend changes (`src/App.tsx`, `src/app/Rail.tsx`, `src/app/TaskSheet.tsx`, `src/app/Tasks.tsx`, `src/hover/HoverApp.tsx`, `src/hover/hover.css`, `src/ipc.ts`, `src/styles/workspace.css`, `src/tasks.test.ts`, `src/workspace.ts`) and #27 ledger record.
+- **What changed** - Both #27 and #28 independently added a `0002_*.sql` migration and reached `user_version = 2` with different schemas: `0002_task_progress.sql` (task progress columns) and the renamed `0003_provider_settings.sql` (settings `opencode_model`). They are now one ordered sequence of three migrations with `USER_VERSION = 3`. `migrate()` applies each change by its own schema marker (`sqlite_master` for init, `pragma_table_info('tasks').grill_turn`, `pragma_table_info('settings').opencode_model`) inside one transaction instead of skipping by index. A version-2 file with either layout therefore gains only the missing change; a version-1 file gains both; a fresh store gains all three and keeps the typed defaults. Merge conflicts in `mod.rs`, `store.rs` and `tests.rs` were resolved to keep both sides' exports, columns, progress behavior and tests. No source branch or history was rewritten.
+- **Commands + results** (Windows; pinned Node `24.4.1` prepended to PATH for pnpm):
+  - `git rev-parse HEAD` → `744cef83ae7726d2701e34630e40e05a0b6528cf`, branch `relay-v2/29-local-references`, clean tree. Pass.
+  - `git merge-base --is-ancestor 0dda338... HEAD` → exit 1 (missing), then local `git merge --no-ff --no-commit 0dda338...` resolved and committed. Pass.
+  - `cargo test -p relay-core` → `152 passed; 0 failed; 2 ignored` after adding two targeted upgrade tests. Pass.
+  - `pnpm install --frozen-lockfile` → 71 packages, lockfile unchanged. Pass.
+  - `pnpm typecheck` → no output, exit 0. Pass.
+  - `pnpm test` → `5` files, `28` tests passed. Pass.
+  - New targeted tests: `a_task_progress_version_two_file_gains_provider_settings_without_losing_data` and `a_provider_settings_version_two_file_gains_task_progress_without_losing_data` verify each version-2 layout upgrades to `USER_VERSION = 3`, gains both column sets and preserves seeded settings, task status and grill turn. Pass. Fresh store and version-1 upgrade are covered by existing tests. Pass.
+- **Known risks** - Live packaged upgrade from a real on-disk branch-produced database was not run; the marker-based upgrade is verified with seeded file-backed fixtures only. No UI, tracker, PR, tag or release was touched. Explicit-review flags for #35, #40 and #41 remain future-merge concerns.
+- **Review checklist** - (1) Confirm both version-2 shapes are distinguished by schema markers, not by `user_version`. (2) Confirm the upgrade is one transaction and preserves task progress and Settings. (3) Confirm `USER_VERSION` is 3 and migrations run in order. (4) Confirm both #27 and #28 behavior survives the merge.
+- **Opus verdict** - (left empty for the reviewer)

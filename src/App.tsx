@@ -2,15 +2,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { TitleBar } from "./app/TitleBar";
 import { Rail } from "./app/Rail";
 import { Notebook } from "./app/Notebook";
-import { MissingTask, TaskDetail, Tasks } from "./app/Tasks";
+import { MissingTask, Tasks } from "./app/Tasks";
+import { TaskSheet } from "./app/TaskSheet";
 import { SettingsView } from "./app/Settings";
 import { errorText, getSnapshot, onEvent } from "./ipc";
 import type { Snapshot } from "./types";
 import { parseRoute, readLocation, writeLocation, type Route, type View } from "./route";
 import { startUpdateChecks, useUpdater } from "./updater";
-import { useWorkspace, useWorkspaceFilter } from "./workspace";
-
-const NEEDS_YOU = new Set(["needs_project", "awaiting_approval", "needs_answer", "returned", "failed", "grilling"]);
+import { needsYouCount, useWorkspace, useWorkspaceFilter } from "./workspace";
 
 const typing = (el: EventTarget | null) =>
   el instanceof HTMLElement && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
@@ -115,7 +114,7 @@ export default function App() {
   const selectedTask = route.task
     ? workspace.tasks.find((task) => task.id === route.task)
     : undefined;
-  const needsYou = workspace.tasks.filter((task) => NEEDS_YOU.has(task.status)).length;
+  const needsYou = needsYouCount(workspace.tasks);
   const afterSave = () => void refresh();
 
   return (
@@ -148,9 +147,11 @@ export default function App() {
         )}
 
         {route.task && selectedTask && (
-          <TaskDetail
+          <TaskSheet
+            key={selectedTask.id}
             task={selectedTask}
             project={workspace.projects.find((candidate) => candidate.id === selectedTask.projectId)}
+            note={workspace.notes.find((candidate) => candidate.id === selectedTask.noteId)}
             onClose={closeSheet}
           />
         )}

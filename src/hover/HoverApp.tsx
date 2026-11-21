@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Composer } from "../components/Composer";
 import { Icon, Mark } from "../components/Icon";
-import { ProposalCard } from "../components/ProposalCard";
 import {
   getSnapshot,
   hoverDrag,
@@ -12,31 +11,26 @@ import {
   hoverSetPinned,
   inTauri,
   onEvent,
+  onV2Change,
   openMain,
   requestUpdateCheck,
   setDnd,
   showMainWindow,
+  v2WorkspaceSnapshot,
   type HoverFlags,
+  type V2WorkspaceSnapshot,
 } from "../ipc";
-import { claimState, clock, elapsed, isUnacked, liveClaims, nextDue, todayScope, until, useNow } from "../model";
-import { notebookRoute, taskRoute } from "../route";
+import { claimState, clock, elapsed, liveClaims, nextDue, todayScope, until, useNow } from "../model";
+import { taskRoute } from "../route";
 import type { ClaimHolder, HoverEdge, HoverMode, Snapshot } from "../types";
 import { followUpdates, requestInstall, useUpdater, type UpdateState } from "../updater";
+import { needsYouCount, waitingTasks } from "../workspace";
 import { initialPlacement, placeIn, placementAfterDrag, type Anchor, type Screen } from "./place";
 
 const COLLAPSE_GRACE_MS = 400;
 const POINTER_POLL_MS = 50;
 /* Rust does not send `relay://change` yet, so the hover also re-reads the snapshot on a slow timer. */
 const REFRESH_MS = 20_000;
-const MAX_NEEDS_CARDS = 2;
-
-/** What needs the user: open proposals and unacked requirements. A new id is what makes the tab pulse. */
-function needIds(s: Snapshot) {
-  return new Set([
-    ...s.proposals.map((p) => p.id),
-    ...s.tasks.flatMap((t) => t.changes.filter(isUnacked).map((c) => c.id)),
-  ]);
-}
 
 /** Browser dev only: `?calm` drops proposals and acks every change, for the idle panel. */
 const calm = !inTauri && new URLSearchParams(window.location.search).has("calm");
@@ -54,21 +48,29 @@ function calmed(s: Snapshot): Snapshot {
 
 export function HoverApp() {
   const [snap, setSnap] = useState<Snapshot | null>(null);
+  const [v2, setV2] = useState<V2WorkspaceSnapshot | null>(null);
   const [failed, setFailed] = useState(false);
   const [mode, setMode] = useState<HoverMode>("tab");
   const [flags, setFlags] = useState<HoverFlags>({ pinned: false, dnd: false, paused: false, ready: false, visible: false });
   const [placement, setPlacement] = useState<{ screen: Screen; anchor: Anchor } | null>(null);
   const [pulsing, setPulsing] = useState(false);
   const [composing, setComposing] = useState(false);
+  const [showWaiting, setShowWaiting] = useState(false);
   const composerActive = useRef(false);
   const update = useUpdater();
   const shell = useRef<HTMLDivElement>(null);
-  const seen = useRef<Set<string> | null>(null);
+  const waitingIds = useRef<Set<string> | null>(null);
   const collapseTimer = useRef<number | undefined>(undefined);
   const dragging = useRef(false);
   // The pointer poll and the timers read these without restarting.
-  const live = useRef({ mode, pinned: flags.pinned, dnd: flags.dnd, composer: false });
-  live.current = { mode, pinned: flags.pinned, dnd: flags.dnd, composer: composerActive.current };
+  const live = useRef({ mode, pinned: flags.pinned, dnd: flags.dnd, composer: false, waiting: false });
+  live.current = {
+    mode,
+    pinned: flags.pinned,
+    dnd: flags.dnd,
+    composer: composerActive.current,
+    waiting: showWaiting,
+  };
 
   const pulse = useCallback(() => {
     if (live.current.dnd) return;
@@ -80,30 +82,46 @@ export function HoverApp() {
   const refresh = useCallback(async () => {
     try {
       const raw = await getSnapshot();
-      const s = calm ? calmed(raw) : raw;
-      const ids = needIds(s);
-      if (seen.current && [...ids].some((id) => !seen.current!.has(id))) pulse();
-      seen.current = ids;
-      setSnap(s);
+      setSnap(calm ? calmed(raw) : raw);
       setFailed(false);
     } catch (error) {
       console.error("[relay] hover snapshot", error);
       setFailed(true);
+    }
+  }, []);
+
+  // The badge and the waiting list come from the same v2 read the main window uses. A new
+  // waiting Task id pulses the tab; a committed write refreshes both surfaces.
+  const refreshV2 = useCallback(async () => {
+    try {
+      const workspace = await v2WorkspaceSnapshot();
+      const ids = new Set(waitingTasks(workspace.tasks).map((task) => task.id));
+      if (waitingIds.current && [...ids].some((id) => !waitingIds.current!.has(id))) pulse();
+      waitingIds.current = ids;
+      setV2(workspace);
+    } catch (error) {
+      console.warn("[relay] hover v2 workspace", error);
     }
   }, [pulse]);
 
   useEffect(() => {
     followUpdates();
     void refresh();
-    const timer = window.setInterval(() => void refresh(), REFRESH_MS);
+    void refreshV2();
+    const timer = window.setInterval(() => {
+      void refresh();
+      void refreshV2();
+    }, REFRESH_MS);
     const offChange = onEvent("relay://change", () => void refresh());
+    const offV2 = onV2Change(() => void refreshV2());
     const offState = onEvent("relay://state", setFlags);
     return () => {
       window.clearInterval(timer);
       offChange();
+      offV2();
       offState();
     };
-  }, [refresh]);
+  }, [refresh, refreshV2]);
 
   useEffect(() => {
     if (!inTauri) return;
@@ -135,14 +153,25 @@ export function HoverApp() {
   }, []);
 
   const scheduleCollapse = useCallback(() => {
-    if (live.current.pinned || dragging.current || composerActive.current || collapseTimer.current !== undefined) return;
+    if (
+      live.current.pinned || dragging.current || composerActive.current || live.current.waiting ||
+      collapseTimer.current !== undefined
+    ) return;
     collapseTimer.current = window.setTimeout(() => {
       collapseTimer.current = undefined;
-      if (live.current.pinned || composerActive.current) return;
+      if (live.current.pinned || composerActive.current || live.current.waiting) return;
       setMode("tab");
       setComposing(false);
       void hoverFocus(false);
     }, COLLAPSE_GRACE_MS);
+  }, []);
+
+  /** Badge activation expands the Dock and opens the waiting list from the unfiltered read. */
+  const openWaiting = useCallback(() => {
+    window.clearTimeout(collapseTimer.current);
+    collapseTimer.current = undefined;
+    setMode("open");
+    setShowWaiting(true);
   }, []);
 
   // A click-to-compose control takes keyboard focus for the shared Composer. While it is
@@ -209,7 +238,7 @@ export function HoverApp() {
   const devEdge = useState<HoverEdge>("right");
   const shownEdge = inTauri ? edge : devEdge[0];
 
-  if (!snap) {
+  if (!snap || !v2) {
     // Nothing to count yet: a quiet tab that still places itself, so the window can be shown.
     return (
       <div className={`hroot${inTauri ? "" : " dev"}`} data-edge={shownEdge} data-mode="tab">
@@ -221,7 +250,8 @@ export function HoverApp() {
   }
 
   const scope = todayScope(snap);
-  const badge = scope.needsYou > 0 ? String(scope.needsYou) : update.kind === "ready" ? "↑" : null;
+  const needsYou = needsYouCount(v2.tasks);
+  const badge = needsYou > 0 ? String(needsYou) : update.kind === "ready" ? "↑" : null;
   const fit = update.kind !== "idle" && update.kind !== "checking";
 
   return (
@@ -232,9 +262,21 @@ export function HoverApp() {
           className={`tab${pulsing ? " pulse" : ""}`}
           onMouseEnter={inTauri ? undefined : expand}
           onAnimationEnd={() => setPulsing(false)}
-          aria-label={`Relay: ${scope.total} today, ${scope.inProgress} in progress, ${scope.needsYou} need you`}
+          aria-label={`Relay: ${scope.total} today, ${scope.inProgress} in progress, ${needsYou} need you`}
         >
-          {badge && <span className={`b${scope.needsYou ? "" : " upd"}`}>{badge}</span>}
+          {badge && (
+            <button
+              type="button"
+              className={`b${needsYou ? "" : " upd"}`}
+              aria-label={`${needsYou} tasks need you — show waiting tasks`}
+              onClick={(event) => {
+                event.stopPropagation();
+                openWaiting();
+              }}
+            >
+              {badge}
+            </button>
+          )}
           <span className="cnt">{scope.total}</span>
           <span className="fill">
             <i style={{ height: `${scope.total ? (scope.inProgress / scope.total) * 100 : 0}%` }} />
@@ -257,6 +299,9 @@ export function HoverApp() {
         >
           <Panel
             snap={snap}
+            v2={v2}
+            showWaiting={showWaiting}
+            onToggleWaiting={() => setShowWaiting((open) => !open)}
             flags={flags}
             update={update}
             failed={failed}
@@ -297,6 +342,9 @@ export function HoverApp() {
 
 interface PanelProps {
   snap: Snapshot;
+  v2: V2WorkspaceSnapshot;
+  showWaiting: boolean;
+  onToggleWaiting: () => void;
   flags: HoverFlags;
   update: UpdateState;
   failed: boolean;
@@ -311,6 +359,9 @@ interface PanelProps {
 
 function Panel({
   snap,
+  v2,
+  showWaiting,
+  onToggleWaiting,
   flags,
   update,
   failed,
@@ -324,7 +375,8 @@ function Panel({
 }: PanelProps) {
   const now = useNow();
   const scope = todayScope(snap);
-  const needs = scope.needsYou > 0;
+  const waiting = waitingTasks(v2.tasks);
+  const needs = waiting.length > 0;
   const due = nextDue(snap, now);
   const claims = liveClaims(snap.tasks);
   const openTask = (task: string) => void openMain(taskRoute(task));
@@ -336,14 +388,29 @@ function Panel({
     onDrag();
   };
 
-  const needsSection = needs ? (
-    <NeedsYou key="needs" snap={snap} openTask={openTask} />
+  const needsSection = showWaiting ? (
+    <WaitingList key="waiting" tasks={waiting} openTask={openTask} onClose={onToggleWaiting} />
   ) : (
-    <div className="calm" key="needs">
-      <span className="ok">✓</span>
-      Nothing needs you
-      {snap.lastProposalHandledAt && ` · last proposal handled ${clock(snap.lastProposalHandledAt)}`}
-    </div>
+    <button
+      type="button"
+      className={`grp need-toggle${needs ? " has" : ""}`}
+      key="needs"
+      onClick={onToggleWaiting}
+      aria-expanded={showWaiting}
+      disabled={!needs}
+    >
+      {needs ? (
+        <>
+          <span className="wait-dot" />
+          <b>{waiting.length}</b> {waiting.length === 1 ? "task needs you" : "tasks need you"}
+          <Icon name="ext" small className="push" />
+        </>
+      ) : (
+        <>
+          <span className="ok">✓</span> Nothing needs you
+        </>
+      )}
+    </button>
   );
 
   const claimsSection = (
@@ -424,10 +491,17 @@ function Panel({
             {scope.blocked} blocked
           </span>
           {needs && (
-            <span className="chip need" style={{ "--c": "var(--warn)" } as React.CSSProperties}>
+            <button
+              type="button"
+              className="chip need"
+              style={{ "--c": "var(--warn)" } as React.CSSProperties}
+              onClick={onToggleWaiting}
+              aria-expanded={showWaiting}
+              aria-label={`${waiting.length} tasks need you — show waiting tasks`}
+            >
               <i />
-              {scope.needsYou} need you
-            </span>
+              {waiting.length} need you
+            </button>
           )}
         </span>
       </div>
@@ -554,55 +628,33 @@ function UpdateBanner({ update, version }: { update: UpdateState; version: strin
   return null;
 }
 
-/** Proposals first, then unacked changes; at most two cards, the rest count toward Review. */
-function NeedsYou({ snap, openTask }: { snap: Snapshot; openTask: (id: string) => void }) {
-  const scope = todayScope(snap);
-  const items = [
-    ...snap.proposals.map((p) => ({ type: "proposal" as const, p })),
-    ...scope.unacked.map((u) => ({ type: "change" as const, ...u })),
-  ];
-  const shown = items.slice(0, MAX_NEEDS_CARDS);
-  const more = items.length - shown.length;
-
+/** The full waiting list from the unfiltered v2 read, newest change first, inside Dock bounds. */
+function WaitingList({
+  tasks,
+  openTask,
+  onClose,
+}: {
+  tasks: V2WorkspaceSnapshot["tasks"];
+  openTask: (id: string) => void;
+  onClose: () => void;
+}) {
   return (
-    <>
-      {shown.map((item) =>
-        item.type === "proposal" ? (
-          <ProposalCard
-            key={item.p.id}
-            size="compact"
-            proposal={item.p}
-            task={snap.tasks.find((t) => t.id === item.p.taskId)}
-            onReview={() => void openMain(notebookRoute())}
-          />
-        ) : (
-          item.change.kind === "requirement" && (
-            <button type="button" className="card" key={item.change.id} onClick={() => openTask(item.task.id)}>
-              <div className="hd">
-                <Icon name="slack" className="muted-fg" />
-                <b>{item.task.title}</b>
-                <span className="meta">
-                  {item.change.author.split(" ")[0]} · {clock(item.change.at)} · {item.change.confidence.toFixed(2)}
-                </span>
-              </div>
-              <q>“{item.change.text}”</q>
-              <div className="meta warn-fg">
-                unacked
-                {!item.task.claim || item.task.claim.releasedAt
-                  ? " · no agent holds this task"
-                  : Date.parse(item.task.claim.lastProgressAt) < Date.parse(item.change.at)
-                    ? ` · ${item.task.claim.holder} claim hasn't checked in since`
-                    : ` · ${item.task.claim.holder} claim checked in without acking`}
-              </div>
-            </button>
-          )
-        ),
-      )}
-      {more > 0 && (
-        <button type="button" className="more" onClick={() => void openMain(snap.proposals.length ? "/review" : "/today")}>
-          +{more} more in {snap.proposals.length ? "Review" : "Today"}
+    <section className="grp waiting" aria-label="Tasks waiting on you">
+      <h3>
+        Waiting on you <span className="meta">{tasks.length}</span>
+        <button type="button" className="linkish push" onClick={onClose}>
+          Hide
         </button>
-      )}
-    </>
+      </h3>
+      <div className="waiting-list">
+        {tasks.map((task) => (
+          <button type="button" className="wt" key={task.id} onClick={() => openTask(task.id)}>
+            <span className="t">{task.originalLine}</span>
+            <span className="meta">{task.status.replace(/_/g, " ")}</span>
+            <Icon name="ext" small />
+          </button>
+        ))}
+      </div>
+    </section>
   );
 }
