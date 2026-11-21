@@ -1353,6 +1353,8 @@ pub fn v2_briefing_approve(
     store: State<'_, Arc<V2Store>>,
 ) -> Result<BriefView, CommandError> {
     approve(store.inner(), &task_id, revision, edited)?;
+    // #36: a Wait Task becomes ready only on Go; start it now when a project is set.
+    crate::dispatch::start_ready_task(&app, &task_id);
     publish(&app, &task_id);
     Ok(build_view(store.inner(), &task_id)?)
 }

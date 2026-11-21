@@ -283,6 +283,8 @@ pub fn v2_grilling_go(
     store: State<'_, Arc<V2Store>>,
 ) -> Result<GrillView, CommandError> {
     approve_brief(store.inner(), &task_id, revision, edited)?;
+    // #36: the closing approval is the last gate; dispatch if the project is also set.
+    crate::dispatch::start_ready_task(&app, &task_id);
     publish(&app, &task_id);
     Ok(build_view(store.inner(), &task_id)?)
 }

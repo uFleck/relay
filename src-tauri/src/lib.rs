@@ -4,6 +4,7 @@
 mod analyst;
 mod clickup_sync;
 mod commands;
+mod dispatch;
 mod github;
 mod grilling;
 mod grilling_mcp;
@@ -17,6 +18,7 @@ mod secrets;
 mod settings;
 mod slack;
 mod t3;
+mod t3_cli;
 
 use hover::HoverState;
 use relay_core::model::NewProject;
@@ -273,6 +275,7 @@ pub fn run() {
         .manage(mcp::McpState::default())
         .manage(opencode::BriefingState::default())
         .manage(grilling::GrillingState::default())
+        .manage(dispatch::DispatchGate::default())
         .invoke_handler(tauri::generate_handler![
             show_main_window,
             open_main,
@@ -306,6 +309,11 @@ pub fn run() {
             grilling::v2_grilling_cancel,
             grilling::v2_grilling_go,
             grilling::v2_grilling_continue_link_only,
+            dispatch::v2_dispatch_view,
+            dispatch::v2_dispatch_retry,
+            dispatch::v2_dispatch_check,
+            dispatch::v2_dispatch_link,
+            dispatch::v2_dispatch_cancel,
             settings::v2_provider_status,
             settings::v2_provider_refresh,
             settings::v2_github_set_token,
@@ -430,6 +438,8 @@ pub fn run() {
             opencode::init(app.handle());
             // #35: an interrupted Grilling turn is retryable without losing its transcript.
             grilling::init(app.handle());
+            // #36: reconcile attempts left uncertain by a restart, then start ready Tasks.
+            dispatch::init(app.handle());
             // One v2 service owns startup, scheduled and manual Import for both providers.
             note_import::start(app.handle().clone());
             // #33: a first setup or a directory older than seven days gets its metadata scan on a

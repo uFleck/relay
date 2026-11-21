@@ -45,6 +45,14 @@ impl CommandError {
     }
 }
 
+impl std::fmt::Display for CommandError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for CommandError {}
+
 impl From<StoreError> for CommandError {
     fn from(error: StoreError) -> Self {
         // `ClaimConflict` already renders the holder name, claim id and lease.
@@ -104,6 +112,8 @@ pub fn v2_composer_save(
     crate::opencode::start_for_tasks(&app, &saved);
     // #35: a ?? Task starts its Grilling exchange on the same committed write.
     crate::grilling::start_for_tasks(&app, &saved);
+    // #36: an Act Task that is already ready dispatches on the same committed write.
+    crate::dispatch::start_for_tasks(&app, &saved);
     let _ = app.emit(V2_CHANGE_EVENT, saved.id.clone());
     Ok(saved)
 }
@@ -136,6 +146,8 @@ pub fn v2_task_assign_project(
     let task = store.assign_task_project(&task_id, &project_id)?;
     // A finished Grilling exchange waiting for a project becomes the closing-approval turn.
     crate::grilling::project_assigned(store.inner(), &task_id)?;
+    // Naming a project can close the last dispatch gate for Act, Wait or Grill.
+    crate::dispatch::start_ready_task(&app, &task_id);
     let _ = app.emit(V2_CHANGE_EVENT, task.note_id.clone());
     Ok(task)
 }
