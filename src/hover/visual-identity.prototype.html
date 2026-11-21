@@ -209,10 +209,11 @@ section[data-v="K"] .hl .ln::before { content: "note"; position: absolute; left:
 section[data-v="K"] .hl .ln.k-act::before { content: "act"; } section[data-v="K"] .hl .ln.k-wait::before { content: "wait"; } section[data-v="K"] .hl .ln.k-grill::before { content: "grill"; }
 section[data-v="K"] .hl .ln[class*="k-"]::before { color: #fff; background: var(--k); }
 section[data-v="K"] .hl .ln.pop::before { animation: pop .35s cubic-bezier(.3,1.8,.5,1) 1; }
-section[data-v="K"] .pick.open { display: grid; grid-template-columns: 1fr 260px; column-gap: 6px; align-content: start; }
-section[data-v="K"] .pick .grp, section[data-v="K"] .pick .row { grid-column: 1; }
-section[data-v="K"] .pick .row { grid-template-columns: 170px 1fr; }
-section[data-v="K"] .pick .row .kd { display: none; }
+.has-lens .pick.open { display: grid; grid-template-columns: 1fr 260px; column-gap: 6px; align-content: start; }
+.has-lens .pick .grp, .has-lens .pick .row { grid-column: 1; }
+.has-lens .pick .row { grid-template-columns: 170px 1fr; }
+.has-lens .pick .row .kd { display: none; }
+section[data-v="J"] .lens { min-height: 190px; }
 .lens { grid-row: 1 / 99; grid-column: 2; border-left: 1px solid var(--line); padding: 10px 14px; font-size: 13px; }
 .lens .kd { font: 500 10.5px "Geist Mono"; text-transform: uppercase; letter-spacing: .14em; color: var(--faint); }
 .lens .id { font: 600 13px "Geist Mono"; color: var(--chip-ink); margin: 4px 0; }
@@ -230,7 +231,7 @@ section[data-v="K"] .pick .row .kd { display: none; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; } }
 </style>
 </head>
-<body data-v="F">
+<body data-v="J">
 
 <template id="side">
   <nav class="side"><div class="brand">relay<span class="dot">.</span></div><a class="on" href="#">Notebook</a><a href="#">Tasks <span class="n badge">3</span></a><a href="#">Settings</a>
@@ -251,8 +252,8 @@ section[data-v="K"] .pick .row .kd { display: none; }
   </div>
   <div class="spot"></div>
 </section>
-<section data-v="J"><div class="win"><slot-side></slot-side><div class="tl feed"></div></div><div class="spot"></div></section>
-<section data-v="K"><div class="win"><slot-side></slot-side><div class="tl feed"></div></div><div class="spot"></div></section>
+<section data-v="J" class="has-lens"><div class="win"><slot-side></slot-side><div class="tl feed"></div></div><div class="spot"></div></section>
+<section data-v="K" class="has-lens"><div class="win"><slot-side></slot-side><div class="tl feed"></div></div><div class="spot"></div></section>
 
 <div id="sw"><button data-prev>←</button><span class="lbl"></span><button data-next>→</button><button data-play>▶ Play</button></div>
 
@@ -355,7 +356,7 @@ const NAMES = {
   F: ["Spotlight", "fixed: one light per line, per directive"],
   H: ["Preview Tray", "see each Task before you send it"],
   I: ["Transit", "Notes on a trunk, Tasks on coloured lines"],
-  J: ["Dock", "palette at the bottom, newest lands above it"],
+  J: ["Dock + Lens", "chosen: bottom palette, picker reads the Reference"],
   K: ["Lens", "daylight; picker reads the Reference's live state"],
 };
 const secOf = v => document.querySelector(`section[data-v="${v}"]`);
@@ -400,7 +401,7 @@ function setupComposer(v) {
       if (r.kind !== last) { html += `<div class="grp">${r.kind}</div>`; last = r.kind; }
       html += `<div class="row${i === sel ? " on" : ""}"><span class="id">@${esc(r.id)}</span><span class="ti">${esc(r.title)}</span><span class="kd">${r.kind}</span></div>`;
     });
-    if (v === "K") { const r = items[sel]; html += `<div class="lens"><div class="kd">${r.kind}</div><div class="id">@${esc(r.id)}</div><div class="ti">${esc(r.title)}</div><span class="state">${esc(r.state)}</span><div class="meta">${r.meta.map(esc).join("<br>")}</div><div class="ro">read-only · the agent does any writes</div></div>`; }
+    if (sec.classList.contains("has-lens")) { const r = items[sel]; html += `<div class="lens"><div class="kd">${r.kind}</div><div class="id">@${esc(r.id)}</div><div class="ti">${esc(r.title)}</div><span class="state">${esc(r.state)}</span><div class="meta">${r.meta.map(esc).join("<br>")}</div><div class="ro">read-only · the agent does any writes</div></div>`; }
     pick.innerHTML = html; pick.classList.add("open");
   }
   function accept() {
@@ -465,7 +466,7 @@ document.querySelector("[data-play]").onclick = async () => {
 
 renderAll(false);
 const qv = new URLSearchParams(location.search).get("variant");
-setV(KEYS.includes(qv) ? qv : "F", false);
+setV(KEYS.includes(qv) ? qv : "J", false);
 </script>
 </body>
 </html>
