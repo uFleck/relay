@@ -15,6 +15,107 @@ pub const STATE_EVENT: &str = "relay://state";
 const TAB_W: f64 = 34.0;
 const TAB_H: f64 = 112.0;
 
+/* ── Dock domain: pure, platform-independent ───────────────────────────────────────────────────
+Rust owns the bottom-centre anchor, the monitor work area and the DPI conversion. The page only
+sends a measured CSS height. Keeping the decisions here makes them testable without Win32 and
+keeps reentrant Win32 calls out of the state lock. */
+
+/// Preferred Dock width and bottom margin in CSS pixels (prototype, SPEC-v2 "Dock + Lens").
+pub const DOCK_WIDTH_CSS: f64 = 760.0;
+pub const DOCK_MARGIN_CSS: f64 = 16.0;
+
+/// A rectangle in physical pixels. Coordinates are signed so monitors left of or above the primary
+/// one keep their real position.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PhysRect {
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
+/// A monitor's physical work area, excluding taskbars and other docked bars.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WorkArea {
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
+/// Ceil with a tolerance: `16.0 * 1.25` lands a hair above 20 in binary floating point and must not
+/// become 21 physical pixels.
+fn ceil_css(css: f64, scale: f64) -> i32 {
+    let scaled = css * scale;
+    let up = scaled.ceil();
+    if scaled > 0.0 && up - scaled > 1.0 - 1e-9 {
+        up as i32 - 1
+    } else {
+        up as i32
+    }
+}
+
+/// The one rectangle used for every Dock size. Grow and shrink both go through this so the bottom
+/// edge stays at `work.bottom - margin` and the width is centred on signed coordinates. Width and
+/// height are capped to the work area; the page scrolls inside its CSS viewport past the cap.
+pub fn dock_rect(area: WorkArea, scale: f64, css_width: f64, css_height: f64) -> PhysRect {
+    let margin = ceil_css(DOCK_MARGIN_CSS, scale).min(area.height.max(0));
+    let width = ceil_css(css_width, scale).min(area.width.max(0));
+    let height = ceil_css(css_height, scale).min((area.height - margin).max(0));
+    PhysRect {
+        x: area.x + (area.width - width) / 2,
+        y: area.y + area.height - margin - height,
+        width,
+        height,
+    }
+}
+
+/// Identity captured at the keypress. An HWND can be reused, so the thread and process ids decide
+/// whether the saved window is still the one the user was in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PreviousWindow {
+    pub hwnd: isize,
+    pub pid: u32,
+    pub tid: u32,
+}
+
+/// Why the session ended. Blur is the only path where the user has already chosen the next focus.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Dismissal {
+    Escape,
+    Saved,
+    Toggle,
+    Blur,
+}
+
+/// The saved window is restored only for an explicit dismissal, only while the Dock still owns
+/// foreground, and only if the saved window is still valid with matching identity. Blur and stale
+/// or invalid targets are discarded without a second focus grab.
+pub fn restore_target(
+    previous: Option<PreviousWindow>,
+    how: Dismissal,
+    dock_owned_foreground: bool,
+    previous_still_valid: bool,
+) -> Option<PreviousWindow> {
+    if how == Dismissal::Blur {
+        return None;
+    }
+    let target = previous?;
+    (dock_owned_foreground && previous_still_valid).then_some(target)
+}
+
+/// Queued resize and dismissal work must carry the session id it was scheduled for.
+pub fn session_current(active: Option<u64>, incoming: u64) -> bool {
+    active == Some(incoming)
+}
+
+/// `SHQueryUserNotificationState` is polled on every summon. Only exclusive Direct3D full screen
+/// (3) suppresses the Dock; `QUNS_BUSY` (2) and every other state still activate. A failed query is
+/// reported as -1 and also activates.
+pub fn suppress_for_notification_state(state: i32) -> bool {
+    state == 3
+}
+
 struct Flags {
     /// The user setting for the hover. There is no switch for it yet, so it is always on.
     enabled: bool,
@@ -467,5 +568,209 @@ mod tests {
             }
             .want_shown()
         );
+    }
+
+    #[test]
+    fn physical_rect_at_one_hundred_one_twenty_five_and_one_fifty_percent() {
+        // The same logical 1920×1032 work area at three scales.
+        let rect = dock_rect(
+            WorkArea {
+                x: 0,
+                y: 0,
+                width: 1920,
+                height: 1032,
+            },
+            1.0,
+            DOCK_WIDTH_CSS,
+            420.0,
+        );
+        assert_eq!(
+            rect,
+            PhysRect {
+                x: 580,
+                y: 596,
+                width: 760,
+                height: 420
+            }
+        );
+
+        let rect = dock_rect(
+            WorkArea {
+                x: 0,
+                y: 0,
+                width: 2400,
+                height: 1290,
+            },
+            1.25,
+            DOCK_WIDTH_CSS,
+            420.0,
+        );
+        assert_eq!(
+            rect,
+            PhysRect {
+                x: 725,
+                y: 745,
+                width: 950,
+                height: 525
+            }
+        );
+
+        let rect = dock_rect(
+            WorkArea {
+                x: 0,
+                y: 0,
+                width: 2880,
+                height: 1548,
+            },
+            1.5,
+            DOCK_WIDTH_CSS,
+            420.0,
+        );
+        assert_eq!(
+            rect,
+            PhysRect {
+                x: 870,
+                y: 894,
+                width: 1140,
+                height: 630
+            }
+        );
+    }
+
+    #[test]
+    fn physical_rect_handles_a_negative_monitor_origin() {
+        // A 150% monitor placed left of and above the primary one.
+        let rect = dock_rect(
+            WorkArea {
+                x: -2880,
+                y: -500,
+                width: 2880,
+                height: 1548,
+            },
+            1.5,
+            DOCK_WIDTH_CSS,
+            420.0,
+        );
+        assert_eq!(
+            rect,
+            PhysRect {
+                x: -2010,
+                y: 394,
+                width: 1140,
+                height: 630
+            }
+        );
+    }
+
+    #[test]
+    fn physical_rect_caps_height_and_width_to_the_work_area() {
+        let tall = dock_rect(
+            WorkArea {
+                x: 0,
+                y: 0,
+                width: 1920,
+                height: 300,
+            },
+            1.0,
+            DOCK_WIDTH_CSS,
+            2000.0,
+        );
+        assert_eq!(
+            tall,
+            PhysRect {
+                x: 580,
+                y: 0,
+                width: 760,
+                height: 284
+            }
+        );
+
+        let wide = dock_rect(
+            WorkArea {
+                x: -200,
+                y: 48,
+                width: 500,
+                height: 1032,
+            },
+            1.0,
+            DOCK_WIDTH_CSS,
+            420.0,
+        );
+        assert_eq!(
+            wide,
+            PhysRect {
+                x: -200,
+                y: 644,
+                width: 500,
+                height: 420
+            }
+        );
+    }
+
+    #[test]
+    fn css_to_physical_rounds_up_without_a_phantom_pixel() {
+        assert_eq!(ceil_css(16.0, 1.0), 16);
+        assert_eq!(ceil_css(16.0, 1.25), 20);
+        assert_eq!(ceil_css(16.0, 1.5), 24);
+        assert_eq!(ceil_css(101.0, 1.25), 127);
+    }
+
+    #[test]
+    fn dismiss_restores_only_a_valid_target_that_the_dock_still_owns() {
+        let previous = PreviousWindow {
+            hwnd: 42,
+            pid: 7,
+            tid: 9,
+        };
+        assert_eq!(
+            restore_target(Some(previous), Dismissal::Escape, true, true),
+            Some(previous)
+        );
+        assert_eq!(
+            restore_target(Some(previous), Dismissal::Saved, true, true),
+            Some(previous)
+        );
+        assert_eq!(
+            restore_target(Some(previous), Dismissal::Toggle, true, true),
+            Some(previous)
+        );
+        // The user clicked elsewhere, the window was reused, or there was no session: no restore.
+        assert_eq!(
+            restore_target(Some(previous), Dismissal::Escape, false, true),
+            None
+        );
+        assert_eq!(
+            restore_target(Some(previous), Dismissal::Saved, true, false),
+            None
+        );
+        assert_eq!(restore_target(None, Dismissal::Escape, true, true), None);
+    }
+
+    #[test]
+    fn blur_discards_the_saved_target_even_when_it_is_valid() {
+        let previous = PreviousWindow {
+            hwnd: 42,
+            pid: 7,
+            tid: 9,
+        };
+        assert_eq!(
+            restore_target(Some(previous), Dismissal::Blur, true, true),
+            None
+        );
+    }
+
+    #[test]
+    fn a_stale_session_cannot_resize_or_dismiss() {
+        assert!(session_current(Some(2), 2));
+        assert!(!session_current(Some(2), 1));
+        assert!(!session_current(None, 1));
+    }
+
+    #[test]
+    fn only_exclusive_direct3d_full_screen_suppresses_summon() {
+        assert!(suppress_for_notification_state(3));
+        assert!(!suppress_for_notification_state(2)); // QUNS_BUSY
+        assert!(!suppress_for_notification_state(5)); // QUNS_ACCEPTS_NOTIFICATIONS
+        assert!(!suppress_for_notification_state(-1)); // query failed
     }
 }
