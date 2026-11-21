@@ -1266,6 +1266,71 @@ impl V2Store {
         Ok(true)
     }
 
+    /// Refreshes the last-good view of an open Returned or Failed Task without changing its
+    /// lifecycle. Only the user closes a Task, so an open sheet's one metadata read never moves a
+    /// judged Task back to Dispatched or forward to Done/Cancelled.
+    pub fn refresh_progress_metadata(
+        &self,
+        task_id: &str,
+        observation: &ThreadObservation,
+    ) -> Result<bool, V2Error> {
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let current: Option<String> = tx
+            .query_row(
+                "SELECT status FROM tasks WHERE id = ?1",
+                params![task_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(current) = current.and_then(|raw| TaskStatus::parse(&raw)) else {
+            return Ok(false);
+        };
+        if matches!(current, TaskStatus::Done | TaskStatus::Cancelled) {
+            return Ok(false);
+        }
+        let attempt_id: Option<String> = tx
+            .query_row(
+                "SELECT attempt_id FROM t3_progress WHERE task_id = ?1",
+                params![task_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(attempt_id) = attempt_id else {
+            return Ok(false);
+        };
+        let run_id = observation.observed_run_id().map(str::to_string);
+        let reply = assistant_reply(&observation.messages, run_id.as_deref());
+        let at = now();
+        tx.execute(
+            "UPDATE t3_progress SET run_id = COALESCE(?2, run_id), run_count = ?3,
+                 status = ?4, pending_request_count = ?5, branch = ?6, worktree_path = ?7,
+                 link = COALESCE(?8, link), reply = COALESCE(?9, reply),
+                 error = ?10, stale_reason = NULL, revision = revision + 1, updated_at = ?11
+             WHERE attempt_id = ?1",
+            params![
+                attempt_id,
+                run_id,
+                observation.run_count as i64,
+                observation.status.as_str(),
+                observation.pending_request_count as i64,
+                observation.branch,
+                observation.worktree_path,
+                observation.link,
+                reply,
+                observation
+                    .error
+                    .as_deref()
+                    .filter(|value| !value.trim().is_empty())
+                    .map(str::to_string),
+                at,
+            ],
+        )?;
+        upsert_pr_refs_in(&tx, task_id, &observation.pull_requests, &at)?;
+        tx.commit()?;
+        Ok(true)
+    }
+
     /// Records an unreachable T3 without losing the last good observation. The revision bump
     /// invalidates any read that was in flight when the failure was noticed.
     pub fn mark_stale(&self, task_id: &str, reason: &str) -> Result<bool, V2Error> {

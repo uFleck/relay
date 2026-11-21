@@ -419,6 +419,30 @@ fn commit_persists_observation_and_prs_and_preserves_links_on_a_subset() {
 }
 
 #[test]
+fn an_open_returned_sheet_refreshes_metadata_without_changing_its_lifecycle() {
+    let (store, task_id, attempt_id, thread_id) = bound_store();
+    mark_returned(&store, &task_id, &attempt_id, &thread_id);
+    let mut observed = observation(RunStatus::Completed, "run-1");
+    observed.branch = Some("refreshed/branch".into());
+    observed.pull_requests.push(ObservedPullRequest {
+        url: "https://github.com/sample/app/pull/144".into(),
+        source: Some("agent".into()),
+        state: Some("closed".into()),
+        watching: false,
+    });
+    assert!(
+        store
+            .refresh_progress_metadata(&task_id, &observed)
+            .unwrap()
+    );
+    let view = store.progress_view(&task_id).unwrap().unwrap();
+    assert_eq!(view.task_status, TaskStatus::Returned.as_str());
+    assert_eq!(view.branch.as_deref(), Some("refreshed/branch"));
+    assert_eq!(view.pull_requests.len(), 1);
+    assert!(view.can_follow_up && view.can_close);
+}
+
+#[test]
 fn closure_invalidates_an_in_flight_read_and_a_late_result() {
     let (store, task_id, attempt_id, thread_id) = bound_store();
     let observed = observation(RunStatus::Completed, "run-1");

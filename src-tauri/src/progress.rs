@@ -242,6 +242,9 @@ fn commit_observed(
         .progress_view(task_id)?
         .ok_or_else(|| CommandError::new("invalid_input", "this Task has no T3 thread"))?;
     let status = task_status(&view.task_status).unwrap_or(TaskStatus::Dispatched);
+    if matches!(status, TaskStatus::Returned | TaskStatus::Failed) {
+        return Ok(store.refresh_progress_metadata(task_id, observation)?);
+    }
     let context = ObservationContext {
         current_status: status,
         expected_run_id: view.run_id.as_deref(),
@@ -392,6 +395,8 @@ fn send_message(
             observed.latest_run_id,
         ));
     }
+    // The eligibility read also refreshes the baseline run id/count before the draft is reserved.
+    let _ = commit_observed(store, task_id, &observed);
     let Some(operation) = store.reserve_send(task_id, kind, message)? else {
         return Ok(SendResult::of(
             "fenced",
