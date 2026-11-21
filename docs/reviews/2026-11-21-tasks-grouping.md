@@ -3,7 +3,7 @@
 **Status:** final (local implementation, no push or PR)
 **Agent / model:** OpenCode Go Hy4 Flash Free (no subagents, by thread instruction)
 **Base commit:** `42e6fbb051ca99f6de8212c676671d5e16482030` (#26)
-**Commit(s):** `TBD` (ledger SHA update follows)
+**Commit(s):** `7c238036cb6c1fdb754bc95b4a2b21045873032e` (ledger SHA update follows)
 **Files:** `crates/relay-core/migrations/v2/0002_task_progress.sql`, `crates/relay-core/src/v2/{mod,model,store,tests}.rs`, `src/{ipc,workspace,tasks.test}.ts*`, `src/App.tsx`, `src/app/{Tasks,TaskSheet,Rail}.tsx`, `src/hover/{HoverApp.tsx,hover.css}`, `src/styles/workspace.css`, this ledger
 
 ## What changed
