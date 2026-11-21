@@ -237,6 +237,29 @@ pub struct V2NotebookSnapshot {
     pub settings: V2Settings,
 }
 
+/// The one read the v2 workspace consumes. Notes stay in timeline order and `tasks` is a flat
+/// projection of every Task, including Tasks whose source line was removed from its Note.
+/// A selected Task must resolve from this unfiltered set so a filter cannot hide its sheet.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct V2WorkspaceSnapshot {
+    pub notes: Vec<V2Note>,
+    pub tasks: Vec<V2Task>,
+    pub projects: Vec<V2Project>,
+    pub settings: V2Settings,
+}
+
+/// Ids from the shared filter path. The caller already owns the workspace snapshot, so it
+/// renders matched Notes with their full source-line context and Tasks from their saved fields.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceSearchResult {
+    /// The raw query this result answers, so a caller can drop a slow stale response.
+    pub query: String,
+    pub note_ids: Vec<String>,
+    pub task_ids: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewImportRecord {
     pub source_kind: String,

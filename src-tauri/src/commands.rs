@@ -4,7 +4,8 @@
 use relay_core::model::{Note, ProposalDecision, Task};
 use relay_core::store::{Store, StoreError};
 use relay_core::v2::{
-    ComposerSaveRequest, V2Error, V2Note, V2NotebookSnapshot, V2Store, V2Task, composer,
+    ComposerSaveRequest, V2Error, V2Note, V2NotebookSnapshot, V2Store, V2Task, V2WorkspaceSnapshot,
+    WorkspaceSearchResult, composer,
 };
 use relay_core::view::Snapshot;
 use serde::Serialize;
@@ -68,6 +69,25 @@ pub fn v2_notebook_snapshot(
     store: State<'_, Arc<V2Store>>,
 ) -> Result<V2NotebookSnapshot, CommandError> {
     Ok(store.notebook_snapshot()?)
+}
+
+/// The one workspace read used by Notebook and Tasks. `tasks` is flat, so a routed Task
+/// resolves even when the active filter or a day's collapsed state hides its source Note.
+#[tauri::command(async)]
+pub fn v2_workspace_snapshot(
+    store: State<'_, Arc<V2Store>>,
+) -> Result<V2WorkspaceSnapshot, CommandError> {
+    Ok(store.workspace_snapshot()?)
+}
+
+/// Shared filter path: standalone `+project` and `@reference` tokens plus literal FTS text.
+/// The result is ids only; the caller already holds the workspace snapshot.
+#[tauri::command(async)]
+pub fn v2_workspace_search(
+    query: String,
+    store: State<'_, Arc<V2Store>>,
+) -> Result<WorkspaceSearchResult, CommandError> {
+    Ok(store.search_workspace(&query)?)
 }
 
 /// Parses and saves a Composer submission. The core owns parsing, project inference and the

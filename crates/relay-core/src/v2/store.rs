@@ -14,7 +14,8 @@ use rusqlite::{Connection, OptionalExtension, Row, Transaction, TransactionBehav
 use super::model::{
     AgentMode, ImportRecord, NewImportRecord, NewV2Project, NoteWrite, PreparedLine,
     PreparedNoteWrite, PreparedReference, TaskStatus, V2Note, V2NoteLine, V2NotebookSnapshot,
-    V2Project, V2Reference, V2Settings, V2SettingsUpdate, V2Task,
+    V2Project, V2Reference, V2Settings, V2SettingsUpdate, V2Task, V2WorkspaceSnapshot,
+    WorkspaceSearchResult,
 };
 use crate::model::{new_id, now};
 
@@ -486,6 +487,169 @@ impl V2Store {
         })
     }
 
+    /// The single workspace read shared by Notebook and Tasks. It reuses the snapshot's
+    /// transaction so notes, their Tasks, projects and settings are one consistent view.
+    pub fn workspace_snapshot(&self) -> Result<V2WorkspaceSnapshot, V2Error> {
+        let base = self.notebook_snapshot()?;
+        let mut tasks = base
+            .notes
+            .iter()
+            .flat_map(|note| note.tasks.iter().cloned())
+            .collect::<Vec<_>>();
+        // Creation time then ULID: stable enough for a flat list and the Needs-you badge.
+        tasks.sort_by(|a, b| {
+            a.created_at
+                .cmp(&b.created_at)
+                .then_with(|| a.id.cmp(&b.id))
+        });
+        Ok(V2WorkspaceSnapshot {
+            notes: base.notes,
+            tasks,
+            projects: base.projects,
+            settings: base.settings,
+        })
+    }
+
+    /// The shared filter path for both v2 views. Standalone `+project` and `@reference`
+    /// tokens resolve to persisted identities; the remaining text is a literal,
+    /// case-insensitive SQLite FTS query reusing the v1 quoting pattern. An unknown
+    /// qualified token deliberately returns zero matches instead of being treated as text.
+    /// No list cap is applied, so a match past the v1 200-note default is never dropped.
+    pub fn search_workspace(&self, raw: &str) -> Result<WorkspaceSearchResult, V2Error> {
+        let result = WorkspaceSearchResult {
+            query: raw.to_string(),
+            note_ids: Vec::new(),
+            task_ids: Vec::new(),
+        };
+        let mut project_slugs = Vec::new();
+        let mut reference_tokens = Vec::new();
+        let mut text = Vec::new();
+        for token in raw.split_whitespace() {
+            if let Some(slug) = token.strip_prefix('+') {
+                project_slugs.push(slug.trim().to_ascii_lowercase());
+            } else if let Some(reference) = token.strip_prefix('@') {
+                reference_tokens.push(reference.trim().to_ascii_lowercase());
+            } else {
+                text.push(token);
+            }
+        }
+
+        let conn = self.conn();
+        let mut project_ids = Vec::new();
+        for slug in &project_slugs {
+            let id: Option<String> = conn
+                .query_row(
+                    "SELECT id FROM projects WHERE lower(slug) = ?1",
+                    params![slug],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            match id {
+                Some(id) => project_ids.push(id),
+                None => return Ok(result),
+            }
+        }
+        let mut reference_ids = Vec::new();
+        for token in &reference_tokens {
+            // A known but unreadable target still has a row; its snapshot may be null.
+            let target: Option<String> = conn
+                .query_row(
+                    "SELECT target_id FROM ref_targets
+                     WHERE lower(target_id) = ?1 OR lower(canonical_url) = ?1 LIMIT 1",
+                    params![token],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            match target {
+                Some(target) => reference_ids.push(target),
+                None => return Ok(result),
+            }
+        }
+
+        let fts = if text.is_empty() {
+            None
+        } else {
+            Some(fts_literal(&text.join(" ")))
+        };
+        let note_hits = match &fts {
+            Some(query) => {
+                let mut stmt = conn.prepare(
+                    "SELECT n.id FROM notes_fts JOIN notes n ON n.seq = notes_fts.rowid
+                     WHERE notes_fts MATCH ?1",
+                )?;
+                Some(
+                    stmt.query_map(params![query], |row| row.get::<_, String>(0))?
+                        .collect::<rusqlite::Result<HashSet<_>>>()?,
+                )
+            }
+            None => None,
+        };
+        let task_hits = match &fts {
+            Some(query) => {
+                let mut stmt = conn.prepare(
+                    "SELECT t.id FROM tasks_fts JOIN tasks t ON t.seq = tasks_fts.rowid
+                     WHERE tasks_fts MATCH ?1",
+                )?;
+                Some(
+                    stmt.query_map(params![query], |row| row.get::<_, String>(0))?
+                        .collect::<rusqlite::Result<HashSet<_>>>()?,
+                )
+            }
+            None => None,
+        };
+
+        let ids = {
+            let mut stmt = conn.prepare("SELECT id FROM notes ORDER BY created_at, seq")?;
+            stmt.query_map([], |row| row.get::<_, String>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        let mut matched_notes = Vec::new();
+        let mut matched_tasks = Vec::new();
+        for id in ids {
+            let note = note_by_id(&conn, &id)?;
+            let note_refs = reference_ids.is_empty()
+                || note
+                    .lines
+                    .iter()
+                    .flat_map(|line| line.references.iter())
+                    .chain(note.tasks.iter().flat_map(|task| task.references.iter()))
+                    .any(|reference| reference_ids.contains(&reference.target_id));
+            let note_project =
+                project_ids.is_empty() || note_project_hit(&note, &project_ids, &project_slugs);
+            let note_text = note_hits
+                .as_ref()
+                .is_none_or(|hits| hits.contains(&note.id));
+            let mut note_matches = note_text && note_refs && note_project;
+            for task in &note.tasks {
+                let task_refs = reference_ids.is_empty()
+                    || task
+                        .references
+                        .iter()
+                        .any(|reference| reference_ids.contains(&reference.target_id));
+                let task_project = project_ids.is_empty()
+                    || task
+                        .project_id
+                        .as_ref()
+                        .is_some_and(|id| project_ids.contains(id));
+                let task_text = task_hits
+                    .as_ref()
+                    .is_none_or(|hits| hits.contains(&task.id));
+                if task_text && task_refs && task_project {
+                    matched_tasks.push(task.id.clone());
+                    note_matches = true;
+                }
+            }
+            if note_matches {
+                matched_notes.push(note.id);
+            }
+        }
+        Ok(WorkspaceSearchResult {
+            query: raw.to_string(),
+            note_ids: matched_notes,
+            task_ids: matched_tasks,
+        })
+    }
+
     /// FTS5 over the plain Note body. Each token is a quoted literal, so FTS operators
     /// and wildcards in user text stay text.
     pub fn search_notes(&self, text: &str, limit: usize) -> Result<Vec<V2Note>, V2Error> {
@@ -931,6 +1095,25 @@ fn task_from_row(row: &Row<'_>) -> rusqlite::Result<V2Task> {
 
 fn none_if_blank(value: Option<String>) -> Option<String> {
     value.filter(|value| !value.trim().is_empty())
+}
+
+/// A Note carries no project column. A project filter matches it through a Task's saved
+/// project or through a literal standalone `+slug` left in one of its editable lines.
+fn note_project_hit(note: &V2Note, project_ids: &[String], slugs: &[String]) -> bool {
+    note.tasks.iter().any(|task| {
+        task.project_id
+            .as_ref()
+            .is_some_and(|id| project_ids.contains(id))
+    }) || note.lines.iter().any(|line| {
+        line.text.split_whitespace().any(|word| {
+            let word = word.trim_end_matches(|ch: char| {
+                matches!(ch, '.' | ',' | ';' | ':' | '!' | '?' | ')' | ']' | '}')
+            });
+            slugs
+                .iter()
+                .any(|slug| word.eq_ignore_ascii_case(&format!("+{slug}")))
+        })
+    })
 }
 
 /// Quotes every token as a literal FTS5 phrase. Doubling `"` is the FTS escape.

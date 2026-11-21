@@ -2,6 +2,7 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { emit, listen } from "@tauri-apps/api/event";
 import { mockSnapshot } from "./data/mock";
 import { sortNotes } from "./notes";
+import type { ProviderKey } from "./route";
 import type { ProposalDecision, RepoCandidate, Snapshot } from "./types";
 
 /* Typed wrappers over the Rust commands. Outside Tauri (pnpm dev in a browser), or while a command
@@ -263,6 +264,20 @@ export interface V2NotebookSnapshot {
   settings: V2Settings;
 }
 
+/** The one read behind both v2 views. `tasks` is flat and unfiltered. */
+export interface V2WorkspaceSnapshot extends V2NotebookSnapshot {
+  tasks: V2Task[];
+}
+
+/** Ids from the shared filter path; the caller renders from its workspace snapshot. */
+export interface WorkspaceSearchResult {
+  query: string;
+  noteIds: string[];
+  taskIds: string[];
+}
+
+export type { ProviderKey };
+
 export interface V2LineInput {
   lineId: string | null;
   text: string;
@@ -285,6 +300,19 @@ const emptyV2Snapshot = (): V2NotebookSnapshot => ({
 
 export const v2NotebookSnapshot = () =>
   call<V2NotebookSnapshot>("v2_notebook_snapshot", undefined, emptyV2Snapshot);
+
+export const v2WorkspaceSnapshot = () =>
+  call<V2WorkspaceSnapshot>("v2_workspace_snapshot", undefined, () => ({
+    ...emptyV2Snapshot(),
+    tasks: [],
+  }));
+
+export const v2WorkspaceSearch = (query: string) =>
+  call<WorkspaceSearchResult>("v2_workspace_search", { query }, () => ({
+    query,
+    noteIds: [],
+    taskIds: [],
+  }));
 
 /* Writes never fall back to a mock: a missing command or a stale revision must surface as
    an error, not as a note that looks saved. In a plain browser there is no store at all. */
@@ -636,6 +664,9 @@ export function onEvent<K extends keyof Events>(name: K, handler: (payload: Even
     unlisten?.();
   };
 }
+
+/** A committed v2 write in either window. Both v2 views refresh from this shared signal. */
+export const onV2Change = (handler: (noteId: string) => void) => onEvent("relay://v2-change", handler);
 
 /** Tells every window that a task or proposal changed, so the hover refreshes its counts. */
 export async function emitChange(payload: ChangeEvent) {

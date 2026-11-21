@@ -19,7 +19,7 @@ import {
   type HoverFlags,
 } from "../ipc";
 import { claimState, clock, elapsed, isUnacked, liveClaims, nextDue, todayScope, until, useNow } from "../model";
-import { proposalRoute, taskRoute } from "../route";
+import { notebookRoute, taskRoute } from "../route";
 import type { ClaimHolder, HoverEdge, HoverMode, Snapshot } from "../types";
 import { followUpdates, requestInstall, useUpdater, type UpdateState } from "../updater";
 import { initialPlacement, placeIn, placementAfterDrag, type Anchor, type Screen } from "./place";
@@ -573,7 +573,7 @@ function NeedsYou({ snap, openTask }: { snap: Snapshot; openTask: (id: string) =
             size="compact"
             proposal={item.p}
             task={snap.tasks.find((t) => t.id === item.p.taskId)}
-            onReview={() => void openMain(proposalRoute(item.p.id))}
+            onReview={() => void openMain(notebookRoute())}
           />
         ) : (
           item.change.kind === "requirement" && (

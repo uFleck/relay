@@ -34,7 +34,8 @@ const HOTKEY: &str = "ctrl+alt+r";
 /// Checks the Slack DMs now, without waiting for the socket. The tray has the same action.
 const SYNC_HOTKEY: &str = "ctrl+alt+s";
 
-/// Sent to the main window with a route (`/review`, `/settings`, `/today?task=<id>&focus=changes`) to navigate to.
+/// Sent to the main window with a v2 route (`/notebook`, `/tasks?task=<id>`,
+/// `/settings?provider=<key>`) to navigate to. Retired v1 routes land on Notebook.
 const OPEN_EVENT: &str = "relay://open";
 /// Sent to the main window to run a manual update check (`src/updater.ts`).
 const UPDATE_CHECK_EVENT: &str = "update://check";
@@ -130,7 +131,8 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let paused = CheckMenuItem::with_id(app, "pause", "Pause capture", true, false, None::<&str>)?;
     let dnd = CheckMenuItem::with_id(app, "dnd", "Do not disturb", true, false, None::<&str>)?;
     let sync = MenuItem::with_id(app, "sync", "Sync Slack now", true, None::<&str>)?;
-    let review = MenuItem::with_id(app, "review", "Review queue", true, None::<&str>)?;
+    let notebook = MenuItem::with_id(app, "notebook", "Notebook", true, None::<&str>)?;
+    let tasks = MenuItem::with_id(app, "tasks", "Tasks", true, None::<&str>)?;
     let settings = MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
     let updates = MenuItem::with_id(app, "updates", "Check for updates", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
@@ -143,7 +145,8 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             &dnd,
             &PredefinedMenuItem::separator(app)?,
             &sync,
-            &review,
+            &notebook,
+            &tasks,
             &settings,
             &updates,
             &PredefinedMenuItem::separator(app)?,
@@ -168,7 +171,8 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                 set_dnd_flag(app, !dnd);
             }
             "sync" => slack::sync_in_background(app.clone()),
-            "review" => open_route(app, "/review"),
+            "notebook" => open_route(app, "/notebook"),
+            "tasks" => open_route(app, "/tasks"),
             "settings" => open_route(app, "/settings"),
             "updates" => {
                 show_main(app);
@@ -268,6 +272,8 @@ pub fn run() {
             check_for_updates,
             commands::relay_snapshot,
             commands::v2_notebook_snapshot,
+            commands::v2_workspace_snapshot,
+            commands::v2_workspace_search,
             commands::v2_composer_save,
             commands::v2_task_assign_project,
             commands::ack_change,

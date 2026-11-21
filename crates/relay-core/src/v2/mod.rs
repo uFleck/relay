@@ -12,5 +12,6 @@ pub use model::{
     AgentMode, ImportRecord, NewImportRecord, NewV2Project, NoteWrite, PreparedLine,
     PreparedNoteWrite, PreparedReference, PreparedTaskIntent, SavedNote, TaskStatus, V2Note,
     V2NoteLine, V2NotebookSnapshot, V2Project, V2Reference, V2Settings, V2SettingsUpdate, V2Task,
+    V2WorkspaceSnapshot, WorkspaceSearchResult,
 };
 pub use store::{V2Error, V2Store};

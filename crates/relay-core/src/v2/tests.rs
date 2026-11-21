@@ -465,3 +465,142 @@ fn write_contract_guards_replay_stale_edits_rollback_and_removed_lines() {
         Err(V2Error::TaskAlreadyAssigned(_))
     ));
 }
+
+#[test]
+fn workspace_snapshot_and_search_keep_punctuation_and_removed_task_lines() {
+    let dir = TempDir::new("workspace");
+    let store = V2Store::open(dir.file("relay-v2.db")).unwrap();
+    let project = store
+        .register_project(NewV2Project {
+            name: "Sample".to_string(),
+            slug: "sample".to_string(),
+            repo_path: None,
+            owner_repo: Some("uFleck/Sample".to_string()),
+            t3_target: None,
+        })
+        .unwrap();
+
+    let saved = store
+        .save_note(create(
+            "punctuation",
+            vec![
+                plain("fix: the (v2) bug", vec![]),
+                directive("!ship relay-v2", AgentMode::Act, Some(&project.id)),
+            ],
+        ))
+        .unwrap();
+
+    let workspace = store.workspace_snapshot().unwrap();
+    assert_eq!(workspace.notes, vec![saved.clone()]);
+    assert_eq!(workspace.tasks.len(), 1);
+    assert_eq!(workspace.tasks[0].note_id, saved.id);
+    assert_eq!(workspace.projects, vec![project]);
+
+    // Punctuation in a query stays literal text and cannot become an FTS operator.
+    let search = |query: &str| store.search_workspace(query).unwrap();
+    assert!(search("fix: bug").note_ids.contains(&saved.id));
+    assert!(search("relay-v2").task_ids.contains(&saved.tasks[0].id));
+    assert!(search("relay-v2").note_ids.contains(&saved.id));
+    assert!(search("NOT \"milk").note_ids.is_empty());
+    // FTS operators are literal text, so `OR` cannot widen the match.
+    assert!(search("OR").note_ids.is_empty());
+
+    // Removing the source line keeps the Task, its frozen text and its Note searchable.
+    let trimmed = store
+        .save_note(edit(
+            &saved.id,
+            saved.revision,
+            vec![plain("only the plain line", vec![])],
+        ))
+        .unwrap();
+    assert!(
+        trimmed
+            .lines
+            .iter()
+            .all(|line| line.text != "!ship relay-v2")
+    );
+    let after = store.workspace_snapshot().unwrap();
+    assert_eq!(after.tasks.len(), 1);
+    assert_eq!(after.tasks[0].original_line, "!ship relay-v2");
+    assert!(search("relay-v2").note_ids.contains(&saved.id));
+}
+
+#[test]
+fn qualified_filters_resolve_distinct_canonical_reference_identities() {
+    let dir = TempDir::new("filters");
+    let store = V2Store::open(dir.file("relay-v2.db")).unwrap();
+    let alpha = store
+        .register_project(NewV2Project {
+            name: "Alpha".to_string(),
+            slug: "alpha".to_string(),
+            repo_path: None,
+            owner_repo: None,
+            t3_target: None,
+        })
+        .unwrap();
+    let beta = store
+        .register_project(NewV2Project {
+            name: "Beta".to_string(),
+            slug: "beta".to_string(),
+            repo_path: None,
+            owner_repo: None,
+            t3_target: None,
+        })
+        .unwrap();
+    assert_eq!(alpha.slug, "alpha");
+
+    // Two persisted kinds share a target id but remain distinct canonical identities.
+    let a = store
+        .save_note(create(
+            "a",
+            vec![plain(
+                "the alpha note +alpha",
+                vec![reference("github", "shared-id")],
+            )],
+        ))
+        .unwrap();
+    let b = store
+        .save_note(create(
+            "b",
+            vec![plain(
+                "the beta note +beta",
+                vec![PreparedReference {
+                    snapshot_json: None,
+                    ..reference("clickup", "shared-id")
+                }],
+            )],
+        ))
+        .unwrap();
+
+    let (rows, kinds): (i64, i64) = store
+        .conn()
+        .query_row(
+            "SELECT COUNT(*), COUNT(DISTINCT kind) FROM ref_targets WHERE target_id = 'shared-id'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(rows, 2);
+    assert_eq!(kinds, 2);
+
+    let search = |query: &str| store.search_workspace(query).unwrap();
+    let by_ref = search("@shared-id");
+    assert!(by_ref.note_ids.contains(&a.id));
+    assert!(by_ref.note_ids.contains(&b.id));
+    assert!(search("+ALPHA").note_ids.contains(&a.id));
+    assert!(!search("+beta").note_ids.contains(&a.id));
+    assert!(search("+alpha @shared-id").note_ids.contains(&a.id));
+    assert!(!search("+alpha @shared-id").note_ids.contains(&b.id));
+    assert!(search("+missing").note_ids.is_empty());
+    assert!(search("@missing").note_ids.is_empty());
+    assert_eq!(search("").note_ids.len(), 2);
+
+    // A Task in a named project is found by the flat project filter too.
+    let task_note = store
+        .save_note(create(
+            "task",
+            vec![directive("!do work", AgentMode::Act, Some(&beta.id))],
+        ))
+        .unwrap();
+    assert!(search("+beta").task_ids.contains(&task_note.tasks[0].id));
+}
