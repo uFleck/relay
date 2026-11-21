@@ -248,12 +248,29 @@ fn manual_link_checks_profile_and_user_comparison() {
     record_uncertain(&store, &claim.attempt.attempt_id, "ambiguous").unwrap();
     let attempt = store.latest_dispatch_attempt(&task.id).unwrap().unwrap();
     let confirmed = identity(&attempt);
-    assert!(link_existing(&store, &attempt, &confirmed, "id:proj-42", DATA_DIR, false).is_err());
+    let listed = vec![ListedThread {
+        thread_id: confirmed.thread_id.clone(),
+        title: Some(attempt.title.clone()),
+        project_id: Some(confirmed.project_id.clone()),
+    }];
     assert!(
         link_existing(
             &store,
             &attempt,
             &confirmed,
+            &listed,
+            "id:proj-42",
+            DATA_DIR,
+            false
+        )
+        .is_err()
+    );
+    assert!(
+        link_existing(
+            &store,
+            &attempt,
+            &confirmed,
+            &listed,
             "id:other-project",
             DATA_DIR,
             true
@@ -265,16 +282,86 @@ fn manual_link_checks_profile_and_user_comparison() {
             &store,
             &attempt,
             &confirmed,
+            &listed,
             "id:proj-42",
             r"C:\somewhere\else",
             true
         )
         .is_err()
     );
-    let linked = link_existing(&store, &attempt, &confirmed, "id:proj-42", DATA_DIR, true)
-        .unwrap()
-        .unwrap();
+    let linked = link_existing(
+        &store,
+        &attempt,
+        &confirmed,
+        &listed,
+        "id:proj-42",
+        DATA_DIR,
+        true,
+    )
+    .unwrap()
+    .unwrap();
     assert_eq!(linked.state, DispatchState::Bound);
+}
+
+#[test]
+fn path_membership_requires_the_entered_thread_in_the_scoped_list_and_show_agreement() {
+    let (store, task, _) =
+        ready_store(AgentMode::Act, T3Target::Path(r"C:\Projects\sample".into()));
+    let first = claim(&store, &start(&task.id, None)).unwrap().unwrap();
+    record_uncertain(&store, &first.attempt.attempt_id, "ambiguous").unwrap();
+    let attempt = store.latest_dispatch_attempt(&task.id).unwrap().unwrap();
+    let confirmed = identity(&attempt);
+    let selector = attempt.project_selector.clone();
+    let listed = vec![ListedThread {
+        thread_id: "member-thread".into(),
+        title: Some(attempt.title.clone()),
+        project_id: Some("proj-42".into()),
+    }];
+
+    // A valid path member: the scoped list contains the entered id and show agrees with its row.
+    let member = ThreadIdentity {
+        thread_id: "member-thread".into(),
+        ..confirmed.clone()
+    };
+    verify_link_membership(&attempt, &listed, "member-thread", &member).unwrap();
+    let linked = link_existing(
+        &store, &attempt, &member, &listed, &selector, DATA_DIR, true,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(linked.state, DispatchState::Bound);
+
+    // A foreign thread is absent from the scoped list; the attempt stays fenced.
+    let (store2, task2, _) =
+        ready_store(AgentMode::Act, T3Target::Path(r"C:\Projects\sample".into()));
+    let second = claim(&store2, &start(&task2.id, None)).unwrap().unwrap();
+    record_uncertain(&store2, &second.attempt.attempt_id, "ambiguous").unwrap();
+    let attempt2 = store2.latest_dispatch_attempt(&task2.id).unwrap().unwrap();
+    let foreign = ThreadIdentity {
+        thread_id: "foreign-thread".into(),
+        ..identity(&attempt2)
+    };
+    assert!(verify_link_membership(&attempt2, &listed, "foreign-thread", &foreign).is_err());
+    assert!(
+        link_existing(
+            &store2,
+            &attempt2,
+            &foreign,
+            &listed,
+            &attempt2.project_selector,
+            DATA_DIR,
+            true
+        )
+        .is_err()
+    );
+    assert_eq!(
+        store2
+            .latest_dispatch_attempt(&task2.id)
+            .unwrap()
+            .unwrap()
+            .state,
+        DispatchState::ReconcileRequired
+    );
 }
 
 #[test]

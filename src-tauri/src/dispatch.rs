@@ -47,6 +47,17 @@ fn publish(app: &AppHandle, task_id: &str) {
     let _ = app.emit(V2_CHANGE_EVENT, task_id.to_string());
 }
 
+/// A freshly bound thread gets a last-good-view row for #37 to observe. Progress is created here,
+/// never by replaying a dispatch or sending a message.
+fn track_bound(store: &Arc<V2Store>, attempt_id: &str) {
+    if let Ok(Some(attempt)) = store.dispatch_attempt(attempt_id)
+        && attempt.state == AttemptState::Bound
+        && let Some(thread_id) = attempt.thread_id.clone()
+    {
+        let _ = store.ensure_progress(attempt_id, &thread_id, attempt.run_id.as_deref());
+    }
+}
+
 fn data_dir() -> Result<String, CommandError> {
     t3_cli::t3_home()
         .map(|path| path.to_string_lossy().to_string())
@@ -166,6 +177,8 @@ fn hydrate_and_bind(
     };
     if let Err(error) = result {
         let _ = record_uncertain(store, attempt_id, &error.to_string());
+    } else {
+        track_bound(store, attempt_id);
     }
 }
 
@@ -216,6 +229,7 @@ fn reconcile_attempt(app: AppHandle, attempt: relay_core::t3_dispatch::DispatchA
             return;
         }
         let _ = bind(&store, &attempt_id, &identity);
+        track_bound(&store, &attempt_id);
         publish(&app, &task_id);
     });
 }
@@ -332,6 +346,15 @@ pub fn v2_dispatch_link(
     let selector = T3Target::from_storage(&attempt.project_selector)
         .map(|target| target.value().to_string())
         .unwrap_or_default();
+    // A path selector cannot be proved from a project id alone. Thread list is the only
+    // project-scoped membership check the CLI offers, so require the entered id there first and
+    // make `show` agree with that row before binding.
+    let listed = t3_cli::list(&selector, &attempt.t3_data_dir).map_err(|error| {
+        CommandError::new(
+            "invalid_input",
+            format!("could not list threads for this T3 project: {error}"),
+        )
+    })?;
     let identity = t3_cli::show(&thread_id, &attempt.t3_data_dir).map_err(|error| {
         CommandError::new(
             "invalid_input",
@@ -342,6 +365,7 @@ pub fn v2_dispatch_link(
         store.inner(),
         &attempt,
         &identity,
+        &listed,
         &selector,
         &attempt.t3_data_dir,
         user_confirmed,
@@ -352,6 +376,7 @@ pub fn v2_dispatch_link(
             "that thread could not be linked",
         ));
     }
+    track_bound(store.inner(), &attempt.attempt_id);
     publish(&app, &task_id);
     Ok(())
 }

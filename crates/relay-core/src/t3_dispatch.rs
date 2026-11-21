@@ -353,10 +353,67 @@ fn selector_matches_project(selector: &str, project_id: &str) -> bool {
 /// Manual recovery for an edited title or an unavailable launch field. The adapter has already
 /// used read-only `show` to confirm project and profile; `user_confirmed` records that the user
 /// compared the thread's first message with the frozen Brief in T3.
+/// Manual linking must prove the entered thread belongs to the frozen T3 project. A path selector
+/// cannot be checked against a project id alone, so the adapter first reads
+/// `t3 thread list --project <frozen path> --base-dir <frozen profile> --json`; exactly one row with
+/// the entered id must exist there, and `show` must agree with that row's thread and project id.
+/// The list is the only project-scoped membership check the pinned CLI exposes.
+pub fn verify_link_membership(
+    attempt: &DispatchAttempt,
+    listed: &[ListedThread],
+    thread_id: &str,
+    identity: &ThreadIdentity,
+) -> Result<(), V2Error> {
+    let entered = thread_id.trim();
+    if entered.is_empty() || identity.thread_id != entered {
+        return Err(V2Error::InvalidInput(
+            "the shown thread is not the thread that was entered".into(),
+        ));
+    }
+    let mut matches = listed.iter().filter(|row| {
+        row.thread_id == entered
+            && row
+                .project_id
+                .as_deref()
+                .is_some_and(|id| !id.trim().is_empty())
+    });
+    let Some(row) = matches.next() else {
+        return Err(V2Error::InvalidInput(
+            "that thread is not a member of this T3 project and profile".into(),
+        ));
+    };
+    if matches.next().is_some() {
+        return Err(V2Error::InvalidInput(
+            "the T3 project returned more than one thread with that id".into(),
+        ));
+    }
+    let listed_project = row.project_id.as_deref().unwrap_or_default();
+    if identity.project_id != listed_project {
+        return Err(V2Error::InvalidInput(
+            "T3 disagrees about which project owns that thread".into(),
+        ));
+    }
+    match crate::v2::T3Target::from_storage(&attempt.project_selector) {
+        Some(crate::v2::T3Target::Id(expected)) if expected != listed_project => {
+            return Err(V2Error::InvalidInput(
+                "that thread belongs to another T3 project".into(),
+            ));
+        }
+        Some(_) => {}
+        None => {
+            return Err(V2Error::InvalidInput(
+                "the frozen T3 project mapping is invalid".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub fn link_existing(
     store: &V2Store,
     attempt: &DispatchAttempt,
     identity: &ThreadIdentity,
+    listed: &[ListedThread],
     selector: &str,
     data_dir: &str,
     user_confirmed: bool,
@@ -371,6 +428,7 @@ pub fn link_existing(
             "that thread does not belong to this project and T3 profile".into(),
         ));
     }
+    verify_link_membership(attempt, listed, &identity.thread_id, identity)?;
     // The unique thread index rejects a thread bound to another Task; map that to a clear error.
     store.finish_dispatch(
         &attempt.attempt_id,

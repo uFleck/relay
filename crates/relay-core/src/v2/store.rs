@@ -28,8 +28,8 @@ use super::recovery::{
     NewRecovery, RecoveryReason, RecoveryTarget, RecoveryUpdate, STALE_SNAPSHOT_MS,
 };
 use super::reference::{
-    ReferenceAvailability, ReferenceKey, ReferenceSnapshot, V2PickerGroup, V2PickerRow,
-    snapshot_needs_recovery,
+    GithubItemKind, ReferenceAvailability, ReferenceKey, ReferenceSnapshot, V2PickerGroup,
+    V2PickerRow, snapshot_needs_recovery,
 };
 use super::slack_directory::{
     ConversationKind, DirectoryConversation, DirectoryState, SlackWindow,
@@ -38,6 +38,11 @@ use super::slack_thread::SlackThread;
 use crate::model::{from_unix_millis, new_id, now};
 use crate::t3_dispatch::{
     DispatchAttempt, DispatchState, ThreadIdentity as DispatchThreadIdentity,
+};
+use crate::t3_progress::{
+    CommitGuard, FAILURE_STAGE as T3_FAILURE_STAGE, ObservedPullRequest, ProgressEffect,
+    ProgressWatch, SendKind, SendOperation, SendState, T3ProgressView, ThreadObservation,
+    assistant_reply,
 };
 
 /// One v2 migration and the SQL predicate that is true once its change is on disk.
@@ -92,6 +97,10 @@ const MIGRATIONS: &[Migration] = &[
     Migration {
         sql: include_str!("../../migrations/v2/0010_dispatch.sql"),
         applied: "EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'dispatch_attempts')",
+    },
+    Migration {
+        sql: include_str!("../../migrations/v2/0011_t3_progress.sql"),
+        applied: "EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 't3_progress')",
     },
 ];
 /// 'RELY' as an integer. A non-zero application id marks a file as ours.
@@ -940,6 +949,620 @@ impl V2Store {
         }
         tx.commit()?;
         Ok(count)
+    }
+
+    // -----------------------------------------------------------------------
+    // T3 progress and continuation (#37)
+    // -----------------------------------------------------------------------
+
+    /// Creates the last-good-view row for a bound thread once. A restart reuses it; a failed read
+    /// never erases what Relay already knows about the run.
+    pub fn ensure_progress(
+        &self,
+        attempt_id: &str,
+        thread_id: &str,
+        run_id: Option<&str>,
+    ) -> Result<bool, V2Error> {
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let at = now();
+        let changed = tx.execute(
+            "INSERT OR IGNORE INTO t3_progress
+                 (attempt_id, task_id, thread_id, run_id, created_at, updated_at)
+             SELECT ?1, task_id, ?2, ?3, ?4, ?4 FROM dispatch_attempts WHERE attempt_id = ?1",
+            params![attempt_id, thread_id, run_id, at],
+        )?;
+        tx.commit()?;
+        Ok(changed > 0)
+    }
+
+    /// Creates progress rows for threads bound before this schema existed. Observations, not a
+    /// replayed dispatch, are the only way these Tasks resume being tracked.
+    pub fn backfill_progress(&self) -> Result<usize, V2Error> {
+        let rows: Vec<(String, String, Option<String>)> = {
+            let conn = self.conn();
+            let mut stmt = conn.prepare(
+                "SELECT d.attempt_id, d.thread_id, d.run_id FROM dispatch_attempts d
+                 LEFT JOIN t3_progress p ON p.attempt_id = d.attempt_id
+                 WHERE d.state = 'bound' AND d.thread_id IS NOT NULL AND p.attempt_id IS NULL",
+            )?;
+            stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        let mut count = 0;
+        for (attempt_id, thread_id, run_id) in rows {
+            if self.ensure_progress(&attempt_id, &thread_id, run_id.as_deref())? {
+                count += 1;
+            }
+        }
+        Ok(count)
+    }
+
+    /// The Task sheet read. PR references are read from the Task's frozen Reference set, so a
+    /// response that omits a previously seen PR cannot make it disappear.
+    pub fn progress_view(&self, task_id: &str) -> Result<Option<T3ProgressView>, V2Error> {
+        let conn = self.conn();
+        let row = conn
+            .query_row(
+                "SELECT p.attempt_id, p.thread_id, p.run_id, p.run_count, p.status,
+                        p.pending_request_count, p.branch, p.worktree_path, p.link, p.reply,
+                        p.error, p.stale_reason, p.revision, d.thread_url, t.status, t.failure_stage
+                 FROM t3_progress p
+                 JOIN dispatch_attempts d ON d.attempt_id = p.attempt_id
+                 JOIN tasks t ON t.id = p.task_id WHERE p.task_id = ?1",
+                params![task_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, i64>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                        row.get::<_, i64>(5)?,
+                        row.get::<_, Option<String>>(6)?,
+                        row.get::<_, Option<String>>(7)?,
+                        row.get::<_, Option<String>>(8)?,
+                        row.get::<_, Option<String>>(9)?,
+                        row.get::<_, Option<String>>(10)?,
+                        row.get::<_, Option<String>>(11)?,
+                        row.get::<_, i64>(12)?,
+                        row.get::<_, Option<String>>(13)?,
+                        row.get::<_, String>(14)?,
+                        row.get::<_, Option<String>>(15)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let Some((
+            attempt_id,
+            thread_id,
+            run_id,
+            run_count,
+            status,
+            pending_count,
+            branch,
+            worktree_path,
+            link,
+            reply,
+            error,
+            stale_reason,
+            revision,
+            thread_url,
+            task_status_raw,
+            failure_stage,
+        )) = row
+        else {
+            return Ok(None);
+        };
+        let task_status = TaskStatus::parse(&task_status_raw).unwrap_or(TaskStatus::Failed);
+        let active_send = active_send_in(&conn, task_id)?;
+        let send_state = active_send.as_ref().map(|send| send.state);
+        let mut pull_requests = Vec::new();
+        for reference in refs_for(&conn, "task_refs", "task_id", task_id)? {
+            if reference.kind != "github" || !reference.canonical_url.contains("/pull/") {
+                continue;
+            }
+            let snapshot = reference
+                .snapshot_json
+                .as_deref()
+                .map(ReferenceSnapshot::from_json);
+            pull_requests.push(ObservedPullRequest {
+                url: reference.canonical_url,
+                source: None,
+                state: snapshot.as_ref().and_then(|value| value.state.clone()),
+                watching: false,
+            });
+        }
+        Ok(Some(T3ProgressView {
+            task_id: task_id.to_string(),
+            attempt_id,
+            thread_id,
+            thread_url: link.or(thread_url),
+            run_id,
+            run_count: run_count.max(0) as u64,
+            status: status.unwrap_or_default(),
+            task_status: task_status.as_str().to_string(),
+            pending_request_count: pending_count.max(0) as u32,
+            branch,
+            worktree_path,
+            reply,
+            error,
+            stale_reason,
+            revision,
+            pull_requests,
+            can_follow_up: task_status == TaskStatus::Returned,
+            can_retry_run: task_status == TaskStatus::Failed
+                && failure_stage.as_deref() == Some(T3_FAILURE_STAGE),
+            can_close: !matches!(task_status, TaskStatus::Done | TaskStatus::Cancelled),
+            can_open_t3: task_status == TaskStatus::NeedsAnswer
+                || send_state == Some(SendState::NeedsConfirmation),
+            can_check_again: send_state == Some(SendState::NeedsConfirmation),
+            can_resend: matches!(
+                send_state,
+                Some(SendState::NeedsConfirmation) | Some(SendState::Failed)
+            ),
+            active_send,
+        }))
+    }
+
+    /// Rebuilds the watch set from SQLite on restart. Open Tasks and unresolved sends are both
+    /// observed; a terminal Task is never polled again.
+    pub fn watch_items(&self) -> Result<Vec<ProgressWatch>, V2Error> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT p.task_id, p.attempt_id, p.thread_id, p.revision, d.t3_data_dir
+             FROM t3_progress p
+             JOIN dispatch_attempts d ON d.attempt_id = p.attempt_id
+             JOIN tasks t ON t.id = p.task_id
+             WHERE t.status IN ('dispatched','needs_answer') OR EXISTS (
+                 SELECT 1 FROM t3_operations o WHERE o.task_id = p.task_id
+                   AND o.state IN ('reserved','acknowledged','needs_confirmation'))
+             ORDER BY t.updated_at ASC, p.task_id ASC",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, String>(4)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows.into_iter()
+            .map(|(task_id, attempt_id, thread_id, revision, data_dir)| {
+                Ok(ProgressWatch {
+                    send: active_send_in(&conn, &task_id)?,
+                    task_id,
+                    attempt_id,
+                    thread_id,
+                    data_dir,
+                    revision,
+                })
+            })
+            .collect()
+    }
+
+    /// Commits one observed transition only while the Task is open and the thread and revisions
+    /// still match the read. Late results from a closed Task or a newer observation are dropped.
+    pub fn commit_observation(
+        &self,
+        guard: &CommitGuard,
+        effect: &ProgressEffect,
+        observation: &ThreadObservation,
+    ) -> Result<bool, V2Error> {
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let task_status: Option<String> = tx
+            .query_row(
+                "SELECT status FROM tasks WHERE id = ?1",
+                params![guard.task_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(task_status) = task_status.and_then(|raw| TaskStatus::parse(&raw)) else {
+            return Ok(false);
+        };
+        if !matches!(
+            task_status,
+            TaskStatus::Dispatched | TaskStatus::NeedsAnswer
+        ) {
+            return Ok(false);
+        }
+        let Some(attempt) = dispatch_attempt_by_id(&tx, &guard.attempt_id)? else {
+            return Ok(false);
+        };
+        if attempt.task_id != guard.task_id
+            || attempt.state != DispatchState::Bound
+            || attempt.thread_id.as_deref() != Some(guard.thread_id.as_str())
+        {
+            return Ok(false);
+        }
+        let revision: Option<i64> = tx
+            .query_row(
+                "SELECT revision FROM t3_progress WHERE attempt_id = ?1",
+                params![guard.attempt_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if revision != Some(guard.revision) {
+            return Ok(false);
+        }
+        if let Some(expected) = guard.operation_revision {
+            let current: Option<i64> = tx
+                .query_row(
+                    "SELECT revision FROM t3_operations WHERE task_id = ?1
+                     AND state IN ('reserved','acknowledged','needs_confirmation')
+                     ORDER BY created_at DESC LIMIT 1",
+                    params![guard.task_id],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            if current != Some(expected) {
+                return Ok(false);
+            }
+        }
+        let at = now();
+        let run_id = observation
+            .observed_run_id()
+            .map(str::to_string)
+            .or(attempt.run_id.clone());
+        let reply = assistant_reply(&observation.messages, run_id.as_deref());
+        let link = observation
+            .link
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_string)
+            .or(attempt.thread_url.clone());
+        let error = observation
+            .error
+            .clone()
+            .filter(|value| !value.trim().is_empty());
+        tx.execute(
+            "UPDATE t3_progress SET run_id = ?2, run_count = ?3, status = ?4,
+                 pending_request_count = ?5, branch = ?6, worktree_path = ?7, link = ?8,
+                 reply = ?9, error = ?10, stale_reason = NULL, revision = revision + 1,
+                 updated_at = ?11 WHERE attempt_id = ?1",
+            params![
+                guard.attempt_id,
+                run_id,
+                observation.run_count as i64,
+                observation.status.as_str(),
+                observation.pending_request_count as i64,
+                observation.branch,
+                observation.worktree_path,
+                link.clone(),
+                reply,
+                error,
+                at,
+            ],
+        )?;
+        tx.execute(
+            "UPDATE tasks SET status = ?2, pending_action = ?3, failure_stage = ?4,
+                 failure_reason = ?5, thread_url = ?6, updated_at = ?7 WHERE id = ?1",
+            params![
+                guard.task_id,
+                effect.status.as_str(),
+                effect.pending_action,
+                effect.failure_stage,
+                effect.failure_reason,
+                link,
+                at,
+            ],
+        )?;
+        if matches!(
+            effect.status,
+            TaskStatus::Returned | TaskStatus::Failed | TaskStatus::Done | TaskStatus::Cancelled
+        ) {
+            tx.execute(
+                "UPDATE t3_operations SET state = 'stale', revision = revision + 1,
+                     updated_at = ?2 WHERE task_id = ?1 AND state = 'acknowledged'",
+                params![guard.task_id, at],
+            )?;
+        }
+        upsert_pr_refs_in(&tx, &guard.task_id, &observation.pull_requests, &at)?;
+        tx.commit()?;
+        Ok(true)
+    }
+
+    /// Records an unreachable T3 without losing the last good observation. The revision bump
+    /// invalidates any read that was in flight when the failure was noticed.
+    pub fn mark_stale(&self, task_id: &str, reason: &str) -> Result<bool, V2Error> {
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let changed = tx.execute(
+            "UPDATE t3_progress SET stale_reason = ?2, revision = revision + 1,
+                 updated_at = ?3 WHERE task_id = ?1",
+            params![task_id, reason, now()],
+        )?;
+        tx.commit()?;
+        Ok(changed > 0)
+    }
+
+    /// Reserves a Follow-up, Retry or explicit resend before any CLI call. The message is frozen
+    /// here, together with the run baseline, so a lost response never needs a second draft.
+    pub fn reserve_send(
+        &self,
+        task_id: &str,
+        kind: SendKind,
+        message: &str,
+    ) -> Result<Option<SendOperation>, V2Error> {
+        if message.is_empty() {
+            return Err(V2Error::InvalidInput(
+                "the Follow-up message is empty".into(),
+            ));
+        }
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let status: Option<String> = tx
+            .query_row(
+                "SELECT status FROM tasks WHERE id = ?1",
+                params![task_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let status = status.and_then(|raw| TaskStatus::parse(&raw));
+        let eligible = match kind {
+            SendKind::Followup | SendKind::Retry => {
+                matches!(
+                    status,
+                    Some(TaskStatus::Returned) | Some(TaskStatus::Failed)
+                )
+            }
+            SendKind::Resend => true,
+        };
+        let open: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM t3_operations WHERE task_id = ?1
+               AND state IN ('reserved','acknowledged','needs_confirmation'))",
+            params![task_id],
+            |row| row.get(0),
+        )?;
+        if !eligible || open {
+            return Ok(None);
+        }
+        let Some((attempt_id, thread_id, baseline_run_id, baseline_run_count)) = tx
+            .query_row(
+                "SELECT p.attempt_id, p.thread_id, p.run_id, p.run_count FROM t3_progress p
+                 JOIN dispatch_attempts d ON d.attempt_id = p.attempt_id
+                 WHERE p.task_id = ?1 AND d.state = 'bound'",
+                params![task_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                        row.get::<_, i64>(3)?,
+                    ))
+                },
+            )
+            .optional()?
+        else {
+            return Ok(None);
+        };
+        let operation_id = new_id();
+        let at = now();
+        tx.execute(
+            "INSERT INTO t3_operations
+                 (operation_id, attempt_id, task_id, thread_id, kind, state, message,
+                  baseline_run_id, baseline_run_count, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, 'reserved', ?6, ?7, ?8, ?9, ?9)",
+            params![
+                operation_id,
+                attempt_id,
+                task_id,
+                thread_id,
+                kind.as_str(),
+                message,
+                baseline_run_id,
+                baseline_run_count,
+                at,
+            ],
+        )?;
+        tx.execute(
+            "UPDATE t3_progress SET revision = revision + 1, stale_reason = NULL,
+                 updated_at = ?2 WHERE attempt_id = ?1",
+            params![attempt_id, at],
+        )?;
+        tx.commit()?;
+        Ok(Some(SendOperation {
+            operation_id,
+            attempt_id,
+            task_id: task_id.to_string(),
+            thread_id,
+            kind,
+            state: SendState::Reserved,
+            message: message.to_string(),
+            baseline_run_id,
+            baseline_run_count: baseline_run_count.max(0) as u64,
+            run_id: None,
+            delivery_state: None,
+            failure_reason: None,
+            revision: 0,
+        }))
+    }
+
+    /// Records an acknowledged send: the new run id is the baseline for every later observation,
+    /// and the Task returns to Dispatched while the previous run may still be finishing.
+    pub fn acknowledge_send(
+        &self,
+        operation_id: &str,
+        run_id: &str,
+        delivery_state: &str,
+    ) -> Result<bool, V2Error> {
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let Some(operation) = operation_by_id(&tx, operation_id)? else {
+            return Ok(false);
+        };
+        if operation.state != SendState::Reserved {
+            return Ok(false);
+        }
+        let at = now();
+        tx.execute(
+            "UPDATE t3_operations SET state = 'acknowledged', run_id = ?2,
+                 delivery_state = ?3, failure_reason = NULL, revision = revision + 1,
+                 updated_at = ?4 WHERE operation_id = ?1",
+            params![operation_id, run_id, delivery_state, at],
+        )?;
+        tx.execute(
+            "UPDATE t3_progress SET run_id = ?2, run_count = ?3, status = 'queued',
+                 stale_reason = NULL, revision = revision + 1, updated_at = ?4
+             WHERE attempt_id = ?1",
+            params![
+                operation.attempt_id,
+                run_id,
+                operation.baseline_run_count.saturating_add(1) as i64,
+                at,
+            ],
+        )?;
+        tx.execute(
+            "UPDATE tasks SET status = 'dispatched', failure_stage = NULL, failure_reason = NULL,
+                 pending_action = 'T3 is continuing this thread.', updated_at = ?2 WHERE id = ?1",
+            params![operation.task_id, at],
+        )?;
+        tx.commit()?;
+        Ok(true)
+    }
+
+    /// A known pre-send rejection keeps the draft for an explicit retry. A lost response instead
+    /// fences sends until `show` proves the exact message arrived on exactly one new run.
+    pub fn fail_send(
+        &self,
+        operation_id: &str,
+        known: bool,
+        reason: &str,
+    ) -> Result<bool, V2Error> {
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let Some(operation) = operation_by_id(&tx, operation_id)? else {
+            return Ok(false);
+        };
+        if operation.state != SendState::Reserved {
+            return Ok(false);
+        }
+        let state = if known {
+            SendState::Failed
+        } else {
+            SendState::NeedsConfirmation
+        };
+        let pending = if known {
+            "T3 rejected the Follow-up. The draft was kept; retry after recovery."
+        } else {
+            "Confirm in T3 whether the message arrived, then Check again or Resend."
+        };
+        let at = now();
+        tx.execute(
+            "UPDATE t3_operations SET state = ?2, failure_reason = ?3,
+                 revision = revision + 1, updated_at = ?4 WHERE operation_id = ?1",
+            params![operation_id, state.as_str(), reason, at],
+        )?;
+        tx.execute(
+            "UPDATE t3_progress SET revision = revision + 1, updated_at = ?2
+             WHERE attempt_id = ?1",
+            params![operation.attempt_id, at],
+        )?;
+        tx.execute(
+            "UPDATE tasks SET pending_action = ?2, updated_at = ?3 WHERE id = ?1",
+            params![operation.task_id, pending, at],
+        )?;
+        tx.commit()?;
+        Ok(true)
+    }
+
+    /// Confirms a queued send from `show` and reopens observation of the acknowledged run.
+    pub fn confirm_send(&self, operation_id: &str, run_id: &str) -> Result<bool, V2Error> {
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let Some(operation) = operation_by_id(&tx, operation_id)? else {
+            return Ok(false);
+        };
+        if operation.state != SendState::NeedsConfirmation {
+            return Ok(false);
+        }
+        let at = now();
+        tx.execute(
+            "UPDATE t3_operations SET state = 'acknowledged', run_id = ?2,
+                 delivery_state = 'confirmed_by_show', failure_reason = NULL,
+                 revision = revision + 1, updated_at = ?3 WHERE operation_id = ?1",
+            params![operation_id, run_id, at],
+        )?;
+        tx.execute(
+            "UPDATE t3_progress SET run_id = ?2, run_count = ?3, status = 'queued',
+                 stale_reason = NULL, revision = revision + 1, updated_at = ?4
+             WHERE attempt_id = ?1",
+            params![
+                operation.attempt_id,
+                run_id,
+                operation.baseline_run_count.saturating_add(1) as i64,
+                at,
+            ],
+        )?;
+        tx.execute(
+            "UPDATE tasks SET status = 'dispatched', pending_action = 'T3 is continuing this thread.',
+                 updated_at = ?2 WHERE id = ?1",
+            params![operation.task_id, at],
+        )?;
+        tx.commit()?;
+        Ok(true)
+    }
+
+    /// The newest still-open continuation for a Task, if any.
+    pub fn active_send(&self, task_id: &str) -> Result<Option<SendOperation>, V2Error> {
+        active_send_in(&self.conn(), task_id)
+    }
+
+    /// One operation by id, for reconciliation after a lost response.
+    pub fn send_operation(&self, operation_id: &str) -> Result<Option<SendOperation>, V2Error> {
+        operation_by_id(&self.conn(), operation_id)
+    }
+
+    /// Explicit local closure. A PR merge or T3 settlement never calls this; only the user does.
+    /// Closure stops polling by bumping the observation revision and fencing open operations.
+    pub fn close_task(&self, task_id: &str, status: TaskStatus) -> Result<bool, V2Error> {
+        if !matches!(status, TaskStatus::Done | TaskStatus::Cancelled) {
+            return Err(V2Error::InvalidInput(
+                "only Done and Cancelled are explicit closures".into(),
+            ));
+        }
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let current: Option<String> = tx
+            .query_row(
+                "SELECT status FROM tasks WHERE id = ?1",
+                params![task_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(current) = current.and_then(|raw| TaskStatus::parse(&raw)) else {
+            return Ok(false);
+        };
+        if matches!(current, TaskStatus::Done | TaskStatus::Cancelled) {
+            return Ok(false);
+        }
+        let at = now();
+        tx.execute(
+            "UPDATE tasks SET status = ?2, pending_action = ?3, failure_stage = NULL,
+                 failure_reason = NULL, updated_at = ?4 WHERE id = ?1",
+            params![
+                task_id,
+                status.as_str(),
+                Some("Relay stopped tracking this Task; T3 may still be running.".to_string()),
+                at,
+            ],
+        )?;
+        tx.execute(
+            "UPDATE t3_progress SET revision = revision + 1, updated_at = ?2 WHERE task_id = ?1",
+            params![task_id, at],
+        )?;
+        tx.execute(
+            "UPDATE t3_operations SET state = 'stale', revision = revision + 1,
+                 updated_at = ?2 WHERE task_id = ?1
+                 AND state IN ('reserved','acknowledged','needs_confirmation')",
+            params![task_id, at],
+        )?;
+        tx.commit()?;
+        Ok(true)
     }
 
     // -----------------------------------------------------------------------
@@ -2833,6 +3456,119 @@ fn project_from_row(row: &Row<'_>) -> rusqlite::Result<V2Project> {
         created_at: row.get("created_at")?,
         updated_at: row.get("updated_at")?,
     })
+}
+
+const SEND_COLUMNS: &str = "operation_id, attempt_id, task_id, thread_id, kind, state, message, baseline_run_id, \
+     baseline_run_count, run_id, delivery_state, failure_reason, revision";
+
+fn send_operation_from_row(row: &Row<'_>) -> rusqlite::Result<SendOperation> {
+    let kind: String = row.get("kind")?;
+    let state: String = row.get("state")?;
+    Ok(SendOperation {
+        operation_id: row.get("operation_id")?,
+        attempt_id: row.get("attempt_id")?,
+        task_id: row.get("task_id")?,
+        thread_id: row.get("thread_id")?,
+        kind: SendKind::parse(&kind).unwrap_or(SendKind::Followup),
+        state: SendState::parse(&state).unwrap_or(SendState::Stale),
+        message: row.get("message")?,
+        baseline_run_id: row.get("baseline_run_id")?,
+        baseline_run_count: row.get::<_, i64>("baseline_run_count")?.max(0) as u64,
+        run_id: row.get("run_id")?,
+        delivery_state: row.get("delivery_state")?,
+        failure_reason: row.get("failure_reason")?,
+        revision: row.get("revision")?,
+    })
+}
+
+fn operation_by_id(
+    conn: &Connection,
+    operation_id: &str,
+) -> Result<Option<SendOperation>, V2Error> {
+    let sql = format!("SELECT {SEND_COLUMNS} FROM t3_operations WHERE operation_id = ?1");
+    Ok(conn
+        .query_row(&sql, params![operation_id], send_operation_from_row)
+        .optional()?)
+}
+
+fn active_send_in(conn: &Connection, task_id: &str) -> Result<Option<SendOperation>, V2Error> {
+    let sql = format!(
+        "SELECT {SEND_COLUMNS} FROM t3_operations WHERE task_id = ?1
+         AND state IN ('reserved','acknowledged','needs_confirmation','failed')
+         ORDER BY created_at DESC, operation_id DESC LIMIT 1"
+    );
+    Ok(conn
+        .query_row(&sql, params![task_id], send_operation_from_row)
+        .optional()?)
+}
+
+/// Reported PRs are upserted as read-only GitHub PR References by canonical identity. Existing
+/// rows are updated in place; a response with fewer links never removes one already observed.
+fn upsert_pr_refs_in(
+    tx: &Transaction<'_>,
+    task_id: &str,
+    pull_requests: &[ObservedPullRequest],
+    at: &str,
+) -> Result<(), V2Error> {
+    for pull_request in pull_requests {
+        let Some(key) = ReferenceKey::parse_url(&pull_request.url) else {
+            continue;
+        };
+        let ReferenceKey::Github {
+            owner_repo,
+            number,
+            item,
+        } = &key
+        else {
+            continue;
+        };
+        if *item != GithubItemKind::Pull {
+            continue;
+        }
+        let canonical = key.canonical_url();
+        if !canonical.starts_with("https://github.com/") {
+            continue;
+        }
+        let snapshot = ReferenceSnapshot::from_provider(
+            format!("PR #{number}"),
+            pull_request
+                .state
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string()),
+            vec![
+                format!("repo: {owner_repo}"),
+                format!("number: #{number}"),
+                format!("source: {}", pull_request.source.as_deref().unwrap_or("t3")),
+            ],
+            at,
+        );
+        tx.execute(
+            "INSERT INTO ref_targets (id, kind, target_id, canonical_url, snapshot_json, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(kind, target_id) DO UPDATE SET
+                 canonical_url = excluded.canonical_url,
+                 snapshot_json = excluded.snapshot_json",
+            params![
+                new_id(),
+                key.kind(),
+                key.target_id(),
+                canonical,
+                snapshot.to_json(),
+                at,
+            ],
+        )?;
+        let ref_id: String = tx.query_row(
+            "SELECT id FROM ref_targets WHERE kind = ?1 AND target_id = ?2",
+            params![key.kind(), key.target_id()],
+            |row| row.get(0),
+        )?;
+        tx.execute(
+            "INSERT OR IGNORE INTO task_refs (task_id, ref_id, position)
+             SELECT ?1, ?2, COALESCE(MAX(position) + 1, 0) FROM task_refs WHERE task_id = ?1",
+            params![task_id, ref_id],
+        )?;
+    }
+    Ok(())
 }
 
 fn reference_from_row(row: &Row<'_>) -> rusqlite::Result<V2Reference> {

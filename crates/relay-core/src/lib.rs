@@ -18,5 +18,6 @@ pub mod slack;
 pub mod store;
 pub mod summaries;
 pub mod t3_dispatch;
+pub mod t3_progress;
 pub mod v2;
 pub mod view;
