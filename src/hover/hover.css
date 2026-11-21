@@ -531,7 +531,7 @@ svg.i {
   white-space: nowrap;
 }
 
-/* Needs-you cards: tinted, no border. Shared with ProposalCard size="compact". */
+/* Needs-you cards: tinted, no border. */
 .card {
   width: 100%;
   padding: 8px 10px;

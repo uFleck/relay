@@ -6,8 +6,7 @@ import { Notebook } from "./app/Notebook";
 import { MissingTask, Tasks } from "./app/Tasks";
 import { TaskSheet } from "./app/TaskSheet";
 import { SettingsView } from "./app/Settings";
-import { errorText, getSnapshot, onEvent } from "./ipc";
-import type { Snapshot } from "./types";
+import { appVersion, onEvent } from "./ipc";
 import { parseRoute, readLocation, writeLocation, type Route, type View } from "./route";
 import { startUpdateChecks, useUpdater } from "./updater";
 import { needsYouCount, useWorkspace, useWorkspaceFilter } from "./workspace";
@@ -16,8 +15,7 @@ const typing = (el: EventTarget | null) =>
   el instanceof HTMLElement && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
 
 export default function App() {
-  const [snap, setSnap] = useState<Snapshot | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [version, setVersion] = useState("");
   const [route, setRoute] = useState<Route>(readLocation);
   /** The raw filter query lives in the shell, so rail navigation never clears it. */
   const [query, setQuery] = useState("");
@@ -28,16 +26,6 @@ export default function App() {
   const { workspace, version: workspaceVersion, error: workspaceError, refresh } = useWorkspace();
   const filter = useWorkspaceFilter(query, workspaceVersion);
 
-  const refreshV1 = useCallback(async () => {
-    try {
-      setSnap(await getSnapshot());
-      setLoadError(null);
-    } catch (error) {
-      console.error("[relay] snapshot", error);
-      setLoadError(errorText(error));
-    }
-  }, []);
-
   const navigate = useCallback((next: Route) => {
     writeLocation(next);
     setRoute(next);
@@ -45,16 +33,10 @@ export default function App() {
 
   useEffect(() => {
     startUpdateChecks();
-    void refreshV1();
-    // Nothing in the legacy store pushes data yet; coming back to the window re-reads it.
-    const onFocus = () => void refreshV1();
-    window.addEventListener("focus", onFocus);
+    void appVersion().then(setVersion).catch(() => undefined);
     const offOpen = onEvent("relay://open", (r) => navigate(parseRoute(r)));
-    return () => {
-      window.removeEventListener("focus", onFocus);
-      offOpen();
-    };
-  }, [refreshV1, navigate]);
+    return () => offOpen();
+  }, [navigate]);
 
   /** A Task sheet is always the `/tasks?task=<id>` route, even when opened from Notebook. */
   const openTask = useCallback(
@@ -95,11 +77,11 @@ export default function App() {
     return (
       <div className="win">
         <TitleBar ref={searchRef} query={query} onQuery={setQuery} />
-        <div className="boot" role={workspaceError || loadError ? "alert" : "status"}>
-          {workspaceError || loadError ? (
+        <div className="boot" role={workspaceError ? "alert" : "status"}>
+          {workspaceError ? (
             <>
               <b>Relay could not read its workspace.</b>
-              <span className="meta">{workspaceError ?? loadError}</span>
+              <span className="meta">{workspaceError}</span>
               <button type="button" className="btn" onClick={() => void refresh()}>
                 Try again
               </button>
@@ -112,7 +94,6 @@ export default function App() {
     );
   }
 
-  const version = snap?.version ?? "";
   const selectedTask = route.task
     ? workspace.tasks.find((task) => task.id === route.task)
     : undefined;

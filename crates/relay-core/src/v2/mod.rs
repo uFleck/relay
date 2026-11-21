@@ -1,5 +1,5 @@
-//! Relay v2's fresh store. It owns its own file, schema and version, and shares no
-//! table with the v1 [`crate::store::Store`]. No data migration from v1 exists.
+//! Relay v2's fresh store. It owns its own file, schema and version. The retired v1
+//! intake store is gone; no data or credential migration exists.
 
 pub mod briefing;
 pub mod composer;

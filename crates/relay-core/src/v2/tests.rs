@@ -5,9 +5,7 @@ use std::{fs, path::PathBuf};
 
 use super::store::{APPLICATION_ID, USER_VERSION};
 use super::*;
-use crate::model::NewProject as V1NewProject;
 use crate::model::new_id;
-use crate::store::Store as V1Store;
 use rusqlite::params;
 
 struct TempDir(PathBuf);
@@ -261,38 +259,44 @@ fn round_trip_persists_lines_tasks_references_settings_project_and_ledger() {
 }
 
 #[test]
-fn v1_file_is_unmodified_and_rejected() {
+fn foreign_file_is_unmodified_and_rejected() {
     let dir = TempDir::new("isolation");
-    let legacy_path = dir.file("relay.db");
+    let foreign_path = dir.file("foreign.db");
     let artifact = dir.file("credential.json");
 
-    let legacy = V1Store::open(&legacy_path).unwrap();
-    let sentinel = legacy.create_note("Sentinel", "keep me").unwrap();
-    legacy
-        .create_project_with_default_workflow(V1NewProject::new("Inbox", "inbox", None))
+    // A foreign SQLite file stands in for any legacy store. v2 inspects before it
+    // touches journal mode, so neither the file nor a nearby secret is modified.
+    {
+        let conn = rusqlite::Connection::open(&foreign_path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE legacy_note (id TEXT PRIMARY KEY, body TEXT NOT NULL);\n\
+             INSERT INTO legacy_note (id, body) VALUES ('sentinel', 'keep me');",
+        )
         .unwrap();
+    }
     fs::write(&artifact, b"{ \"synthetic\": true }").unwrap();
-    // Close v1 first: closing the last connection checkpoints its WAL into the main
-    // file. The baseline must be the settled file, not the pre-checkpoint bytes.
-    drop(legacy);
-    let legacy_bytes = fs::read(&legacy_path).unwrap();
+    let foreign_bytes = fs::read(&foreign_path).unwrap();
     let artifact_bytes = fs::read(&artifact).unwrap();
 
     let v2 = V2Store::open(dir.file("relay-v2.db")).unwrap();
     let saved = v2
         .save_note(create("side-by-side", vec![plain("v2 only", vec![])]))
         .unwrap();
-    assert!(matches!(
-        V2Store::open(&legacy_path),
-        Err(V2Error::UnexpectedDatabase(_))
-    ));
+    let rejected = V2Store::open(&foreign_path);
+    assert!(matches!(rejected, Err(V2Error::UnexpectedDatabase(_))));
 
-    assert_eq!(fs::read(&legacy_path).unwrap(), legacy_bytes);
+    assert_eq!(fs::read(&foreign_path).unwrap(), foreign_bytes);
     assert_eq!(fs::read(&artifact).unwrap(), artifact_bytes);
 
-    let legacy = V1Store::open(&legacy_path).unwrap();
-    assert_eq!(legacy.get_note(&sentinel.id).unwrap().body, "keep me");
-    drop(legacy);
+    let conn = rusqlite::Connection::open(&foreign_path).unwrap();
+    let body: String = conn
+        .query_row(
+            "SELECT body FROM legacy_note WHERE id = 'sentinel'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(body, "keep me");
 
     assert_eq!(v2.notebook_snapshot().unwrap().notes, vec![saved]);
 }

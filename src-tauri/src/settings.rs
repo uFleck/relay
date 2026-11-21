@@ -14,7 +14,6 @@ use std::time::Duration;
 use relay_core::clickup::ClickUpClient;
 use relay_core::github::GithubClient;
 use relay_core::repos::{self, RepoCandidate};
-use relay_core::store::Store as V1Store;
 use relay_core::v2::{
     NewV2Project, T3Target, V2ImportScope, V2Project, V2Settings, V2SettingsUpdate, V2Store,
 };
@@ -23,6 +22,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::commands::CommandError;
 use crate::github;
+use crate::note_import;
 use crate::secrets;
 use crate::{slack, t3};
 
@@ -801,8 +801,8 @@ pub fn v2_repos_register(
         t3_target: None,
     })?;
     publish_change(&app);
-    // Registration re-runs the same enabled GitHub Import service as startup and manual runs.
-    github::sync_in_background(app);
+    // Registration re-runs the same enabled GitHub Note Import service as startup and manual runs.
+    note_import::run_github_in_background(app);
     Ok(project)
 }
 
@@ -879,68 +879,6 @@ pub fn opencode_config(store: &V2Store) -> Result<OpencodeConfig, CommandError> 
     Ok(OpencodeConfig {
         model: store.settings()?.opencode_model,
         key: secrets::v2::read(OPENCODE_KEY),
-    })
-}
-
-/// The repo-registration commands moved here when the one-shot importer was retired. They add
-/// v1 projects from local GitHub checkouts and start no sync, discovery or Slack reanalysis.
-#[derive(Debug, Clone, Copy, Default, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RepoImportCount {
-    pub imported: usize,
-    pub skipped: usize,
-}
-
-fn scan_roots(folders: &[String]) -> Result<Vec<&Path>, String> {
-    let roots: Vec<&Path> = folders
-        .iter()
-        .map(|folder| Path::new(folder.trim()))
-        .filter(|root| !root.as_os_str().is_empty())
-        .collect();
-    for root in &roots {
-        if !root.is_dir() {
-            return Err(format!("{} is not a folder", root.display()));
-        }
-    }
-    Ok(roots)
-}
-
-#[tauri::command]
-pub async fn repos_scan(
-    store: State<'_, Arc<V1Store>>,
-    folders: Vec<String>,
-) -> Result<Vec<RepoCandidate>, String> {
-    let store = store.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let roots = scan_roots(&folders)?;
-        repos::scan_folders(&roots)
-            .map_err(|error| error.to_string())
-            .and_then(|found| {
-                repos::annotate_projects(&store, found).map_err(|error| error.to_string())
-            })
-    })
-    .await
-    .map_err(|error| error.to_string())?
-}
-
-#[tauri::command]
-pub async fn repos_import(
-    app: AppHandle,
-    store: State<'_, Arc<V1Store>>,
-    folders: Vec<String>,
-) -> Result<RepoImportCount, String> {
-    let store = store.inner().clone();
-    let count = tauri::async_runtime::spawn_blocking(move || {
-        let roots = scan_roots(&folders)?;
-        let found = repos::scan_folders(&roots).map_err(|error| error.to_string())?;
-        repos::import_repos(&store, &found).map_err(|error| error.to_string())
-    })
-    .await
-    .map_err(|error| error.to_string())??;
-    let _ = app.emit(SETTINGS_CHANGE_EVENT, ());
-    Ok(RepoImportCount {
-        imported: count.imported,
-        skipped: count.skipped,
     })
 }
 

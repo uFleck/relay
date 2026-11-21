@@ -1,23 +1,9 @@
-//! Third-party tokens in Windows Credential Manager, under the app's service name.
-//! The frontend never sees a stored token; a command only reports whether one exists.
-//!
-//! v2 uses a separate service. A v1 credential fixture in `dev.relay.app` must never
-//! make a fresh v2 profile look connected, and a v2 write must never touch v1 data.
+//! Third-party tokens in Windows Credential Manager, under the app's v2 service name.
+//! The frontend never sees a stored token; a command only reports whether one exists and
+//! a last-four mask. The retired v1 credential service and its tokens are gone, with no
+//! migration.
 
-const SERVICE: &str = "dev.relay.app";
 const V2_SERVICE: &str = "dev.relay.app.v2";
-
-pub fn read(key: &str) -> Option<String> {
-    read_from(SERVICE, key)
-}
-
-pub fn write(key: &str, value: &str) -> Result<(), String> {
-    write_to(SERVICE, key, value)
-}
-
-pub fn delete(key: &str) {
-    delete_from(SERVICE, key)
-}
 
 /// The v2 keyring. Keys stay in Credential Manager; only a last-four mask ever
 /// reaches a DTO, an event or the frontend.

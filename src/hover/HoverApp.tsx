@@ -5,10 +5,10 @@ import { BriefPanel } from "../components/BriefPanel";
 import { GrillPanel } from "../components/GrillPanel";
 import { Icon } from "../components/Icon";
 import {
+  appVersion,
   dockDismiss,
   dockReady,
   dockResize,
-  getSnapshot,
   inTauri,
   onDockDpi,
   onDockFocus,
@@ -20,12 +20,11 @@ import {
   showMainWindow,
   v2WorkspaceSnapshot,
   type HoverFlags,
+  type V2AgentMode,
   type V2WorkspaceSnapshot,
 } from "../ipc";
-import { claimState, clock, elapsed, liveClaims, nextDue, todayScope, until, useNow } from "../model";
 import { taskRoute } from "../route";
-import type { ClaimHolder, HoverEdge, HoverMode, Snapshot } from "../types";
-import type { V2AgentMode } from "../ipc";
+import type { HoverEdge } from "../types";
 import {
   DockContext,
   dockCssHeight,
@@ -38,33 +37,17 @@ import { prefersReducedMotion } from "../ui/motion";
 import { followUpdates, requestInstall, useUpdater, type UpdateState } from "../updater";
 import { needsYouCount, waitingTasks } from "../workspace";
 
-/* Rust does not send `relay://change` yet, so the hover also re-reads the snapshot on a slow timer. */
+/* The Dock reads only the v2 workspace. The retired v1 snapshot, claim board and Slack
+   source row are gone; the native session and focus machinery below is unchanged. */
 const REFRESH_MS = 20_000;
 
-/** Browser dev only: `?calm` drops proposals and acks every change, for the idle panel. */
-const calm = !inTauri && new URLSearchParams(window.location.search).has("calm");
-
-function calmed(s: Snapshot): Snapshot {
-  return {
-    ...s,
-    proposals: [],
-    tasks: s.tasks.map((t) => ({
-      ...t,
-      changes: t.changes.map((c) => (c.kind === "requirement" ? { ...c, ackedAt: c.ackedAt ?? c.at, ackedBy: c.ackedBy ?? "you" } : c)),
-    })),
-  };
-}
-
 export function HoverApp() {
-  const [snap, setSnap] = useState<Snapshot | null>(null);
   const [v2, setV2] = useState<V2WorkspaceSnapshot | null>(null);
+  const [version, setVersion] = useState("");
   const [failed, setFailed] = useState(false);
-  // The Dock is always mounted so an unsent draft survives Esc, blur and a second summon. The
-  // native window itself is hidden until the hotkey opens a session.
-  const [mode, setMode] = useState<HoverMode>("open");
   const [flags, setFlags] = useState<HoverFlags>({ pinned: false, dnd: false, paused: false, ready: false, visible: false });
   const [pulsing, setPulsing] = useState(false);
-  const [composing, setComposing] = useState(!calm);
+  const [composing, setComposing] = useState(true);
   const [showWaiting, setShowWaiting] = useState(false);
   /** A Wait or Grill Task with its inline panel open in the Dock; empty when none is open. */
   const [dockBrief, setDockBrief] = useState<string | null>(null);
@@ -89,10 +72,8 @@ export function HoverApp() {
   const sentHeight = useRef<number | null>(null);
   const readySent = useRef(false);
   // The pointer poll and the timers read these without restarting.
-  const live = useRef({ mode, pinned: flags.pinned, dnd: flags.dnd, composer: false, waiting: false, brief: false });
+  const live = useRef({ dnd: flags.dnd, composer: false, waiting: false, brief: false });
   live.current = {
-    mode,
-    pinned: flags.pinned,
     dnd: flags.dnd,
     composer: composerActive.current,
     waiting: showWaiting,
@@ -106,19 +87,6 @@ export function HoverApp() {
     requestAnimationFrame(() => setPulsing(true));
   }, []);
 
-  const refresh = useCallback(async () => {
-    try {
-      const raw = await getSnapshot();
-      setSnap(calm ? calmed(raw) : raw);
-      setFailed(false);
-    } catch (error) {
-      console.error("[relay] hover snapshot", error);
-      setFailed(true);
-    }
-  }, []);
-
-  // The badge and the waiting list come from the same v2 read the main window uses. A new
-  // waiting Task id pulses the tab; a committed write refreshes both surfaces.
   const refreshV2 = useCallback(async () => {
     try {
       const workspace = await v2WorkspaceSnapshot();
@@ -126,8 +94,10 @@ export function HoverApp() {
       if (waitingIds.current && [...ids].some((id) => !waitingIds.current!.has(id))) pulse();
       waitingIds.current = ids;
       setV2(workspace);
+      setFailed(false);
     } catch (error) {
       console.warn("[relay] hover v2 workspace", error);
+      setFailed(true);
     }
   }, [pulse]);
 
@@ -235,22 +205,17 @@ export function HoverApp() {
 
   useEffect(() => {
     followUpdates();
-    void refresh();
+    void appVersion().then(setVersion).catch(() => undefined);
     void refreshV2();
-    const timer = window.setInterval(() => {
-      void refresh();
-      void refreshV2();
-    }, REFRESH_MS);
-    const offChange = onEvent("relay://change", () => void refresh());
+    const timer = window.setInterval(() => void refreshV2(), REFRESH_MS);
     const offV2 = onV2Change(() => void refreshV2());
     const offState = onEvent("relay://state", setFlags);
     return () => {
       window.clearInterval(timer);
-      offChange();
       offV2();
       offState();
     };
-  }, [refresh, refreshV2]);
+  }, [refreshV2]);
 
   useEffect(() => {
     if (flags.dnd) setPulsing(false);
@@ -285,9 +250,9 @@ export function HoverApp() {
     });
   }, [applyHeight]);
 
-  // The measurable content root only exists once both reads resolve, so the observer must attach
+  // The measurable content root only exists once the v2 read resolves, so the observer must attach
   // when that happens and not only on the first mount (which renders the loading tab instead).
-  const contentReady = snap !== null && v2 !== null;
+  const contentReady = v2 !== null;
 
   useEffect(() => {
     const content = contentRef.current;
@@ -321,12 +286,10 @@ export function HoverApp() {
 
   /** Badge activation opens the waiting list from the unfiltered read. */
   const openWaiting = useCallback(() => {
-    setMode("open");
     setShowWaiting(true);
   }, []);
 
   const openComposer = useCallback(() => {
-    setMode("open");
     setComposing(true);
   }, []);
 
@@ -341,7 +304,7 @@ export function HoverApp() {
 
   const shownEdge: HoverEdge = "right";
 
-  if (!snap || !v2) {
+  if (!v2) {
     // Nothing to count yet: a quiet tab that still places itself, so the window can be shown.
     return (
       <div
@@ -358,7 +321,6 @@ export function HoverApp() {
     );
   }
 
-  const scope = todayScope(snap);
   const needsYou = needsYouCount(v2.tasks);
   const badge = needsYou > 0 ? String(needsYou) : update.kind === "ready" ? "↑" : null;
   const fit = update.kind !== "idle" && update.kind !== "checking";
@@ -367,86 +329,54 @@ export function HoverApp() {
     <div
       className={`hroot${inTauri ? "" : " dev"}`}
       data-edge={shownEdge}
-      data-mode={mode}
+      data-mode="open"
       data-visible={dockVisible ? "true" : "false"}
       data-growing={growing ? "true" : "false"}
       data-focus-hint={focusHint ? "click-to-focus" : undefined}
     >
-      {mode === "tab" ? (
-        <div
-          ref={shell}
-          className={`tab${pulsing ? " pulse" : ""}`}
-          onMouseEnter={inTauri ? undefined : () => setMode("open")}
-          onAnimationEnd={() => setPulsing(false)}
-          aria-label={`Relay: ${scope.total} today, ${scope.inProgress} in progress, ${needsYou} need you`}
-        >
-          {badge && (
-            <button
-              type="button"
-              className={`b${needsYou ? "" : " upd"}`}
-              aria-label={`${needsYou} tasks need you — show waiting tasks`}
-              onClick={(event) => {
-                event.stopPropagation();
-                openWaiting();
-              }}
-            >
-              {badge}
-            </button>
-          )}
-          <span className="cnt">{scope.total}</span>
-          <span className="fill">
-            <i style={{ height: `${scope.total ? (scope.inProgress / scope.total) * 100 : 0}%` }} />
-          </span>
-          <span className="pips">
-            {snap.sync
-              .filter((s) => s.state !== "off")
-              .map((s) => (
-                <i key={s.name} className={`dot sync-${s.state}`} />
-              ))}
-          </span>
-        </div>
-      ) : (
-        <div
-          ref={shell}
-          className={`hov dock${fit ? " fit" : ""}`}
-          data-compose={composing ? "on" : undefined}
-          data-dock-state={dockLayout}
-        >
-          <Panel
-            dock={dock}
-            draftMode={draft.mode}
-            snap={snap}
-            v2={v2}
-            showWaiting={showWaiting}
-            onToggleWaiting={() => setShowWaiting((open) => !open)}
-            dockBrief={dockBrief}
-            onDockBrief={setDockBrief}
-            onDockChanged={() => void refreshV2()}
-            flags={flags}
-            update={update}
-            failed={failed}
-            onDnd={() => void toggleDnd()}
-            composing={composing}
-            onCompose={openComposer}
-            onCloseComposer={closeComposer}
-            onComposerActive={(active) => {
-              composerActive.current = active;
-            }}
-          />
-          {focusHint && (
-            <div className="focus-hint" role="status">
-              Click to focus
-            </div>
-          )}
-        </div>
-      )}
+      <div
+        ref={shell}
+        className={`hov dock${fit ? " fit" : ""}`}
+        data-compose={composing ? "on" : undefined}
+        data-dock-state={dockLayout}
+      >
+        <Panel
+          dock={dock}
+          draftMode={draft.mode}
+          v2={v2}
+          version={version}
+          needsYou={needsYou}
+          badge={badge}
+          onOpenWaiting={openWaiting}
+          showWaiting={showWaiting}
+          onToggleWaiting={() => setShowWaiting((open) => !open)}
+          pulse={pulse}
+          pulsing={pulsing}
+          onPulseEnd={() => setPulsing(false)}
+          dockBrief={dockBrief}
+          onDockBrief={setDockBrief}
+          onDockChanged={() => void refreshV2()}
+          flags={flags}
+          update={update}
+          failed={failed}
+          onDnd={() => void toggleDnd()}
+          composing={composing}
+          onCompose={openComposer}
+          onCloseComposer={closeComposer}
+          onComposerActive={(active) => {
+            composerActive.current = active;
+          }}
+        />
+        {focusHint && (
+          <div className="focus-hint" role="status">
+            Click to focus
+          </div>
+        )}
+      </div>
       {!inTauri && (
         <div className="devbar">
           <button type="button" className="btn" onClick={pulse}>
             Simulate change
-          </button>
-          <button type="button" className="btn" onClick={() => setMode((m) => (m === "tab" ? "open" : "tab"))}>
-            {mode === "tab" ? "Open" : "Collapse"}
           </button>
         </div>
       )}
@@ -455,10 +385,18 @@ export function HoverApp() {
 }
 
 interface PanelProps {
-  snap: Snapshot;
+  dock: DockBridge;
+  draftMode: V2AgentMode | null;
   v2: V2WorkspaceSnapshot;
+  version: string;
+  needsYou: number;
+  badge: string | null;
+  onOpenWaiting: () => void;
   showWaiting: boolean;
   onToggleWaiting: () => void;
+  pulse: () => void;
+  pulsing: boolean;
+  onPulseEnd: () => void;
   dockBrief: string | null;
   onDockBrief: (id: string | null) => void;
   onDockChanged: () => void;
@@ -470,15 +408,20 @@ interface PanelProps {
   onCompose: () => void;
   onCloseComposer: () => void;
   onComposerActive: (active: boolean) => void;
-  dock: DockBridge;
-  draftMode: V2AgentMode | null;
 }
 
 function Panel({
-  snap,
+  dock,
+  draftMode,
   v2,
+  version,
+  needsYou,
+  badge,
+  onOpenWaiting,
   showWaiting,
   onToggleWaiting,
+  pulsing,
+  onPulseEnd,
   dockBrief,
   onDockBrief,
   onDockChanged,
@@ -490,15 +433,9 @@ function Panel({
   onCompose,
   onCloseComposer,
   onComposerActive,
-  dock,
-  draftMode,
 }: PanelProps) {
-  const now = useNow();
-  const scope = todayScope(snap);
   const waiting = waitingTasks(v2.tasks);
   const needs = waiting.length > 0;
-  const due = nextDue(snap, now);
-  const claims = liveClaims(snap.tasks);
   const openTask = (task: string) => void openMain(taskRoute(task));
 
   const needsSection = showWaiting ? (
@@ -515,9 +452,10 @@ function Panel({
   ) : (
     <button
       type="button"
-      className={`grp need-toggle${needs ? " has" : ""}`}
+      className={`grp need-toggle${needs ? " has" : ""} ${pulsing ? "pulse" : ""}`}
       key="needs"
-      onClick={onToggleWaiting}
+      onClick={needs ? onOpenWaiting : undefined}
+      onAnimationEnd={onPulseEnd}
       aria-expanded={showWaiting}
       disabled={!needs}
     >
@@ -535,46 +473,6 @@ function Panel({
     </button>
   );
 
-  const claimsSection = (
-    <section className="grp" key="claims">
-      <h3>
-        Agents working {claims.length > 0 && <span className="meta">lease {claims[0].claim.leaseMinutes} min</span>}
-      </h3>
-      {claims.map((t) => {
-        const c = t.claim;
-        const state = claimState(c, now);
-        const leaseLeft = Math.max(0.04, 1 - (now - Date.parse(c.lastProgressAt)) / (c.leaseMinutes * 60_000));
-        return (
-          <button type="button" className="cl" key={c.id} onClick={() => openTask(t.id)}>
-            <Avatar holder={c.holder} stale={state === "stale"} lease={leaseLeft} />
-            <span className="t">{t.title}</span>
-            <span className="el">
-              {c.holder} · {elapsed(c.claimedAt, now)}
-            </span>
-            <span className="p">
-              {c.lastProgress} ·{" "}
-              <span className={state === "stale" ? "stale" : undefined}>{elapsed(c.lastProgressAt, now)} ago</span>
-            </span>
-          </button>
-        );
-      })}
-      {claims.length === 0 && <div className="calm">No agent holds a claim.</div>}
-    </section>
-  );
-
-  const dueSection = due ? (
-    <button type="button" className="nx" key="due" onClick={() => openTask(due.id)}>
-      <span className="tm">{clock(due.due!.at)}</span>
-      <span className="t">{due.title}</span>
-      <span className="when">{until(due.due!.at, now)}</span>
-    </button>
-  ) : (
-    <div className="calm" key="due">
-      <Icon name="clock" className="muted-fg" />
-      Nothing with a time due today
-    </div>
-  );
-
   return (
     <DockContext.Provider value={dock}>
       <div className="dock-viewport" ref={dock.viewportRef}>
@@ -584,110 +482,55 @@ function Panel({
               <span className="wordmark" data-mode={draftMode ?? undefined}>
                 relay<span className="dot" key={draftMode ?? "none"}>.</span>
               </span>
-        {flags.paused && <span className="meta">capture paused</span>}
-        <span className="push" />
-        <button type="button" className={`rb${composing ? " on" : ""}`} title="Capture a note" aria-pressed={composing} onClick={onCompose}>
-          <Icon name="pencil" />
-        </button>
-        <button type="button" className={`rb${flags.dnd ? " on" : ""}`} title="Do not disturb" aria-pressed={flags.dnd} onClick={onDnd}>
-          <Icon name="moon" />
-        </button>
-        </div>
+              {flags.paused && <span className="meta">capture paused</span>}
+              <span className="push" />
+              {badge && (
+                <button
+                  type="button"
+                  className={`b${needsYou ? "" : " upd"}`}
+                  aria-label={`${needsYou} tasks need you — show waiting tasks`}
+                  onClick={onOpenWaiting}
+                >
+                  {badge}
+                </button>
+              )}
+              <button type="button" className={`rb${composing ? " on" : ""}`} title="Capture a note" aria-pressed={composing} onClick={onCompose}>
+                <Icon name="pencil" />
+              </button>
+              <button type="button" className={`rb${flags.dnd ? " on" : ""}`} title="Do not disturb" aria-pressed={flags.dnd} onClick={onDnd}>
+                <Icon name="moon" />
+              </button>
+            </div>
 
-      <UpdateBanner update={update} version={snap.version} />
+            <UpdateBanner update={update} version={version} />
 
-      <div className="hero">
-        <span className="big">
-          {scope.total}
-          <small>today</small>
-        </span>
-        <span className="chips">
-          <span className="chip" style={{ "--c": "var(--c-active)" } as React.CSSProperties}>
-            <i />
-            {scope.inProgress} in progress
-          </span>
-          <span className="chip" style={{ "--c": "var(--c-blocked)" } as React.CSSProperties}>
-            <i />
-            {scope.blocked} blocked
-          </span>
-          {needs && (
-            <button
-              type="button"
-              className="chip need"
-              style={{ "--c": "var(--warn)" } as React.CSSProperties}
-              onClick={onToggleWaiting}
-              aria-expanded={showWaiting}
-              aria-label={`${waiting.length} tasks need you — show waiting tasks`}
-            >
-              <i />
-              {waiting.length} need you
-            </button>
-          )}
-        </span>
-      </div>
+            <div className="hb">{needsSection}</div>
 
-      <div className="hb">{needs ? [needsSection, claimsSection] : [claimsSection, dueSection, needsSection]}</div>
+            {composing && (
+              <section className="hcomposer" aria-label="Capture">
+                <Composer compact autoFocus onActiveChange={onComposerActive} />
+                <button type="button" className="btn ghost" onClick={onCloseComposer}>
+                  Close composer
+                </button>
+              </section>
+            )}
 
-      {composing && (
-        <section className="hcomposer" aria-label="Capture">
-          <Composer compact autoFocus onActiveChange={onComposerActive} />
-          <button type="button" className="btn ghost" onClick={onCloseComposer}>
-            Close composer
-          </button>
-        </section>
-      )}
-
-      <div className="hfoot">
-        {failed ? (
-          <div className="slot warn-fg">Could not read Relay's data · retrying</div>
-        ) : (
-          needs && due && <div className="slot">Next due {clock(due.due!.at)} · {due.title}</div>
-        )}
-        <div className="hf">
-          <span className="syncs">
-            {snap.sync.every((s) => s.state === "off") && <span>no sources connected</span>}
-            {snap.sync
-              .filter((s) => s.state !== "off")
-              .map((s) => (
-                <span key={s.name} title={s.reason ? `${s.name}: ${s.reason}` : `${s.name}: ok`}>
-                  <i className={`dot sync-${s.state}`} />
-                  {s.name}
-                </span>
-              ))}
-          </span>
-          <kbd title="Summon">{SUMMON_CHORD}</kbd>
-          <button type="button" className="btn ghost open" onClick={() => void showMainWindow()}>
-            <Icon name="ext" />
-            Open Relay
-          </button>
-        </div>
+            <div className="hfoot">
+              {failed ? (
+                <div className="slot warn-fg">Could not read Relay's data · retrying</div>
+              ) : null}
+              <div className="hf">
+                <kbd title="Summon">{SUMMON_CHORD}</kbd>
+                <button type="button" className="btn ghost open" onClick={() => void showMainWindow()}>
+                  <Icon name="ext" />
+                  Open Relay
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
-      </div>
     </DockContext.Provider>
-  );
-}
-
-const AVATAR: Record<ClaimHolder, { initials: string; color: string }> = {
-  T3: { initials: "T3", color: "var(--i1)" },
-  OpenCode: { initials: "OC", color: "var(--s3)" },
-  "Claude Code": { initials: "CC", color: "var(--i3)" },
-};
-
-/** The agent's initials; the ring is the lease left since its last progress. */
-function Avatar({ holder, stale, lease }: { holder: ClaimHolder; stale: boolean; lease: number }) {
-  const a = AVATAR[holder];
-  const c = 2 * Math.PI * 16;
-  return (
-    <span className={`av${stale ? " stale" : ""}`} style={{ "--av": a.color } as React.CSSProperties}>
-      <svg viewBox="0 0 36 36" aria-hidden>
-        <circle className="bg" cx="18" cy="18" r="16" />
-        <circle className="fg" cx="18" cy="18" r="16" strokeDasharray={`${c * lease} ${c}`} />
-      </svg>
-      {a.initials}
-      <span className="st" />
-    </span>
   );
 }
 
