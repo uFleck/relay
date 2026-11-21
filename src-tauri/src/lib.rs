@@ -216,7 +216,6 @@ fn register_hotkeys(app: &AppHandle) {
             let _ = tray.set_tooltip(Some("Relay (Ctrl+Alt+R is taken; use the tray)"));
         }
     }
-
 }
 
 /// Turns on start-on-login the first time a release build runs; the tray/OS owns it afterwards.

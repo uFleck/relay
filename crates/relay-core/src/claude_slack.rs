@@ -12,12 +12,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use thiserror::Error;
 
-
 pub const SERVER_NAME: &str = "claude.ai Slack";
 const PREFIX: &str = "mcp__claude_ai_Slack__";
 pub const SYSTEM_PROMPT: &str =
     "You execute Slack MCP tool calls exactly as instructed and nothing else.";
-
 
 pub const BATCH: usize = 8;
 const CHANNEL_LIMIT: i64 = 100;
@@ -1130,5 +1128,4 @@ mod tests {
         )));
         assert!(prompt.ends_with("the single word: done"));
     }
-
 }

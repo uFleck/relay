@@ -290,7 +290,11 @@ fn foreign_file_is_unmodified_and_rejected() {
 
     let conn = rusqlite::Connection::open(&foreign_path).unwrap();
     let body: String = conn
-        .query_row("SELECT body FROM legacy_note WHERE id = 'sentinel'", [], |row| row.get(0))
+        .query_row(
+            "SELECT body FROM legacy_note WHERE id = 'sentinel'",
+            [],
+            |row| row.get(0),
+        )
         .unwrap();
     assert_eq!(body, "keep me");
 
