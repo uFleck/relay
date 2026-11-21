@@ -96,6 +96,7 @@ Then state the commit reviewed and any follow-up package that should be opened.
 | 2026-11-21 | [Legacy MCP and task coordination cleanup (#41)](2026-11-21-legacy-mcp-cleanup.md) | `4207f8eae8fb7bf26fd00a38b1c54c3b1917ded3`, `24443157ada2586abef2228abe6ccc2acee71014` | T3 Code / hy4-flash-free | Local implementation complete; legacy routes and reviewer callers removed; live desktop/CLI cases deferred; auth removal routed to maintainer review; awaiting Opus review |
 | 2026-11-21 | [Dock + Lens styling](2026-11-21-dock-lens-styling.md) | `b2717fcaf647e01621de7537e3acf5332a131adf` | T3 Code / hy4-flash-free | Local implementation complete; provider/native acceptance deferred; awaiting Opus review |
 | 2026-11-21 | [Windows Dock summon, focus and resize](2026-11-21-windows-dock.md) | `ff4a8d5` | T3 Code / hy4-flash-free | Local implementation complete; isolated desktop smoke passed; elevated/full-screen/mixed-DPI deferred; awaiting Opus review |
+| 2026-11-21 | [v1 automatic intake removal (#40)](2026-11-21-v1-intake-removal.md) | `fc10c5281365c3de4f1021ccdde30dea74e74302`, `b902bfe00764de4629a33a396bd07a669152927a` | OpenCode / hy4-flash-free | Local implementation complete; live desktop and provider cases deferred; awaiting Opus review |
 
 The release audit is a section of the scaffold record because it audits the
 scaffold's release pipeline; it does not change the scaffold commit.
