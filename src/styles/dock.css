@@ -291,6 +291,9 @@
   position: relative;
   display: flex;
   flex-direction: column;
+  /* Keep the intrinsic height so Rust measures the real content, not the current window height.
+     The scroll viewport absorbs a native cap instead of shrinking the measured root. */
+  flex-shrink: 0;
   gap: 0;
   width: min(var(--dock-w), 100%);
   min-width: 0;

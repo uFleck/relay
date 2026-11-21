@@ -735,6 +735,9 @@ fn activate(app: &AppHandle, previous: Option<PreviousWindow>) -> Activation {
     let dock = hwnd.0 as isize;
     debug("activation step 1: SetForegroundWindow");
     if unsafe { SetForegroundWindow(hwnd.0) } != 0 && foreground_is(dock) {
+        // Top-level foreground is not enough: move focus into WebView2 so the page's input.focus()
+        // and keydown handlers (Esc, Enter) actually receive the keystrokes.
+        let _ = window.set_focus();
         return Activation::Verified;
     }
     debug("activation step 1 refused");
@@ -746,10 +749,12 @@ fn activate(app: &AppHandle, previous: Option<PreviousWindow>) -> Activation {
     if alt_tap() {
         debug("activation step 2: Alt tap");
         if unsafe { SetForegroundWindow(hwnd.0) } != 0 && foreground_is(dock) {
+            let _ = window.set_focus();
             return Activation::Verified;
         }
     }
     if attach_retry(dock, previous) {
+        let _ = window.set_focus();
         return Activation::Verified;
     }
     debug("activation refused: flash and click-to-focus hint");
@@ -813,6 +818,7 @@ fn defer_alt_tap(app: AppHandle, id: u64) {
                 attach_retry(dock_hwnd, previous)
             };
             if verified {
+                let _ = window.set_focus();
                 dock.mark_activated(id);
                 emit_focus(&handle, id, true, None);
             } else {

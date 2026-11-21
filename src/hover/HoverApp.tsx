@@ -135,7 +135,8 @@ export function HoverApp() {
     if (!content) return 0;
     const picker = content.querySelector<HTMLElement>(".ref-picker");
     const pickerHeight = picker && layoutRef.current !== "compact" ? picker.scrollHeight : 0;
-    return dockCssHeight(content.getBoundingClientRect().height, pickerHeight, layoutRef.current);
+    const measured = Math.max(content.getBoundingClientRect().height, content.scrollHeight);
+    return dockCssHeight(measured, pickerHeight, layoutRef.current);
   }, []);
 
   /** A close transition must finish before the window shrinks. Reduced motion skips the wait. */
