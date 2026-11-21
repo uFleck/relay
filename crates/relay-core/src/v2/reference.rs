@@ -46,6 +46,9 @@ pub enum ReferenceKey {
         channel_id: String,
         thread_ts: String,
         host: String,
+        /// The message in the permalink path. Presentation only: a reply link keeps its own
+        /// message here while `thread_ts` stays the shared root used for identity and caching.
+        permalink_ts: Option<String>,
     },
     Note {
         id: String,
@@ -119,9 +122,10 @@ impl ReferenceKey {
                 channel_id,
                 thread_ts,
                 host,
+                permalink_ts,
             } => format!(
                 "https://{host}/archives/{channel_id}/p{}?thread_ts={thread_ts}",
-                compact_ts(thread_ts)
+                compact_ts(permalink_ts.as_deref().unwrap_or(thread_ts))
             ),
             Self::Note { id } => format!("relay://note/{id}"),
             Self::Task { id } => format!("relay://task/{id}"),
@@ -244,11 +248,14 @@ impl ReferenceKey {
             }
             let channel_id = segments[1];
             let permalink_ts = normalize_ts(segments[2].strip_prefix('p')?)?;
-            let thread_ts = query.and_then(parse_thread_ts).unwrap_or(permalink_ts);
+            let thread_ts = query
+                .and_then(parse_thread_ts)
+                .unwrap_or_else(|| permalink_ts.clone());
             return Some(Self::Slack {
                 channel_id: channel_id.to_string(),
                 thread_ts,
                 host: host.to_string(),
+                permalink_ts: Some(permalink_ts),
             });
         }
 
@@ -305,6 +312,7 @@ impl ReferenceKey {
                     channel_id: channel.to_string(),
                     thread_ts,
                     host: "slack.com".to_string(),
+                    permalink_ts: None,
                 });
             }
         }
@@ -352,15 +360,24 @@ impl ReferenceKey {
             }
             "slack" => {
                 let (channel_id, thread_ts) = target_id.split_once('/')?;
-                let host = canonical_url
-                    .and_then(|url| url.strip_prefix("https://"))
+                let rest = canonical_url.and_then(|url| url.strip_prefix("https://"));
+                let host = rest
                     .and_then(|rest| rest.split_once('/'))
                     .map(|(host, _)| host.to_string())
                     .unwrap_or_else(|| "slack.com".to_string());
+                // The canonical URL keeps the reply message in the path; restore it as
+                // presentation only. The stored target id remains the shared root.
+                let permalink_ts = rest
+                    .and_then(|rest| rest.split_once('/'))
+                    .and_then(|(_, path)| path.split('?').next())
+                    .and_then(|path| path.rsplit('/').next())
+                    .and_then(|last| last.strip_prefix('p'))
+                    .and_then(normalize_ts);
                 Some(Self::Slack {
                     channel_id: channel_id.to_string(),
                     thread_ts: normalize_ts(thread_ts)?,
                     host,
+                    permalink_ts,
                 })
             }
             "note" => Some(Self::Note {
@@ -391,15 +408,19 @@ fn compact_ts(ts: &str) -> String {
     ts.replace('.', "")
 }
 
-/// Accept `1234567890.123456`, a compact `1234567890123456`, or reject malformed input.
+/// Accept `1731000000.123456` or a compact `1731000000123456`, inserting the decimal point
+/// before the last six digits. Validation is string-only: no floating-point conversion (which
+/// would lose precision on a microsecond timestamp) and no parse into a lossy numeric type.
 fn normalize_ts(raw: &str) -> Option<String> {
     if raw.is_empty() {
         return None;
     }
     if let Some((seconds, micros)) = raw.split_once('.') {
-        if seconds.bytes().all(|b| b.is_ascii_digit())
+        // Slack epoch seconds are ten digits in this era; microsecond precision is six digits.
+        if seconds.len() >= 10
+            && seconds.bytes().all(|b| b.is_ascii_digit())
+            && micros.len() == 6
             && micros.bytes().all(|b| b.is_ascii_digit())
-            && !micros.is_empty()
         {
             return Some(raw.to_string());
         }
@@ -408,11 +429,11 @@ fn normalize_ts(raw: &str) -> Option<String> {
     if !raw.bytes().all(|b| b.is_ascii_digit()) {
         return None;
     }
-    if raw.len() > 10 {
+    if raw.len() >= 16 {
         let split = raw.len() - 6;
         return Some(format!("{}.{}", &raw[..split], &raw[split..]));
     }
-    Some(raw.to_string())
+    None
 }
 
 fn parse_thread_ts(query: &str) -> Option<String> {
@@ -649,13 +670,21 @@ mod tests {
             channel_id: "C1".into(),
             thread_ts: "1731000000.000001".into(),
             host: "acme.slack.com".into(),
+            permalink_ts: Some("1731000000.000001".into()),
         };
         let slack_b = ReferenceKey::Slack {
             channel_id: "C1".into(),
             thread_ts: "1731000000.000001".into(),
             host: "other.slack.com".into(),
+            // A reply permalink has the same root but a different message in the path.
+            permalink_ts: Some("1731000000.000099".into()),
         };
         assert_eq!(slack_a, slack_b);
+        assert_ne!(
+            slack_a.canonical_url(),
+            slack_b.canonical_url(),
+            "the permalink is presentation, not identity"
+        );
         assert_ne!(a, slack_a);
     }
 
@@ -696,12 +725,45 @@ mod tests {
         )
         .unwrap();
         assert_eq!(key.identity(), "slack:C123/1731000000.000001");
+        // The reply's own message timestamp stays in the copied permalink; the root still
+        // travels as `thread_ts` and drives identity, so both links share one cache entry.
         assert_eq!(
             key.canonical_url(),
-            "https://acme.slack.com/archives/C123/p1731000000000001?thread_ts=1731000000.000001"
+            "https://acme.slack.com/archives/C123/p1731000000000099?thread_ts=1731000000.000001"
         );
         assert_eq!(key.display_id(Some("general")), "@#general/1731000000");
         assert!(ReferenceKey::parse_url("https://example.com/archives/C1/p123").is_none());
+    }
+
+    #[test]
+    fn slack_parent_and_reply_permalinks_share_the_root_and_malformed_stays_text() {
+        let parent =
+            ReferenceKey::parse_url("https://acme.slack.com/archives/C01/p1731000000000001")
+                .unwrap();
+        let reply = ReferenceKey::parse_url(
+            "https://acme.slack.com/archives/C01/p1731000000000099?thread_ts=1731000000.000001&cid=C01",
+        )
+        .unwrap();
+        assert_eq!(parent, reply);
+        assert_eq!(parent.identity(), "slack:C01/1731000000.000001");
+        // The reply permalink is preserved for copy and navigation while identity stays the same.
+        assert!(
+            reply
+                .canonical_url()
+                .contains("thread_ts=1731000000.000001")
+        );
+        assert!(reply.canonical_url().contains("/p1731000000000099?"));
+        assert!(ReferenceKey::parse_url("https://acme.slack.com/archives/C01/pnot-a-ts").is_none());
+        assert!(
+            ReferenceKey::parse_url("https://acme.slack.com/archives/C01/p1731000000.12345")
+                .is_none()
+        );
+        assert_eq!(
+            parse_urls("see https://acme.slack.com/archives/C01/pnot-a-ts now")
+                .urls
+                .len(),
+            0
+        );
     }
 
     #[test]

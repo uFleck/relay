@@ -28,7 +28,9 @@ describe("canonical URL parsing", () => {
       "https://acme.slack.com/archives/C1/p1731000000000099?thread_ts=1731000000.000001",
     );
     expect(slack?.identity).toBe("slack:C1/1731000000.000001");
-    expect(slack?.canonical).toContain("acme.slack.com");
+    expect(slack?.canonical).toBe(
+      "https://acme.slack.com/archives/C1/p1731000000000099?thread_ts=1731000000.000001",
+    );
     expect(parseUrlValue("https://example.com/x")).toBeNull();
   });
 

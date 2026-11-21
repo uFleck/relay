@@ -133,6 +133,7 @@ fn fresh_store_has_defaults_wal_foreign_keys_and_only_v2_tables() {
         "import_ledger",
         "settings",
         "projects",
+        "slack_thread_cache",
     ] {
         assert!(
             tables.iter().any(|name| name == required),
@@ -1756,4 +1757,113 @@ fn import_refresh_changes_only_the_reference_snapshot() {
     assert_eq!(snapshot.state.as_deref(), Some("unassigned"));
     assert_eq!(snapshot.title.as_deref(), Some("Refresh me"));
     assert!(store.import_recorded("clickup", "CU-rr").unwrap());
+}
+
+#[test]
+fn a_paused_slack_link_resumes_on_a_changed_connector_fingerprint() {
+    let dir = TempDir::new("slack-recovery-reauth");
+    let store = V2Store::open(dir.file("relay-v2.db")).unwrap();
+    let at = "2026-11-21T00:00:00.000Z";
+    store
+        .ensure_recovery(
+            &[NewRecovery {
+                key: "slack:C1/1731000000.000001".into(),
+                kind: "slack".into(),
+                target_id: "C1/1731000000.000001".into(),
+                canonical_url: "https://acme.slack.com/archives/C1/p1731000000000001".into(),
+                provider: "slack".into(),
+            }],
+            at,
+            controlled_ms(at),
+        )
+        .unwrap();
+    let target = store.due_recoveries(i64::MAX, 10).unwrap().remove(0);
+    // A signed-out connector pauses with the fingerprint Settings had published at the time.
+    let signed_out = decide_failure(
+        Some(&target),
+        &ThreadFailure::Configuration.to_provider_failure(),
+        controlled_ms(at),
+        "slack:signed-out",
+    );
+    assert!(signed_out.paused);
+    store
+        .record_recovery(&target.key, &target.updated_at, &signed_out, None, at)
+        .unwrap();
+    assert!(store.due_recoveries(i64::MAX, 10).unwrap().is_empty());
+    assert_eq!(
+        store
+            .unpause_changed_config("slack", "slack:signed-out", at, controlled_ms(at))
+            .unwrap(),
+        0,
+        "an unchanged connector status keeps the pause"
+    );
+    // Settings re-auth publishes a new status; the worker reuses the cache-first resolver on the
+    // next pass without probing authentication itself.
+    assert_eq!(
+        store
+            .unpause_changed_config("slack", "slack:signed-in", at, controlled_ms(at))
+            .unwrap(),
+        1
+    );
+    let due = store.due_recoveries(i64::MAX, 10).unwrap();
+    assert_eq!(due.len(), 1);
+    assert_eq!(due[0].kind, "slack");
+    assert_eq!(due[0].attempts, 0);
+}
+
+#[test]
+fn slack_thread_cache_is_parent_only_transactional_and_survives_reopen() {
+    let dir = TempDir::new("slack-cache");
+    let path = dir.file("relay-v2.db");
+    let store = V2Store::open(&path).unwrap();
+    assert!(
+        store
+            .slack_thread("C1", "1731000000.000001")
+            .unwrap()
+            .is_none()
+    );
+
+    let parent = CachedMessage {
+        ts: "1731000000.000001".into(),
+        author: "Pat".into(),
+        text: "parent text".into(),
+    };
+    let incomplete = SlackThread {
+        channel_id: "C1".into(),
+        thread_ts: "1731000000.000001".into(),
+        parent: parent.clone(),
+        replies: Vec::new(),
+        fetched_at: String::new(),
+    };
+    assert!(store.save_slack_thread(&incomplete).is_err());
+    assert!(
+        store
+            .slack_thread("C1", "1731000000.000001")
+            .unwrap()
+            .is_none()
+    );
+
+    let thread = SlackThread {
+        channel_id: "C1".into(),
+        thread_ts: "1731000000.000001".into(),
+        parent,
+        replies: Vec::new(),
+        fetched_at: "2026-11-21T00:00:00.000Z".into(),
+    };
+    store.save_slack_thread(&thread).unwrap();
+    let hit = store
+        .slack_thread("C1", "1731000000.000001")
+        .unwrap()
+        .unwrap();
+    assert_eq!(hit, thread, "a parent-only thread is a valid hit");
+
+    drop(store);
+    let reopened = V2Store::open(&path).unwrap();
+    assert_eq!(
+        reopened
+            .slack_thread("C1", "1731000000.000001")
+            .unwrap()
+            .unwrap(),
+        thread
+    );
 }

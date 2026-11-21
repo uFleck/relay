@@ -188,7 +188,9 @@ export function parseUrlValue(raw: string): Parsed | null {
             return {
               identity: `slack:${parts[1]}/${parent}`,
               kind: "slack",
-              canonical: `https://${host}/archives/${parts[1]}/p${parent.replace(".", "")}?thread_ts=${parent}`,
+              // Keep the pasted message (a reply keeps its own timestamp) for copy and
+              // navigation; the root travels as thread_ts and drives identity and caching.
+              canonical: `https://${host}/archives/${parts[1]}/p${permalinkTs!.replace(".", "")}?thread_ts=${parent}`,
               display: `@${parts[1]}/${parent.split(".")[0]}`,
             };
           }

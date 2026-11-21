@@ -25,6 +25,7 @@ use super::reference::{
     ReferenceAvailability, ReferenceKey, ReferenceSnapshot, V2PickerGroup, V2PickerRow,
     snapshot_needs_recovery,
 };
+use super::slack_thread::SlackThread;
 use crate::model::{from_unix_millis, new_id, now};
 
 /// One v2 migration and the SQL predicate that is true once its change is on disk.
@@ -59,6 +60,10 @@ const MIGRATIONS: &[Migration] = &[
     Migration {
         sql: include_str!("../../migrations/v2/0005_import_refresh.sql"),
         applied: "EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'import_refresh')",
+    },
+    Migration {
+        sql: include_str!("../../migrations/v2/0006_slack_thread_cache.sql"),
+        applied: "EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'slack_thread_cache')",
     },
 ];
 /// 'RELY' as an integer. A non-zero application id marks a file as ours.
@@ -122,6 +127,25 @@ impl V2Error {
 /// `BEGIN IMMEDIATE` so a failed write rolls the whole change back.
 pub struct V2Store {
     conn: Mutex<Connection>,
+    /// In-flight on-demand thread attempts by `channel/thread_ts`. This is a process-wide gate,
+    /// separate from the SQLite write lock and from Slack directory/sync guards, so a cold miss
+    /// is fetched once while the CLI runs with no database lock held.
+    thread_inflight: Mutex<HashSet<String>>,
+}
+
+/// Clears one in-flight thread key on every outcome, errors and retries included.
+pub struct ThreadGuard<'a> {
+    key: String,
+    inflight: &'a Mutex<HashSet<String>>,
+}
+
+impl Drop for ThreadGuard<'_> {
+    fn drop(&mut self) {
+        self.inflight
+            .lock()
+            .expect("relay v2 thread gate poisoned")
+            .remove(&self.key);
+    }
 }
 
 impl V2Store {
@@ -152,11 +176,30 @@ impl V2Store {
         migrate(&conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
+            thread_inflight: Mutex::new(HashSet::new()),
         })
     }
 
     pub(super) fn conn(&self) -> MutexGuard<'_, Connection> {
         self.conn.lock().expect("relay v2 store mutex poisoned")
+    }
+
+    /// Reserves an on-demand thread attempt. `None` means another caller (Dock, Notebook or the
+    /// recovery worker) already owns this thread; the caller should reuse the shared snapshot
+    /// event instead of starting a second CLI run. The set lock is released before this returns.
+    pub fn try_begin_thread(&self, channel_id: &str, thread_ts: &str) -> Option<ThreadGuard<'_>> {
+        let key = format!("{channel_id}/{thread_ts}");
+        let mut inflight = self
+            .thread_inflight
+            .lock()
+            .expect("relay v2 thread gate poisoned");
+        if !inflight.insert(key.clone()) {
+            return None;
+        }
+        Some(ThreadGuard {
+            key,
+            inflight: &self.thread_inflight,
+        })
     }
 
     // -----------------------------------------------------------------------
@@ -814,6 +857,83 @@ impl V2Store {
     }
 
     // -----------------------------------------------------------------------
+    // On-demand Slack thread cache (v2 only; no v1 episode segmentation)
+    // -----------------------------------------------------------------------
+
+    /// A verified thread hit. The connection is dropped with this call, so a caller never holds
+    /// SQLite while waiting on the `claude` process.
+    pub fn slack_thread(
+        &self,
+        channel_id: &str,
+        thread_ts: &str,
+    ) -> Result<Option<SlackThread>, V2Error> {
+        let row: Option<(Option<String>, String, String)> = self
+            .conn()
+            .query_row(
+                "SELECT parent_json, replies_json, fetched_at FROM slack_thread_cache
+                 WHERE channel_id = ?1 AND thread_ts = ?2",
+                params![channel_id, thread_ts],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()?;
+        let Some((parent_json, replies_json, fetched_at)) = row else {
+            return Ok(None);
+        };
+        let Some(parent_json) = parent_json else {
+            // An incomplete row is a miss, never a hit.
+            return Ok(None);
+        };
+        let parent = serde_json::from_str(&parent_json).map_err(|error| {
+            V2Error::InvalidInput(format!("corrupt Slack cache parent: {error}"))
+        })?;
+        let replies = serde_json::from_str(&replies_json).map_err(|error| {
+            V2Error::InvalidInput(format!("corrupt Slack cache replies: {error}"))
+        })?;
+        Ok(Some(SlackThread {
+            channel_id: channel_id.to_string(),
+            thread_ts: thread_ts.to_string(),
+            parent,
+            replies,
+            fetched_at,
+        }))
+    }
+
+    /// Commits the verified parent, ordered replies and Relay fetch time in one transaction. A
+    /// thread without a parent, or any serialization or write failure, leaves a miss.
+    pub fn save_slack_thread(&self, thread: &SlackThread) -> Result<(), V2Error> {
+        let parent_json = serde_json::to_string(&thread.parent).map_err(|error| {
+            V2Error::InvalidInput(format!("could not encode thread parent: {error}"))
+        })?;
+        let replies_json = serde_json::to_string(&thread.replies).map_err(|error| {
+            V2Error::InvalidInput(format!("could not encode thread replies: {error}"))
+        })?;
+        if thread.parent.ts.trim().is_empty() || thread.fetched_at.trim().is_empty() {
+            return Err(V2Error::InvalidInput(
+                "an incomplete Slack thread cannot be cached".into(),
+            ));
+        }
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        tx.execute(
+            "INSERT INTO slack_thread_cache (channel_id, thread_ts, parent_json, replies_json, fetched_at)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(channel_id, thread_ts) DO UPDATE SET
+                 parent_json = excluded.parent_json,
+                 replies_json = excluded.replies_json,
+                 fetched_at = excluded.fetched_at",
+            params![
+                thread.channel_id,
+                thread.thread_ts,
+                parent_json,
+                replies_json,
+                thread.fetched_at,
+            ],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    // -----------------------------------------------------------------------
     // Reference snapshots and persistent recovery
     // -----------------------------------------------------------------------
 
@@ -889,6 +1009,28 @@ impl V2Store {
         }
         tx.commit()?;
         Ok(created)
+    }
+
+    /// One recovery row by key, including paused rows. IPC resolution uses it to apply #30's
+    /// failure decision to a row it just enrolled without a second worker pass.
+    pub fn recovery_target(&self, key: &str) -> Result<Option<RecoveryTarget>, V2Error> {
+        self.conn()
+            .query_row(
+                "SELECT key, kind, target_id, canonical_url, provider, attempts,
+                        next_due_at, next_due_ms, reason, paused, paused_config, updated_at
+                 FROM ref_recovery WHERE key = ?1",
+                params![key],
+                recovery_from_row,
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    /// Removes a recovery row once the reference is readable again. Idempotent.
+    pub fn clear_recovery(&self, key: &str) -> Result<(), V2Error> {
+        self.conn()
+            .execute("DELETE FROM ref_recovery WHERE key = ?1", params![key])?;
+        Ok(())
     }
 
     /// Due, unpaused targets. The connection is dropped with this call, so the worker can await

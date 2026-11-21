@@ -221,6 +221,7 @@ export function ReferenceEditor({
     // Persist the accepted result now; this writes only a snapshot, never a Note or Task.
     void v2ReferencePick(row).catch(() => undefined);
     closePicker();
+    if (row.kind === "slack") startSlackFetch(chip);
   };
 
   /** Starts a deduplicated exact read for a known pasted or linked URL while the draft is open. */
@@ -232,6 +233,78 @@ export function ReferenceEditor({
         applyRows();
       })
       .catch(() => undefined);
+  };
+
+  /** A Slack permalink is a thread read, not a work-provider exact read. Keep the Lens open with
+      a linked "fetching…" row, then replace that row in place from the shared snapshot path. */
+  const startSlackFetch = (chip: Chip) => {
+    const pending: V2PickerRow = {
+      key: chip.key,
+      kind: "slack",
+      displayId: chip.token,
+      canonicalLink: chip.canonicalUrl,
+      availability: "ready",
+      group: "conversations",
+      title: "fetching…",
+      state: null,
+      metadata: [],
+      snapshot: {
+        title: "fetching…",
+        state: null,
+        metadata: [],
+        cachedAt: null,
+        reason: null,
+        content: null,
+        channelName: null,
+      },
+      unavailableReason: null,
+      settingsDestination: null,
+      updatedAt: new Date().toISOString(),
+      exactMatch: true,
+    };
+    clearTimers();
+    queryRef.current = "";
+    liveRef.current = [pending];
+    const next = mergeLiveRows(localRef.current, liveRef.current);
+    rowsRef.current = next;
+    setRows(next);
+    highlightRef.current = 0;
+    setHighlight(0);
+    setPickerOpen(true);
+    setProgress([
+      { provider: "slack", state: "searching", reason: null, settingsDestination: null },
+    ]);
+    void v2ReferenceExact(chip.key, chip.canonicalUrl)
+      .then((row) => {
+        const resolved = row ?? {
+          ...pending,
+          availability: "unavailable" as const,
+          title: "",
+          unavailableReason: "Slack thread is currently unreadable",
+          snapshot: {
+            ...pending.snapshot!,
+            title: null,
+            reason: "Slack thread is currently unreadable",
+          },
+        };
+        liveRef.current = mergeLiveRows(liveRef.current, [resolved]);
+        const merged = mergeLiveRows(localRef.current, liveRef.current);
+        rowsRef.current = merged;
+        setRows(merged);
+        setProgress([]);
+      })
+      .catch(() => {
+        liveRef.current = mergeLiveRows(liveRef.current, [
+          {
+            ...pending,
+            availability: "unavailable",
+            title: "",
+            unavailableReason: "Slack thread is currently unreadable",
+          },
+        ]);
+        applyRows();
+        setProgress([]);
+      });
   };
 
   const paste = async (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
@@ -262,7 +335,9 @@ export function ReferenceEditor({
       closePicker();
       for (const match of parsed.urls) {
         const chip = converted.chips.find((candidate) => candidate.key === match.key);
-        if (chip) exactRead(chip);
+        if (!chip) continue;
+        if (chip.kind === "slack") startSlackFetch(chip);
+        else exactRead(chip);
       }
     } catch {
       event.preventDefault();
@@ -297,7 +372,8 @@ export function ReferenceEditor({
     commit(next, before.length + chip.token.length + delimiter.length);
     lastConversion.current = { chip, delimiter, at: before.length + chip.token.length + delimiter.length };
     closePicker();
-    exactRead(chip);
+    if (chip.kind === "slack") startSlackFetch(chip);
+    else exactRead(chip);
     return true;
   };
 

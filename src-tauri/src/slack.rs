@@ -27,6 +27,7 @@ use tokio::sync::watch;
 use crate::hover::HoverState;
 
 mod claude;
+pub(crate) mod thread;
 
 /// Settings reuses the same Claude detection as the Slack transport.
 pub(crate) use claude::find_claude;

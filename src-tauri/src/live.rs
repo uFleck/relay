@@ -11,7 +11,7 @@ use relay_core::v2::{
 use tauri::{AppHandle, Emitter, State};
 
 use crate::commands::CommandError;
-use crate::{github, secrets};
+use crate::{github, secrets, slack};
 
 const GITHUB_KEY: &str = "github-token";
 const CLICKUP_KEY: &str = "clickup-token";
@@ -60,6 +60,13 @@ pub async fn v2_reference_exact(
     let Some(identity) = ReferenceKey::from_identity(&key, canonical_url.as_deref()) else {
         return Ok(None);
     };
+    if matches!(identity, ReferenceKey::Slack { .. }) {
+        // Slack is a cache-first thread read, not a work-provider exact read. The chip insertion
+        // path calls this same command from both Composer surfaces, so resolution starts there.
+        let resolution = slack::thread::resolve(&app, &store, &identity).await;
+        slack::thread::persist(&app, &store, &identity, &resolution).await;
+        return Ok(Some(resolution.row));
+    }
     let creds = live_credentials(&store).await;
     let Some(row) = read_exact(&identity, &creds, &now()).await.ok() else {
         return Ok(None);

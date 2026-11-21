@@ -458,10 +458,15 @@ fn credential_digest(value: Option<&str>) -> String {
     format!("{hash:016x}")
 }
 
-/// A secret-free fingerprint of a provider's current credential configuration. Recovery pauses
-/// record this value; a relevant change unpauses the work. A rotated `gh` session changes the
-/// digest even when the login name stays the same.
-pub async fn credential_fingerprint(provider: &str) -> String {
+/// A secret-free fingerprint of a provider's current configuration. Recovery pauses record this
+/// value; a relevant change unpauses the work. A rotated `gh` session changes the digest even
+/// when the login name stays the same.
+///
+/// Slack uses the connector status the Settings refresh published, not `find_claude()`
+/// alone: re-authenticating while the binary stays installed changes the cached status, so a
+/// paused thread resumes after the user refreshes Settings. The worker never probes auth
+/// itself, so scheduled attempts never become auth polling.
+pub async fn credential_fingerprint(provider: &str, cache: &ProviderCache) -> String {
     match provider {
         "github" => {
             let stored = credential_digest(secrets::v2::read(GITHUB_KEY).as_deref());
@@ -472,8 +477,22 @@ pub async fn credential_fingerprint(provider: &str) -> String {
             "v2:{}",
             credential_digest(secrets::v2::read(CLICKUP_KEY).as_deref())
         ),
+        "slack" => slack_fingerprint(cache.snapshot().get("slack")),
         other => other.to_string(),
     }
+}
+
+/// Pure, testable Slack fingerprint. Only the status published by an explicit Settings refresh
+/// (or a credential write) can change it; the binary's presence is not part of the value.
+fn slack_fingerprint(status: Option<&ProviderStatus>) -> String {
+    let raw = match status {
+        None => "slack:none".to_string(),
+        Some(status) => format!(
+            "slack:{:?}:{:?}:{:?}",
+            status.source, status.status, status.reason
+        ),
+    };
+    format!("slack:{}", credential_digest(Some(&raw)))
 }
 
 /// A stored-token credential check. No polling, discovery or reanalysis is started.
@@ -957,5 +976,28 @@ mod tests {
             credential_digest(Some(secret)),
             "stable across ticks"
         );
+    }
+
+    #[test]
+    fn slack_fingerprint_tracks_reauth_not_binary_presence() {
+        // Both statuses describe an installed Claude binary. Signing in changes only the status
+        // that an explicit Settings refresh publishes, and that must change the fingerprint so a
+        // paused Slack Reference is retried after re-auth.
+        let signed_out = ProviderStatus {
+            source: ProviderSource::ExternalSession,
+            status: ProviderState::MissingSetup,
+            reason: Some("Claude Code is not signed in.".into()),
+            last_four: None,
+        };
+        let signed_in = ProviderStatus {
+            source: ProviderSource::ExternalSession,
+            status: ProviderState::ConfiguredUnverified,
+            reason: Some("Claude is signed in. Enable the Slack connector in Claude Code.".into()),
+            last_four: None,
+        };
+        let before = slack_fingerprint(Some(&signed_out));
+        assert_eq!(before, slack_fingerprint(Some(&signed_out.clone())));
+        assert_ne!(before, slack_fingerprint(Some(&signed_in)));
+        assert_ne!(before, slack_fingerprint(None));
     }
 }

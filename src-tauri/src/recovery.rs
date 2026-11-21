@@ -61,16 +61,23 @@ async fn run_once(app: &AppHandle) {
     let at = now();
     let ms = now_ms();
 
-    // A changed credential fingerprint unpauses target work; an unchanged one keeps the pause
-    // so no request is issued against a known sign-in or configuration failure.
+    // A changed configuration fingerprint unpauses target work; an unchanged one keeps the pause
+    // so no request is issued against a known sign-in or configuration failure. Slack's value
+    // comes from the status Settings published on explicit refresh, so re-auth resumes a paused
+    // thread without this worker ever probing authentication.
+    let cache = app.state::<settings::ProviderCache>();
     let versions = [
         (
             "github".to_string(),
-            settings::credential_fingerprint("github").await,
+            settings::credential_fingerprint("github", &cache).await,
         ),
         (
             "clickup".to_string(),
-            settings::credential_fingerprint("clickup").await,
+            settings::credential_fingerprint("clickup", &cache).await,
+        ),
+        (
+            "slack".to_string(),
+            settings::credential_fingerprint("slack", &cache).await,
         ),
     ];
     for (provider, version) in &versions {
@@ -100,6 +107,48 @@ async fn run_once(app: &AppHandle) {
             &target.target_id,
             Some(&target.canonical_url),
         );
+        if target.provider == "slack" {
+            // Background retry reuses the same cache-first resolver as a chip insertion. A hit
+            // here makes no CLI call, clears the recovery row and refreshes the shared snapshot.
+            let (update, snapshot_json, recovered) = match parsed {
+                Some(identity) => {
+                    let resolution = crate::slack::thread::resolve(app, &store, &identity).await;
+                    if resolution.coalesced && resolution.thread.is_none() {
+                        // Another surface already owns this thread; its event will refresh us.
+                        in_flight.remove(&key);
+                        continue;
+                    }
+                    let snapshot_json = resolution.row.snapshot.map(|snapshot| snapshot.to_json());
+                    if resolution.thread.is_some() {
+                        (decide_success(), snapshot_json, true)
+                    } else {
+                        let failure = resolution
+                            .failure
+                            .map(|failure| failure.to_provider_failure())
+                            .unwrap_or(ProviderFailure::Unavailable);
+                        (
+                            decide_failure(Some(&target), &failure, ms, &version),
+                            None,
+                            false,
+                        )
+                    }
+                }
+                None => (
+                    decide_failure(Some(&target), &ProviderFailure::Unavailable, ms, &version),
+                    None,
+                    false,
+                ),
+            };
+            let applied = store
+                .record_recovery(&key, &expected, &update, snapshot_json.as_deref(), &now())
+                .unwrap_or(false);
+            in_flight.remove(&key);
+            if applied && recovered {
+                let _ = app.emit(REFERENCE_EVENT, key);
+                let _ = app.emit("relay://v2-change", ());
+            }
+            continue;
+        }
         let outcome = match parsed {
             Some(identity) => read_exact(&identity, &creds, &at).await,
             None => Err(ProviderFailure::Unavailable),

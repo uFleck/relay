@@ -7,6 +7,7 @@ pub mod live;
 mod model;
 pub mod recovery;
 pub mod reference;
+pub mod slack_thread;
 mod store;
 #[cfg(test)]
 mod tests;
@@ -36,4 +37,8 @@ pub use reference::{
     GithubItemKind, ReferenceAvailability, ReferenceKey, ReferenceParseResult, ReferenceSnapshot,
     UrlMatch, V2PickerGroup, V2PickerRow, known_key, parse_urls, snapshot_needs_recovery,
 };
-pub use store::{V2Error, V2Store};
+pub use slack_thread::{
+    CachedMessage, ParsedThread, SlackThread, THREAD_TIMEOUT, ThreadFailure, ThreadResolution,
+    parse_thread_full, resolve_thread, thread_request,
+};
+pub use store::{ThreadGuard, V2Error, V2Store};
