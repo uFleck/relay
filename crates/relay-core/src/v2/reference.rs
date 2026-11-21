@@ -311,6 +311,22 @@ impl ReferenceKey {
         None
     }
 
+    /// Rebuild a key from its canonical identity. The GitHub PR/issue distinction is not in
+    /// the identity, so a canonical URL is used when one is available; absent one, a direct
+    /// read can still fall back to the issues endpoint, which classifies PRs itself.
+    pub fn from_identity(identity: &str, canonical_url: Option<&str>) -> Option<Self> {
+        let (kind, rest) = identity.split_once(':')?;
+        if rest.is_empty() {
+            return None;
+        }
+        let target_id = if kind == "clickup" {
+            format!("CU-{rest}")
+        } else {
+            rest.to_string()
+        };
+        Self::from_storage(kind, &target_id, canonical_url)
+    }
+
     /// Rebuild a key from a stored `kind` plus `target_id`, accepting a canonical URL for
     /// the GitHub PR/issue distinction when the snapshot kept one.
     pub fn from_storage(kind: &str, target_id: &str, canonical_url: Option<&str>) -> Option<Self> {
@@ -506,6 +522,54 @@ impl ReferenceSnapshot {
             content: Some(raw.to_string()),
             ..Self::default()
         })
+    }
+
+    /// A provider read writes the read-only Lens fields plus the local fetch time. The
+    /// provider's own update time goes into metadata; `cached_at` is always Relay's clock.
+    pub fn from_provider(
+        title: impl Into<String>,
+        state: impl Into<String>,
+        metadata: Vec<String>,
+        cached_at: impl Into<String>,
+    ) -> Self {
+        Self {
+            title: Some(title.into()),
+            state: Some(state.into()),
+            metadata: metadata.into_iter().take(3).collect(),
+            cached_at: Some(cached_at.into()),
+            reason: None,
+            content: None,
+            channel_name: None,
+        }
+    }
+
+    pub fn to_json(&self) -> String {
+        serde_json::to_string(self).unwrap_or_else(|_| "{}".to_string())
+    }
+
+    pub fn cached_at_ms(&self) -> Option<i64> {
+        let raw = self.cached_at.as_deref()?;
+        let parsed =
+            time::OffsetDateTime::parse(raw, &time::format_description::well_known::Rfc3339)
+                .ok()?;
+        Some((parsed.unix_timestamp_nanos() / 1_000_000) as i64)
+    }
+}
+
+/// A Reference needs background recovery when it has no snapshot, carries an unreadable
+/// reason, or its copy is older than `stale_after_ms`. Notes and Tasks never lose their link;
+/// this only schedules a refresh of the read-only content.
+pub fn snapshot_needs_recovery(
+    snapshot: Option<&ReferenceSnapshot>,
+    now_ms: i64,
+    stale_after_ms: i64,
+) -> bool {
+    match snapshot {
+        None => true,
+        Some(snapshot) if snapshot.reason.is_some() => true,
+        Some(snapshot) => snapshot
+            .cached_at_ms()
+            .is_none_or(|at| now_ms.saturating_sub(at) >= stale_after_ms),
     }
 }
 

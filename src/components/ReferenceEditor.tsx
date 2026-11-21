@@ -3,14 +3,27 @@ import {
   convertUrls,
   copyText,
   findMarks,
+  mergeLiveRows,
   parseUrlValue,
+  rowIndexByKey,
   restoreChip,
   type Chip,
   type EditorState,
+  type ProviderProgress,
   type V2PickerRow,
 } from "../references";
-import { v2ReferenceParse, v2ReferencePicker } from "../ipc";
+import {
+  onReferenceChange,
+  v2ReferenceExact,
+  v2ReferenceParse,
+  v2ReferencePicker,
+  v2ReferencePick,
+  v2ReferenceSearch,
+} from "../ipc";
 import { ReferencePicker } from "./ReferencePicker";
+
+const LIVE_DEBOUNCE_MS = 250;
+const SLOW_AFTER_MS = 3000;
 
 export interface ReferenceEditorProps {
   value: string;
@@ -25,7 +38,8 @@ export interface ReferenceEditorProps {
 
 /* A textarea with a decoration overlay. The textarea keeps plain chip tokens so caret,
    selection, newlines and native editing stay predictable; the overlay paints them as
-   inline chips. Copy, undo and Backspace are handled explicitly below. */
+   inline chips. Local results appear on the first keystroke; live provider results arrive after
+   two characters and a short debounce and never replace the local rows while pending. */
 export function ReferenceEditor({
   value,
   onChange,
@@ -38,6 +52,8 @@ export function ReferenceEditor({
 }: ReferenceEditorProps) {
   const [state, setState] = useState<EditorState>({ text: value, chips: [] });
   const [rows, setRows] = useState<V2PickerRow[]>([]);
+  const [progress, setProgress] = useState<ProviderProgress[]>([]);
+  const [slow, setSlow] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [highlight, setHighlight] = useState(0);
   const [errorToken, setErrorToken] = useState<string | null>(null);
@@ -47,13 +63,22 @@ export function ReferenceEditor({
   const lastPaste = useRef<{ at: number; previous: EditorState } | null>(null);
   const tokenRange = useRef<{ start: number; end: number } | null>(null);
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const generation = useRef(0);
+  const slowTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const queryRef = useRef("");
+  const localRef = useRef<V2PickerRow[]>([]);
+  const liveRef = useRef<V2PickerRow[]>([]);
+  const rowsRef = useRef<V2PickerRow[]>([]);
+  const highlightRef = useRef(0);
 
   useEffect(() => {
     if (value === state.text) return;
     setState({ text: value, chips: [] });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
+
+  useEffect(() => onReferenceChange(() => {
+    if (pickerOpen && queryRef.current) void runLocal(queryRef.current);
+  }), [pickerOpen]);
 
   const commit = (next: EditorState, caret?: number) => {
     setState(next);
@@ -68,24 +93,77 @@ export function ReferenceEditor({
     }
   };
 
+  /** Merge local and live rows without moving the highlighted key or the scroll position. */
+  const applyRows = () => {
+    const next = mergeLiveRows(localRef.current, liveRef.current);
+    const key = rowsRef.current[highlightRef.current]?.key;
+    rowsRef.current = next;
+    setRows(next);
+    const nextHighlight = rowIndexByKey(next, key);
+    highlightRef.current = nextHighlight;
+    setHighlight(nextHighlight);
+  };
+
+  const moveHighlight = (next: number) => {
+    highlightRef.current = next;
+    setHighlight(next);
+  };
+
+  const clearTimers = () => {
+    if (debounce.current) clearTimeout(debounce.current);
+    if (slowTimer.current) clearTimeout(slowTimer.current);
+    debounce.current = null;
+    slowTimer.current = null;
+  };
+
   const closePicker = () => {
-    setPickerOpen(false);
+    clearTimers();
+    queryRef.current = "";
+    localRef.current = [];
+    liveRef.current = [];
+    rowsRef.current = [];
     setRows([]);
+    setProgress([]);
+    setSlow(false);
+    setPickerOpen(false);
     setErrorToken(null);
     tokenRange.current = null;
   };
 
-  const runQuery = async (query: string, token: string) => {
-    const mine = ++generation.current;
+  const runLocal = async (query: string) => {
     try {
       const found = await v2ReferencePicker(query);
-      if (mine !== generation.current) return;
-      setRows(found);
-      setHighlight(0);
+      if (queryRef.current !== query) return;
+      localRef.current = found;
+      applyRows();
       setPickerOpen(found.length > 0 || query.length >= 2);
-      setErrorToken(found.length === 0 && query.length >= 2 ? `@${token}` : null);
+      setErrorToken(found.length === 0 && query.length >= 2 ? `@${query}` : null);
     } catch {
-      if (mine === generation.current) closePicker();
+      // A missing command must not quietly look like an empty picker.
+      if (queryRef.current === query) closePicker();
+    }
+  };
+
+  const runLive = async (query: string) => {
+    const optimistic: ProviderProgress = query.toLowerCase().startsWith("cu-")
+      ? { provider: "clickup", state: "searching", reason: null, settingsDestination: null }
+      : { provider: "github", state: "searching", reason: null, settingsDestination: null };
+    setProgress([optimistic]);
+    setSlow(false);
+    if (slowTimer.current) clearTimeout(slowTimer.current);
+    slowTimer.current = setTimeout(() => {
+      if (queryRef.current === query) setSlow(true);
+    }, SLOW_AFTER_MS);
+    try {
+      const result = await v2ReferenceSearch(query);
+      // An old response is ignored after the query changed or the picker closed. A response
+      // for the current query is accepted however late it arrives, and can retry on a new query.
+      if (queryRef.current !== query) return;
+      liveRef.current = result.rows;
+      setProgress(result.progress);
+      applyRows();
+    } catch {
+      if (queryRef.current === query) setProgress([]);
     }
   };
 
@@ -93,14 +171,22 @@ export function ReferenceEditor({
     let start = caret;
     while (start > 0 && !/\s/.test(text[start - 1])) start -= 1;
     const token = text.slice(start, caret);
-    if (debounce.current) clearTimeout(debounce.current);
+    clearTimers();
     if (!token.startsWith("@") || token.length < 2) {
       closePicker();
       return;
     }
     const bare = token.slice(1);
     tokenRange.current = { start, end: caret };
-    debounce.current = setTimeout(() => void runQuery(bare, bare), 200);
+    queryRef.current = bare;
+    liveRef.current = [];
+    localRef.current = [];
+    applyRows();
+    // Local rows are usable from the first keystroke.
+    void runLocal(bare);
+    if (bare.length >= 2) {
+      debounce.current = setTimeout(() => void runLive(bare), LIVE_DEBOUNCE_MS);
+    }
   };
 
   const changed = (text: string, caret: number) => {
@@ -132,7 +218,20 @@ export function ReferenceEditor({
       chips: existing ? state.chips : [...state.chips, chip],
     };
     commit(next, before.length + chip.token.length);
+    // Persist the accepted result now; this writes only a snapshot, never a Note or Task.
+    void v2ReferencePick(row).catch(() => undefined);
     closePicker();
+  };
+
+  /** Starts a deduplicated exact read for a known pasted or linked URL while the draft is open. */
+  const exactRead = (chip: Chip) => {
+    void v2ReferenceExact(chip.key, chip.canonicalUrl)
+      .then((row) => {
+        if (!row || !pickerOpen || queryRef.current) return;
+        liveRef.current = mergeLiveRows(liveRef.current, [row]);
+        applyRows();
+      })
+      .catch(() => undefined);
   };
 
   const paste = async (event: React.ClipboardEvent<HTMLTextAreaElement>) => {
@@ -161,6 +260,10 @@ export function ReferenceEditor({
       lastPaste.current = { at: caret, previous: state };
       commit(converted, caret);
       closePicker();
+      for (const match of parsed.urls) {
+        const chip = converted.chips.find((candidate) => candidate.key === match.key);
+        if (chip) exactRead(chip);
+      }
     } catch {
       event.preventDefault();
     }
@@ -194,6 +297,7 @@ export function ReferenceEditor({
     commit(next, before.length + chip.token.length + delimiter.length);
     lastConversion.current = { chip, delimiter, at: before.length + chip.token.length + delimiter.length };
     closePicker();
+    exactRead(chip);
     return true;
   };
 
@@ -221,17 +325,17 @@ export function ReferenceEditor({
       }
       if (event.key === "ArrowDown") {
         event.preventDefault();
-        setHighlight((current) => (rows.length ? (current + 1) % rows.length : 0));
+        moveHighlight(rows.length ? (highlightRef.current + 1) % rows.length : 0);
         return;
       }
       if (event.key === "ArrowUp") {
         event.preventDefault();
-        setHighlight((current) => (rows.length ? (current - 1 + rows.length) % rows.length : 0));
+        moveHighlight(rows.length ? (highlightRef.current - 1 + rows.length) % rows.length : 0);
         return;
       }
       if (event.key === "Enter" || event.key === "Tab") {
         event.preventDefault();
-        const row = rows[highlight];
+        const row = rows[highlightRef.current];
         if (row) insertChip(row);
         return;
       }
@@ -330,9 +434,11 @@ export function ReferenceEditor({
         <ReferencePicker
           rows={rows}
           highlight={highlight}
-          onHighlight={setHighlight}
+          onHighlight={moveHighlight}
           onPick={insertChip}
           onClose={closePicker}
+          progress={progress}
+          slow={slow}
         />
       )}
     </div>

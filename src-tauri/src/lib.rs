@@ -7,7 +7,9 @@ mod commands;
 mod github;
 mod hover;
 mod imports;
+mod live;
 mod mcp;
+mod recovery;
 mod secrets;
 mod settings;
 mod slack;
@@ -279,6 +281,9 @@ pub fn run() {
             commands::v2_composer_save,
             commands::v2_reference_picker,
             commands::v2_reference_parse,
+            live::v2_reference_search,
+            live::v2_reference_exact,
+            live::v2_reference_pick,
             commands::v2_task_assign_project,
             settings::v2_provider_status,
             settings::v2_provider_refresh,
@@ -395,6 +400,9 @@ pub fn run() {
             app.manage(v2_store);
             // Offline status only: a provider probe never runs during startup.
             settings::start(app.handle());
+            // Background Reference recovery runs against the v2 database and never touches the
+            // legacy store. It reads due rows first and releases SQLite before any network await.
+            recovery::start(app.handle().clone());
             mcp::start(app.handle().clone(), store.clone(), &dir);
             slack::start(app.handle().clone(), store.clone());
             github::start(app.handle().clone());

@@ -1264,3 +1264,256 @@ fn picker_known_typed_id_without_a_local_row_links_immediately() {
     assert_eq!(rows[0].key, "clickup:brand-new");
     assert_eq!(rows[0].display_id, "@CU-brand-new");
 }
+
+// ---------------------------------------------------------------------------
+// #30: live snapshots and persistent recovery
+// ---------------------------------------------------------------------------
+
+fn controlled_ms(raw: &str) -> i64 {
+    time::OffsetDateTime::parse(raw, &time::format_description::well_known::Rfc3339)
+        .unwrap()
+        .unix_timestamp_nanos() as i64
+        / 1_000_000
+}
+
+fn github_key() -> ReferenceKey {
+    ReferenceKey::Github {
+        owner_repo: "sample/app".into(),
+        number: 142,
+        item: super::reference::GithubItemKind::Pull,
+    }
+}
+
+fn github_reference(snapshot: Option<String>) -> PreparedReference {
+    PreparedReference {
+        kind: "github".into(),
+        target_id: "sample/app#142".into(),
+        canonical_url: "https://github.com/sample/app/pull/142".into(),
+        snapshot_json: snapshot,
+    }
+}
+
+#[test]
+fn a_picked_snapshot_survives_a_note_save_without_recovery_or_ledger_rows() {
+    let dir = TempDir::new("picked-snapshot");
+    let store = V2Store::open(dir.file("relay-v2.db")).unwrap();
+    let key = github_key();
+    let snapshot = ReferenceSnapshot::from_provider(
+        "Fix chips",
+        "open",
+        vec!["repo sample/app".into()],
+        crate::model::now(),
+    );
+    store.save_reference_snapshot(&key, &snapshot).unwrap();
+
+    // Picking alone writes no Note, Task, Import row or recovery schedule.
+    assert!(store.notebook_snapshot().unwrap().notes.is_empty());
+    assert!(store.due_recoveries(i64::MAX, 10).unwrap().is_empty());
+
+    store
+        .save_note(create(
+            "submit-picked",
+            vec![plain(
+                "see @sample/app#142",
+                vec![github_reference(Some(snapshot.to_json()))],
+            )],
+        ))
+        .unwrap();
+    let rows = store.reference_picker("@sample/app#142").unwrap();
+    assert_eq!(
+        rows[0].title, "Fix chips",
+        "the picked snapshot is preserved by COALESCE"
+    );
+    assert!(store.due_recoveries(i64::MAX, 10).unwrap().is_empty());
+    assert!(store.list_imports().unwrap().is_empty());
+    assert_eq!(store.notebook_snapshot().unwrap().notes.len(), 1);
+}
+
+#[test]
+fn one_unreadable_link_gets_one_recovery_row_that_survives_reopen() {
+    let dir = TempDir::new("recovery-reopen");
+    let path = {
+        let path = dir.file("relay-v2.db");
+        let store = V2Store::open(&path).unwrap();
+        store
+            .save_note(create(
+                "unreadable-one",
+                vec![plain("see @sample/app#142", vec![github_reference(None)])],
+            ))
+            .unwrap();
+        store
+            .save_note(create(
+                "unreadable-two",
+                vec![plain("again @sample/app#142", vec![github_reference(None)])],
+            ))
+            .unwrap();
+        let due = store.due_recoveries(i64::MAX, 10).unwrap();
+        assert_eq!(due.len(), 1, "a shared key has one row across two Notes");
+        assert_eq!(due[0].key, "github:sample/app#142");
+        assert_eq!(due[0].attempts, 0);
+
+        let at = "2026-11-21T00:00:00.000Z";
+        let now = controlled_ms(at);
+        let update = decide_failure(
+            Some(&due[0]),
+            &crate::provider::ProviderFailure::Unavailable,
+            now,
+            "v1",
+        );
+        assert!(
+            store
+                .record_recovery(&due[0].key, &due[0].updated_at, &update, None, at)
+                .unwrap()
+        );
+        let due = store.due_recoveries(i64::MAX, 10).unwrap();
+        assert_eq!(due[0].attempts, 1);
+        assert_eq!(due[0].next_due_ms, now + 30_000);
+        path
+    };
+    // A fresh connection over the same file sees the attempt count and the next due time.
+    let reopened = V2Store::open(&path).unwrap();
+    let due = reopened.due_recoveries(i64::MAX, 10).unwrap();
+    assert_eq!(due.len(), 1);
+    assert_eq!(due[0].attempts, 1);
+    assert_eq!(
+        due[0].next_due_ms,
+        controlled_ms("2026-11-21T00:00:00.000Z") + 30_000
+    );
+}
+
+#[test]
+fn a_paused_target_issues_no_request_until_the_credential_changes() {
+    let dir = TempDir::new("recovery-pause");
+    let store = V2Store::open(dir.file("relay-v2.db")).unwrap();
+    store
+        .ensure_recovery(
+            &[NewRecovery {
+                key: "clickup:8x1K2".into(),
+                kind: "clickup".into(),
+                target_id: "CU-8x1K2".into(),
+                canonical_url: "https://app.clickup.com/t/8x1K2".into(),
+                provider: "clickup".into(),
+            }],
+            "2026-11-21T00:00:00.000Z",
+            controlled_ms("2026-11-21T00:00:00.000Z"),
+        )
+        .unwrap();
+    let target = store.due_recoveries(i64::MAX, 10).unwrap().remove(0);
+    let at = "2026-11-21T00:00:01.000Z";
+    let update = decide_failure(
+        Some(&target),
+        &crate::provider::ProviderFailure::SignIn,
+        controlled_ms(at),
+        "v2:••••1234",
+    );
+    assert!(update.paused);
+    store
+        .record_recovery(&target.key, &target.updated_at, &update, None, at)
+        .unwrap();
+
+    assert!(store.due_recoveries(i64::MAX, 10).unwrap().is_empty());
+    assert_eq!(
+        store
+            .unpause_changed_config("clickup", "v2:••••1234", at, controlled_ms(at))
+            .unwrap(),
+        0,
+        "an unchanged configuration keeps the pause"
+    );
+    assert!(store.due_recoveries(i64::MAX, 10).unwrap().is_empty());
+    assert_eq!(
+        store
+            .unpause_changed_config("clickup", "v2:••••5678", at, controlled_ms(at))
+            .unwrap(),
+        1,
+        "a relevant Settings change resumes the target"
+    );
+    let due = store.due_recoveries(i64::MAX, 10).unwrap();
+    assert_eq!(due.len(), 1);
+    assert_eq!(
+        due[0].attempts, 0,
+        "a fresh configuration gets a fresh schedule"
+    );
+}
+
+#[test]
+fn successful_recovery_updates_the_snapshot_without_touching_notes_or_the_ledger() {
+    let dir = TempDir::new("recovery-success");
+    let store = V2Store::open(dir.file("relay-v2.db")).unwrap();
+    let note = store
+        .save_note(create(
+            "linked",
+            vec![plain("see @sample/app#142", vec![github_reference(None)])],
+        ))
+        .unwrap();
+    store
+        .record_import(NewImportRecord {
+            source_kind: "github".into(),
+            target_id: "sample/app#142".into(),
+            note_id: Some(note.id.clone()),
+        })
+        .unwrap();
+    let target = store.due_recoveries(i64::MAX, 10).unwrap().remove(0);
+
+    let at = "2026-11-21T00:01:00.000Z";
+    let fresh = ReferenceSnapshot::from_provider("Fixed", "open", vec![], at);
+    let update = decide_success();
+    assert!(
+        store
+            .record_recovery(
+                &target.key,
+                &target.updated_at,
+                &update,
+                Some(&fresh.to_json()),
+                at
+            )
+            .unwrap()
+    );
+    let rows = store.reference_picker("@sample/app#142").unwrap();
+    assert_eq!(rows[0].title, "Fixed");
+    assert_eq!(
+        rows[0].snapshot.as_ref().unwrap().cached_at.as_deref(),
+        Some(at)
+    );
+    assert!(store.due_recoveries(i64::MAX, 10).unwrap().is_empty());
+    assert_eq!(store.notebook_snapshot().unwrap().notes.len(), 1);
+    assert_eq!(store.list_imports().unwrap().len(), 1);
+
+    // A completion carrying an older revision cannot overwrite newer recovery data.
+    let store2 = V2Store::open(dir.file("relay-v2.db")).unwrap();
+    store2
+        .ensure_recovery(
+            &[NewRecovery {
+                key: "github:sample/app#142".into(),
+                kind: "github".into(),
+                target_id: "sample/app#142".into(),
+                canonical_url: "https://github.com/sample/app/pull/142".into(),
+                provider: "github".into(),
+            }],
+            at,
+            controlled_ms(at),
+        )
+        .unwrap();
+    let newer = store2.due_recoveries(i64::MAX, 10).unwrap().remove(0);
+    let failed = decide_failure(
+        Some(&newer),
+        &crate::provider::ProviderFailure::Unavailable,
+        controlled_ms(at),
+        "v",
+    );
+    store2
+        .record_recovery(&newer.key, &newer.updated_at, &failed, None, at)
+        .unwrap();
+    let stale = store2
+        .record_recovery(
+            &newer.key,
+            "an older completion",
+            &decide_success(),
+            Some("{}"),
+            at,
+        )
+        .unwrap();
+    assert!(!stale, "an out-of-order completion is discarded");
+    let after = store2.due_recoveries(i64::MAX, 10).unwrap();
+    assert_eq!(after.len(), 1);
+    assert_eq!(after[0].attempts, 1);
+}

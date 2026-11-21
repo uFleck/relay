@@ -124,6 +124,12 @@ pub async fn session_login() -> Option<String> {
     gh_session(false).await.and_then(|session| session.login)
 }
 
+/// The `gh` session token for v2 reads. This is the second credential in v2's precedence
+/// (after the stored v2 token, before public access); v1 discovery is never involved.
+pub async fn session_token() -> Option<String> {
+    gh_session(false).await.map(|session| session.token)
+}
+
 async fn gh_session(refresh: bool) -> Option<GhSession> {
     if !refresh {
         let cached = GH_SESSION.lock().expect("gh session").clone();

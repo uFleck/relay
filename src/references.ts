@@ -48,6 +48,46 @@ export interface V2PickerRow {
   exactMatch: boolean;
 }
 
+export type ProviderProgressState = "searching" | "ok" | "unavailable";
+
+export interface ProviderProgress {
+  provider: string;
+  state: ProviderProgressState;
+  reason: string | null;
+  settingsDestination: string | null;
+}
+
+export interface LiveQueryResult {
+  query: string;
+  rows: V2PickerRow[];
+  progress: ProviderProgress[];
+}
+
+/** Refreshes duplicates in place and appends new rows. Group order is applied later by
+    `groupRows`, so an appended row lands at the end of its own kind group. */
+export function mergeLiveRows(local: V2PickerRow[], live: V2PickerRow[]): V2PickerRow[] {
+  const out = local.slice();
+  const index = new Map(out.map((row, at) => [row.key, at]));
+  for (const row of live) {
+    const at = index.get(row.key);
+    if (at === undefined) {
+      index.set(row.key, out.length);
+      out.push(row);
+    } else {
+      out[at] = row;
+    }
+  }
+  return out;
+}
+
+/** The index a highlighted key moves to after rows are merged. Missing keys fall back to the
+    first row, so a late live response never leaves the highlight pointing past the list. */
+export function rowIndexByKey(rows: V2PickerRow[], key: string | undefined): number {
+  if (!key) return 0;
+  const at = rows.findIndex((row) => row.key === key);
+  return at >= 0 ? at : 0;
+}
+
 export interface UrlMatch {
   start: number;
   end: number;

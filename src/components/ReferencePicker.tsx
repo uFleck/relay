@@ -1,4 +1,10 @@
-import { cacheAge, groupRows, GROUP_LABEL, type V2PickerRow } from "../references";
+import {
+  cacheAge,
+  groupRows,
+  GROUP_LABEL,
+  type ProviderProgress,
+  type V2PickerRow,
+} from "../references";
 
 export interface ReferencePickerProps {
   rows: V2PickerRow[];
@@ -6,6 +12,10 @@ export interface ReferencePickerProps {
   onHighlight: (index: number) => void;
   onPick: (row: V2PickerRow) => void;
   onClose: () => void;
+  /** Provider search feedback. Local rows are always rendered beneath it. */
+  progress?: ProviderProgress[];
+  /** After roughly three seconds the spinner becomes a quiet status line. */
+  slow?: boolean;
 }
 
 /* Keyboard focus stays in the editor; the highlighted row drives the Lens on the right. */
@@ -15,6 +25,8 @@ export function ReferencePicker({
   onHighlight,
   onPick,
   onClose,
+  progress = [],
+  slow = false,
 }: ReferencePickerProps) {
   const flat = rows;
   const lens = flat[Math.min(highlight, Math.max(0, flat.length - 1))];
@@ -23,6 +35,23 @@ export function ReferencePicker({
   return (
     <div className="ref-picker" role="listbox" aria-label="References">
       <div className="ref-picker-results">
+        {progress
+          .filter((item) => item.state !== "ok")
+          .map((item) => (
+            <div className={`ref-provider ref-provider-${item.state}`} key={item.provider}>
+              <span className="ref-provider-name">{item.provider}</span>
+              <span className="ref-provider-text">
+                {item.state === "unavailable"
+                  ? item.reason ?? "Provider unavailable"
+                  : slow
+                    ? "Still searching…"
+                    : "Searching…"}
+              </span>
+              {item.state === "unavailable" && item.settingsDestination && (
+                <span className="ref-provider-destination">{item.settingsDestination}</span>
+              )}
+            </div>
+          ))}
         {groupRows(rows).map((section) => (
           <div className="ref-picker-group" key={section.group}>
             <div className="ref-picker-group-title">{GROUP_LABEL[section.group]}</div>

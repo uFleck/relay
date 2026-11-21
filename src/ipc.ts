@@ -4,7 +4,7 @@ import { mockSnapshot } from "./data/mock";
 import { sortNotes } from "./notes";
 import type { ProviderKey } from "./route";
 import { parseUrls } from "./references";
-import type { ReferenceParseResult, V2PickerRow } from "./references";
+import type { LiveQueryResult, ReferenceParseResult, V2PickerRow } from "./references";
 import type { ProposalDecision, RepoCandidate, Snapshot } from "./types";
 
 /* Typed wrappers over the Rust commands. Outside Tauri (pnpm dev in a browser), or while a command
@@ -330,6 +330,9 @@ export type {
   ReferenceAvailability,
   ReferenceParseResult,
   ReferenceSnapshot,
+  LiveQueryResult,
+  ProviderProgress,
+  ProviderProgressState,
   UrlMatch,
   V2PickerGroup,
   V2PickerRow,
@@ -346,6 +349,29 @@ export async function v2ReferenceParse(text: string): Promise<ReferenceParseResu
   if (!inTauri) return parseUrls(text);
   return await invoke<ReferenceParseResult>("v2_reference_parse", { text });
 }
+
+/** A bounded live query. Local results stay usable while this resolves; the query on the
+    result lets the picker drop a response whose query has since changed. */
+export async function v2ReferenceSearch(query: string): Promise<LiveQueryResult> {
+  if (!inTauri) return { query, rows: [], progress: [] };
+  return await invoke<LiveQueryResult>("v2_reference_search", { query });
+}
+
+/** Deduplicated exact read for a pasted or linked key. A miss leaves any cached copy in place. */
+export async function v2ReferenceExact(key: string, canonicalUrl: string | null): Promise<V2PickerRow | null> {
+  if (!inTauri) return null;
+  return await invoke<V2PickerRow | null>("v2_reference_exact", { key, canonicalUrl });
+}
+
+/** Persists an accepted live result as a read-only snapshot. No Note, Task or ledger row. */
+export async function v2ReferencePick(row: V2PickerRow): Promise<void> {
+  if (!inTauri) return;
+  await invoke<void>("v2_reference_pick", { row });
+}
+
+/** A snapshot changed (picked or recovered) in either window. */
+export const onReferenceChange = (handler: (key: string) => void) =>
+  onEvent("relay://reference-change", handler);
 
 /* Writes never fall back to a mock: a missing command or a stale revision must surface as
    an error, not as a note that looks saved. In a plain browser there is no store at all. */
@@ -683,6 +709,8 @@ interface Events {
   "relay://settings-status": import("./settings").ProviderStatusMap;
   /** A v2 setting (Import scope, project mapping, OpenCode model) was saved. */
   "relay://settings-change": null;
+  /** A picked or recovered Reference snapshot changed; the payload is its canonical key. */
+  "relay://reference-change": string;
 }
 
 /** Subscribes to an app event. Returns an unsubscribe; a no-op in the browser. */

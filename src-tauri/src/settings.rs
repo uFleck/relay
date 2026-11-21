@@ -444,6 +444,37 @@ fn publish_change(app: &AppHandle) {
     let _ = app.emit(SETTINGS_CHANGE_EVENT, ());
 }
 
+/// A stable, one-way digest of a credential. It detects a rotated or removed token without
+/// putting the token (or even a last-four mask) into a recovery row.
+fn credential_digest(value: Option<&str>) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    if let Some(value) = value {
+        for byte in value.trim().bytes() {
+            hash ^= byte as u64;
+            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    }
+    format!("{hash:016x}")
+}
+
+/// A secret-free fingerprint of a provider's current credential configuration. Recovery pauses
+/// record this value; a relevant change unpauses the work. A rotated `gh` session changes the
+/// digest even when the login name stays the same.
+pub async fn credential_fingerprint(provider: &str) -> String {
+    match provider {
+        "github" => {
+            let stored = credential_digest(secrets::v2::read(GITHUB_KEY).as_deref());
+            let session = credential_digest(github::session_token().await.as_deref());
+            format!("v2:{stored}|gh:{session}")
+        }
+        "clickup" => format!(
+            "v2:{}",
+            credential_digest(secrets::v2::read(CLICKUP_KEY).as_deref())
+        ),
+        other => other.to_string(),
+    }
+}
+
 /// A stored-token credential check. No polling, discovery or reanalysis is started.
 #[tauri::command]
 pub async fn v2_github_set_token(
@@ -846,5 +877,20 @@ mod tests {
         assert_eq!(last_four(""), None);
         assert_eq!(last_four("   "), None);
         assert_eq!(last_four("abc").as_deref(), Some("••••abc"));
+    }
+
+    #[test]
+    fn a_credential_digest_detects_rotation_without_leaking_the_value() {
+        let secret = "ghp_synthetic_value_1234";
+        let digest = credential_digest(Some(secret));
+        assert!(!digest.contains("ghp_"));
+        assert!(!digest.contains("1234"));
+        assert_ne!(digest, credential_digest(Some("ghp_synthetic_value_5678")));
+        assert_ne!(digest, credential_digest(None));
+        assert_eq!(
+            digest,
+            credential_digest(Some(secret)),
+            "stable across ticks"
+        );
     }
 }

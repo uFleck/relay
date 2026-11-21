@@ -6,7 +6,9 @@ import {
   findMarks,
   copyText,
   groupRows,
+  mergeLiveRows,
   parseUrlValue,
+  rowIndexByKey,
   parseUrls,
   restoreChip,
   type EditorState,
@@ -129,5 +131,31 @@ describe("picker row grouping and Lens age", () => {
   it("formats a cache age", () => {
     expect(cacheAge(null)).toBeNull();
     expect(cacheAge(new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString())).toBe("2h ago");
+  });
+
+  it("refreshes a duplicate in place, appends a new row and keeps the highlighted key", () => {
+    const local = [row("prs", "github:a/b#1"), row("notesTasks", "note:9")];
+    const refreshed = { ...row("prs", "github:a/b#1"), title: "now titled" };
+    const fresh = row("issues", "github:c/d#8");
+    const merged = mergeLiveRows(local, [refreshed, fresh]);
+
+    expect(merged[0].title).toBe("now titled");
+    expect(merged[1].key).toBe("note:9");
+    expect(merged[2].key).toBe("github:c/d#8");
+    expect(groupRows(merged).map((section) => section.group)).toEqual([
+      "prs",
+      "issues",
+      "notesTasks",
+    ]);
+    expect(rowIndexByKey(merged, "note:9")).toBe(1);
+    expect(rowIndexByKey(merged, "missing")).toBe(0);
+  });
+
+  it("a late duplicate refresh does not duplicate or reorder rows", () => {
+    const first = mergeLiveRows([], [row("cards", "clickup:1"), row("cards", "clickup:2")]);
+    const late = mergeLiveRows(first, [{ ...row("cards", "clickup:1"), title: "late" }]);
+    expect(late).toHaveLength(2);
+    expect(late.map((entry) => entry.key)).toEqual(["clickup:1", "clickup:2"]);
+    expect(late[0].title).toBe("late");
   });
 });

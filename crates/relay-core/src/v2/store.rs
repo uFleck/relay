@@ -17,8 +17,12 @@ use super::model::{
     V2NoteLine, V2NotebookSnapshot, V2Project, V2Reference, V2Settings, V2SettingsUpdate, V2Task,
     V2WorkspaceSnapshot, WorkspaceSearchResult,
 };
+use super::recovery::{
+    NewRecovery, RecoveryReason, RecoveryTarget, RecoveryUpdate, STALE_SNAPSHOT_MS,
+};
 use super::reference::{
     ReferenceAvailability, ReferenceKey, ReferenceSnapshot, V2PickerGroup, V2PickerRow,
+    snapshot_needs_recovery,
 };
 use crate::model::{new_id, now};
 
@@ -46,6 +50,10 @@ const MIGRATIONS: &[Migration] = &[
     Migration {
         sql: include_str!("../../migrations/v2/0003_provider_settings.sql"),
         applied: "EXISTS (SELECT 1 FROM pragma_table_info('settings') WHERE name = 'opencode_model')",
+    },
+    Migration {
+        sql: include_str!("../../migrations/v2/0004_reference_recovery.sql"),
+        applied: "EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'ref_recovery')",
     },
 ];
 /// 'RELY' as an integer. A non-zero application id marks a file as ours.
@@ -588,6 +596,177 @@ impl V2Store {
         })?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
             .map_err(Into::into)
+    }
+
+    // -----------------------------------------------------------------------
+    // Reference snapshots and persistent recovery
+    // -----------------------------------------------------------------------
+
+    /// Persists a picked live result as a read-only snapshot under its canonical identity.
+    /// This creates no Note, Task or Import ledger row; it only makes the target pickable from
+    /// local results later. A later Note save preserves this snapshot through `COALESCE`.
+    pub fn save_reference_snapshot(
+        &self,
+        key: &ReferenceKey,
+        snapshot: &ReferenceSnapshot,
+    ) -> Result<V2Reference, V2Error> {
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let at = now();
+        let kind = key.kind();
+        let target_id = key.target_id();
+        tx.execute(
+            "INSERT INTO ref_targets (id, kind, target_id, canonical_url, snapshot_json, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(kind, target_id) DO UPDATE SET
+                 canonical_url = excluded.canonical_url,
+                 snapshot_json = excluded.snapshot_json",
+            params![
+                new_id(),
+                kind,
+                target_id,
+                key.canonical_url(),
+                snapshot.to_json(),
+                at,
+            ],
+        )?;
+        let stored = tx.query_row(
+            "SELECT id, kind, target_id, canonical_url, snapshot_json
+             FROM ref_targets WHERE kind = ?1 AND target_id = ?2",
+            params![kind, target_id],
+            reference_from_row,
+        )?;
+        tx.commit()?;
+        Ok(stored)
+    }
+
+    /// Creates the single recovery row for a shared key. Repeating it across Notes, Tasks or
+    /// windows is a no-op, so a key never gets more than one schedule.
+    pub fn ensure_recovery(
+        &self,
+        new: &[NewRecovery],
+        now: &str,
+        now_ms: i64,
+    ) -> Result<usize, V2Error> {
+        if new.is_empty() {
+            return Ok(0);
+        }
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let mut created = 0;
+        for target in new {
+            let changed = tx.execute(
+                "INSERT OR IGNORE INTO ref_recovery
+                     (key, kind, target_id, canonical_url, provider, attempts,
+                      next_due_at, next_due_ms, reason, paused, paused_config, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6, ?7, NULL, 0, NULL, ?6)",
+                params![
+                    target.key,
+                    target.kind,
+                    target.target_id,
+                    target.canonical_url,
+                    target.provider,
+                    now,
+                    now_ms,
+                ],
+            )?;
+            created += changed;
+        }
+        tx.commit()?;
+        Ok(created)
+    }
+
+    /// Due, unpaused targets. The connection is dropped with this call, so the worker can await
+    /// a provider without holding the SQLite write lock.
+    pub fn due_recoveries(
+        &self,
+        now_ms: i64,
+        limit: usize,
+    ) -> Result<Vec<RecoveryTarget>, V2Error> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT key, kind, target_id, canonical_url, provider, attempts,
+                    next_due_at, next_due_ms, reason, paused, paused_config, updated_at
+             FROM ref_recovery
+             WHERE paused = 0 AND next_due_ms <= ?1
+             ORDER BY next_due_ms, key LIMIT ?2",
+        )?;
+        let rows = stmt.query_map(params![now_ms, limit as i64], recovery_from_row)?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into)
+    }
+
+    /// Paused targets are re-evaluated on startup and on a provider-status change. A change of
+    /// `config_version` (a secret-free credential fingerprint) unpauses them; an unchanged
+    /// configuration leaves them paused and issues no request.
+    pub fn unpause_changed_config(
+        &self,
+        provider: &str,
+        config_version: &str,
+        now: &str,
+        now_ms: i64,
+    ) -> Result<usize, V2Error> {
+        Ok(self.conn().execute(
+            "UPDATE ref_recovery SET paused = 0, paused_config = NULL, reason = NULL,
+                 attempts = 0, next_due_at = ?1, next_due_ms = ?2, updated_at = ?1
+             WHERE provider = ?3 AND paused = 1
+               AND (paused_config IS NULL OR paused_config <> ?4)",
+            params![now, now_ms, provider, config_version],
+        )?)
+    }
+
+    /// Applies a worker decision. `expected_updated_at` is the value the worker read; if a
+    /// newer attempt changed the row while this one was on the network, the stale completion is
+    /// discarded and `false` is returned. A successful read only touches the snapshot and the
+    /// recovery row, never Notes or the Import ledger.
+    pub fn record_recovery(
+        &self,
+        key: &str,
+        expected_updated_at: &str,
+        update: &RecoveryUpdate,
+        snapshot_json: Option<&str>,
+        now: &str,
+    ) -> Result<bool, V2Error> {
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let current: Option<String> = tx
+            .query_row(
+                "SELECT updated_at FROM ref_recovery WHERE key = ?1",
+                params![key],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if current.as_deref() != Some(expected_updated_at) {
+            // A newer completion or a config change already superseded this one.
+            return Ok(false);
+        }
+        if update.clear {
+            if let (Some((kind, target_id)), Some(json)) = (storage_identity(key), snapshot_json) {
+                tx.execute(
+                    "UPDATE ref_targets SET snapshot_json = ?1 WHERE kind = ?2 AND target_id = ?3",
+                    params![json, kind, target_id],
+                )?;
+            }
+            tx.execute("DELETE FROM ref_recovery WHERE key = ?1", params![key])?;
+        } else {
+            tx.execute(
+                "UPDATE ref_recovery SET attempts = ?2, next_due_at = ?3, next_due_ms = ?4,
+                     reason = ?5, paused = ?6, paused_config = ?7, updated_at = ?8
+                 WHERE key = ?1",
+                params![
+                    key,
+                    update.attempts,
+                    update.next_due_at,
+                    update.next_due_ms,
+                    update.reason.map(RecoveryReason::as_str),
+                    update.paused as i64,
+                    update.paused_config,
+                    now,
+                ],
+            )?;
+        }
+        tx.commit()?;
+        Ok(true)
     }
 
     // -----------------------------------------------------------------------
@@ -1341,6 +1520,38 @@ fn replace_line_refs(
                 at,
             ],
         )?;
+        // Snapshot the line's link and, atomically with the Note write, give an unreadable
+        // provider target its one durable recovery row. A picked snapshot is preserved by the
+        // COALESCE above and is fresh, so picking plus saving creates no recovery work.
+        let snapshot_json: Option<String> = tx.query_row(
+            "SELECT snapshot_json FROM ref_targets WHERE kind = ?1 AND target_id = ?2",
+            params![kind, target_id],
+            |row| row.get(0),
+        )?;
+        if matches!(kind, "github" | "clickup") {
+            let snapshot = snapshot_json.as_deref().map(ReferenceSnapshot::from_json);
+            if snapshot_needs_recovery(snapshot.as_ref(), rfc3339_ms(at), STALE_SNAPSHOT_MS) {
+                if let Some(key) =
+                    ReferenceKey::from_storage(kind, target_id, Some(&reference.canonical_url))
+                {
+                    tx.execute(
+                        "INSERT OR IGNORE INTO ref_recovery
+                             (key, kind, target_id, canonical_url, provider, attempts,
+                              next_due_at, next_due_ms, reason, paused, paused_config, updated_at)
+                         VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6, ?7, NULL, 0, NULL, ?6)",
+                        params![
+                            key.identity(),
+                            kind,
+                            target_id,
+                            reference.canonical_url,
+                            kind,
+                            at,
+                            rfc3339_ms(at),
+                        ],
+                    )?;
+                }
+            }
+        }
         let ref_id: String = tx.query_row(
             "SELECT id FROM ref_targets WHERE kind = ?1 AND target_id = ?2",
             params![kind, target_id],
@@ -1636,6 +1847,45 @@ fn task_from_row(row: &Row<'_>) -> rusqlite::Result<V2Task> {
 
 fn none_if_blank(value: Option<String>) -> Option<String> {
     value.filter(|value| !value.trim().is_empty())
+}
+
+/// The `(kind, target_id)` a canonical key maps to in `ref_targets`. The PR/issue distinction
+/// is deliberately absent: identity excludes presentation, and the storage key is the same.
+fn storage_identity(key: &str) -> Option<(&str, String)> {
+    let (kind, rest) = key.split_once(':')?;
+    if rest.is_empty() {
+        return None;
+    }
+    let target_id = if kind == "clickup" {
+        format!("CU-{rest}")
+    } else {
+        rest.to_string()
+    };
+    Some((kind, target_id))
+}
+
+fn rfc3339_ms(raw: &str) -> i64 {
+    time::OffsetDateTime::parse(raw, &time::format_description::well_known::Rfc3339)
+        .map(|value| (value.unix_timestamp_nanos() / 1_000_000) as i64)
+        .unwrap_or(0)
+}
+
+fn recovery_from_row(row: &Row<'_>) -> rusqlite::Result<RecoveryTarget> {
+    let reason: Option<String> = row.get(8)?;
+    Ok(RecoveryTarget {
+        key: row.get(0)?,
+        kind: row.get(1)?,
+        target_id: row.get(2)?,
+        canonical_url: row.get(3)?,
+        provider: row.get(4)?,
+        attempts: row.get(5)?,
+        next_due_at: row.get(6)?,
+        next_due_ms: row.get(7)?,
+        reason: reason.as_deref().and_then(RecoveryReason::parse),
+        paused: row.get::<_, i64>(9)? != 0,
+        paused_config: row.get(10)?,
+        updated_at: row.get(11)?,
+    })
 }
 
 /// A Note carries no project column. A project filter matches it through a Task's saved

@@ -105,6 +105,52 @@
   padding: 4px;
 }
 
+/* Quiet provider feedback. It is not selectable and never moves the highlighted row. */
+.ref-provider {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 8px;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 0.78em;
+}
+
+.ref-provider-name {
+  color: var(--text-secondary);
+  text-transform: capitalize;
+  flex: none;
+}
+
+.ref-provider-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.ref-provider-destination {
+  color: var(--accent-text);
+  flex: none;
+}
+
+.ref-provider-searching .ref-provider-text::before {
+  content: "◦ ";
+  animation: ref-provider-pulse 1s ease-in-out infinite;
+}
+
+.ref-provider-unavailable .ref-provider-text {
+  color: var(--err);
+}
+
+@keyframes ref-provider-pulse {
+  50% { opacity: 0.35; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ref-provider-searching .ref-provider-text::before {
+    animation: none;
+  }
+}
+
 .ref-picker-group-title {
   padding: 6px 8px 2px;
   color: var(--text-tertiary);

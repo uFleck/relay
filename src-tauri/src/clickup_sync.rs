@@ -320,6 +320,8 @@ mod tests {
             due_date: None,
             priority: None,
             url: None,
+            date_updated: None,
+            assignee_ids: Vec::new(),
         }
     }
 

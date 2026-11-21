@@ -85,6 +85,7 @@ Then state the commit reviewed and any follow-up package that should be opened.
 | 2026-11-21 | [v2 Settings, provider recovery and T3 mapping](2026-11-21-v2-settings.md) | `63ff83f5b046213de139142de3e54b3bf86f5a24` | T3 Code / hy4-flash-free | Local implementation complete; awaiting Opus review |
 | 2026-11-21 | [v2 prerequisite integration (#27 + #28)](2026-11-21-v2-prerequisite-integration.md) | `a50650005edda62a5a93d780d5c3e0293b616a78` | T3 Code / hy4-flash-free | Local implementation complete; awaiting Opus review |
 | 2026-11-21 | [Local Reference picker, Lens and URL chips](2026-11-21-local-references.md) | `6f412bb3f33cb98a0061ec15435a2a51e10ad0e3` | T3 Code / hy4-flash-free | Local implementation complete; live UI deferred; awaiting Opus review |
+| 2026-11-21 | [Live work-provider reads and persistent Reference recovery](2026-11-21-provider-references.md) | `TBD` | T3 Code / hy4-flash-free | Local implementation complete; live UI deferred; awaiting Opus review |
 
 The release audit is a section of the scaffold record because it audits the
 scaffold's release pipeline; it does not change the scaffold commit.
