@@ -272,6 +272,10 @@ export function HoverApp() {
     });
   }, [applyHeight]);
 
+  // The measurable content root only exists once both reads resolve, so the observer must attach
+  // when that happens and not only on the first mount (which renders the loading tab instead).
+  const contentReady = snap !== null && v2 !== null;
+
   useEffect(() => {
     const content = contentRef.current;
     if (!content || !inTauri) return;
@@ -285,11 +289,11 @@ export function HoverApp() {
       observer.disconnect();
       cancelAnimationFrame(frame);
     };
-  }, [applyHeight]);
+  }, [applyHeight, contentReady]);
 
   useEffect(() => {
     void applyHeight();
-  }, [dockLayout, applyHeight]);
+  }, [dockLayout, applyHeight, contentReady]);
 
   useEffect(() => {
     if (!inTauri) return;
