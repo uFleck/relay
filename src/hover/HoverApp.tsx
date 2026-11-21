@@ -8,6 +8,7 @@ import {
   dockResize,
   getSnapshot,
   inTauri,
+  onDockDpi,
   onDockFocus,
   onEvent,
   onV2Change,
@@ -259,6 +260,15 @@ export function HoverApp() {
       if (event.focused) requestAnimationFrame(() => inputRef.current?.focus());
       // Re-measure for this session: the draft may have grown while the Dock was hidden.
       void applyHeight(true);
+    });
+  }, [applyHeight]);
+
+  useEffect(() => {
+    if (!inTauri) return;
+    return onDockDpi((event) => {
+      if (sessionRef.current !== event.sessionId) return;
+      // Rust has already re-anchored to the new work area; measure once the webview has reflowed.
+      requestAnimationFrame(() => void applyHeight(true));
     });
   }, [applyHeight]);
 

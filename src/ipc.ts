@@ -103,6 +103,14 @@ export const dockDismiss = (sessionId: number, reason: "escape" | "saved") =>
 export const onDockFocus = (handler: (event: DockFocusEvent) => void) =>
   onEvent("relay://dock-focus", handler);
 
+/** A native scale-factor change moved or rescaled the work area; remeasure against the new DPI. */
+export interface DockDpiEvent {
+  sessionId: number;
+}
+
+export const onDockDpi = (handler: (event: DockDpiEvent) => void) =>
+  onEvent("relay://dock-dpi", handler);
+
 /* ── MCP ── */
 
 /** The loopback MCP server as Rust reports it; `mcp://status` carries the same shape. It holds no tokens:
@@ -722,6 +730,7 @@ interface Events {
   "relay://v2-change": string;
   "relay://state": HoverFlags;
   "relay://dock-focus": DockFocusEvent;
+  "relay://dock-dpi": DockDpiEvent;
   "mcp://status": McpStatus;
   "slack://status": SlackStatus;
   "github://status": GithubStatus;

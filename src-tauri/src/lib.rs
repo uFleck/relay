@@ -360,9 +360,14 @@ pub fn run() {
         ])
         .on_window_event(|window, event| {
             if window.label() == hover::LABEL {
-                // A native blur means the user clicked elsewhere: hide and keep the focus they chose.
-                if let WindowEvent::Focused(false) = event {
-                    hover::handle_blur(window.app_handle());
+                match event {
+                    // A native blur means the user clicked elsewhere: hide and keep their focus.
+                    WindowEvent::Focused(false) => hover::handle_blur(window.app_handle()),
+                    // Re-read the work area and scale before the page applies a new CSS height.
+                    WindowEvent::ScaleFactorChanged { .. } => {
+                        hover::handle_scale_change(window.app_handle());
+                    }
+                    _ => {}
                 }
                 return;
             }

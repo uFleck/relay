@@ -113,6 +113,20 @@ pub fn session_current(active: Option<u64>, incoming: u64) -> bool {
     active == Some(incoming)
 }
 
+/// A delayed activation attempt may only act while the foreground is still a window this session
+/// knows about: the Dock itself, or the window saved at the keypress. A click to any other app
+/// terminates the attempt instead of stealing focus back.
+pub fn deferred_attempt_allowed(
+    foreground: Option<PreviousWindow>,
+    dock: isize,
+    previous: Option<PreviousWindow>,
+) -> bool {
+    match foreground {
+        Some(front) => front.hwnd == dock || previous.is_some_and(|saved| saved == front),
+        None => false,
+    }
+}
+
 /// `SHQueryUserNotificationState` is polled on every summon. Only exclusive Direct3D full screen
 /// (3) suppresses the Dock; `QUNS_BUSY` (2) and every other state still activate. A failed query is
 /// reported as -1 and also activates.
@@ -159,6 +173,13 @@ pub struct DockFocus {
     pub visible: bool,
     pub focused: bool,
     pub hint: Option<&'static str>,
+}
+
+/// The session whose monitor geometry changed; the page remeasures its CSS height for the new DPI.
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DockDpi {
+    pub session_id: u64,
 }
 
 pub struct HoverState {
@@ -320,6 +341,20 @@ impl DockRuntime {
             }
         }
     }
+
+    /// Re-read work area and scale after a DPI change and recompute the anchored rectangle from
+    /// the last measured CSS height, before the page sends a new measurement.
+    fn refresh_geometry(&self, id: u64, area: WorkArea, scale: f64) -> Option<(Session, PhysRect)> {
+        let mut inner = self.lock();
+        let session = inner.session.as_mut()?;
+        if session.id != id {
+            return None;
+        }
+        session.area = area;
+        session.scale = scale;
+        session.rect = dock_rect(area, scale, DOCK_WIDTH_CSS, session.css_height);
+        Some((*session, session.rect))
+    }
 }
 
 /// Builds the Dock hidden at startup. It stays hidden until the hotkey summons it; the page reports
@@ -377,6 +412,8 @@ fn set_tool_style(_window: &WebviewWindow) {}
 
 /// Sent to the hover window only, so the page focuses the Composer or shows the click-to-focus hint.
 pub const FOCUS_EVENT: &str = "relay://dock-focus";
+/// Sent after a native scale-factor change so the page remeasures against the new DPI.
+pub const DPI_EVENT: &str = "relay://dock-dpi";
 
 #[tauri::command]
 pub fn hover_set_pinned(
@@ -748,26 +785,38 @@ fn defer_alt_tap(app: AppHandle, id: u64) {
             if foreground_is(dock_hwnd) {
                 return;
             }
-            if modifiers_held() {
-                debug("deferred tap: modifiers still held, skipping");
-                return;
-            }
             let previous = dock
                 .session()
                 .filter(|s| s.id == id)
                 .and_then(|s| s.previous);
-            let verified = if alt_tap() {
+            // The user may have clicked another app while the tap was deferred. That choice wins:
+            // end the session without restoring focus instead of pulling it back.
+            if !deferred_attempt_allowed(foreground_identity(), dock_hwnd, previous) {
+                debug(format!(
+                    "deferred tap: foreground changed, ending session {id}"
+                ));
+                drop(dock);
+                dismiss_native(&handle, id, Dismissal::Blur);
+                return;
+            }
+            let held = modifiers_held();
+            if held {
+                debug("deferred tap: modifiers still held, skipping Alt");
+            }
+            let verified = if !held && alt_tap() {
                 use windows_sys::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
                 debug(format!("deferred tap: retry session {id}"));
                 (unsafe { SetForegroundWindow(hwnd.0) } != 0 && foreground_is(dock_hwnd))
                     || attach_retry(dock_hwnd, previous)
             } else {
+                // SendInput is blocked by held modifiers and by UIPI; a thread attachment is not.
                 attach_retry(dock_hwnd, previous)
             };
             if verified {
                 dock.mark_activated(id);
                 emit_focus(&handle, id, true, None);
             } else {
+                // Never leave a deferred session silently unfocused: flash it and offer the hint.
                 flash(&window);
                 emit_focus(&handle, id, false, Some("click-to-focus"));
             }
@@ -1003,6 +1052,37 @@ pub fn handle_blur(app: &AppHandle) {
     }
 }
 
+/// A native scale-factor change invalidates the work area and scale captured at summon. Re-anchor
+/// from the saved foreground window before applying the new rectangle, then ask the page to
+/// remeasure. The whole operation is one synchronous `SetWindowPos` with no activation.
+pub fn handle_scale_change(app: &AppHandle) {
+    let Some(session) = app.state::<DockRuntime>().session() else {
+        return;
+    };
+    let (area, scale) = monitor_geometry(app, session.previous);
+    let Some((updated, rect)) = app
+        .state::<DockRuntime>()
+        .refresh_geometry(session.id, area, scale)
+    else {
+        return;
+    };
+    if let Some(window) = app.get_webview_window(LABEL) {
+        place(&window, rect);
+    }
+    report_geometry(0, area, scale, rect);
+    debug(format!(
+        "dpi change session {} height={} rect={rect:?}",
+        updated.id, updated.css_height
+    ));
+    let _ = app.emit_to(
+        LABEL,
+        DPI_EVENT,
+        DockDpi {
+            session_id: session.id,
+        },
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1232,6 +1312,68 @@ mod tests {
         assert!(session_current(Some(2), 2));
         assert!(!session_current(Some(2), 1));
         assert!(!session_current(None, 1));
+    }
+
+    #[test]
+    fn a_delayed_attempt_terminates_when_the_user_clicked_elsewhere() {
+        let previous = PreviousWindow {
+            hwnd: 42,
+            pid: 7,
+            tid: 9,
+        };
+        let dock = 99;
+        assert!(deferred_attempt_allowed(
+            Some(previous),
+            dock,
+            Some(previous)
+        ));
+        assert!(deferred_attempt_allowed(
+            Some(PreviousWindow {
+                hwnd: dock,
+                pid: 1,
+                tid: 2
+            }),
+            dock,
+            Some(previous)
+        ));
+        let other = PreviousWindow {
+            hwnd: 55,
+            pid: 3,
+            tid: 4,
+        };
+        assert!(!deferred_attempt_allowed(Some(other), dock, Some(previous)));
+        assert!(!deferred_attempt_allowed(None, dock, Some(previous)));
+        assert!(!deferred_attempt_allowed(Some(previous), dock, None));
+    }
+
+    #[test]
+    fn a_scale_change_keeps_the_bottom_edge_anchored() {
+        let old = dock_rect(
+            WorkArea {
+                x: 0,
+                y: 0,
+                width: 2400,
+                height: 1290,
+            },
+            1.25,
+            DOCK_WIDTH_CSS,
+            400.0,
+        );
+        let new = dock_rect(
+            WorkArea {
+                x: 0,
+                y: 0,
+                width: 2880,
+                height: 1548,
+            },
+            1.5,
+            DOCK_WIDTH_CSS,
+            400.0,
+        );
+        // The work-area bottom minus the physical margin is the same in both scales: 1270 and 1524.
+        assert_eq!(old.y + old.height, 1270);
+        assert_eq!(new.y + new.height, 1524);
+        assert_eq!(new.height, 600);
     }
 
     #[test]
