@@ -16,4 +16,5 @@ pub mod repos;
 pub mod slack;
 pub mod store;
 pub mod summaries;
+pub mod v2;
 pub mod view;

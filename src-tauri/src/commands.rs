@@ -3,6 +3,7 @@
 
 use relay_core::model::{Note, ProposalDecision, Task};
 use relay_core::store::{Store, StoreError};
+use relay_core::v2::{V2Error, V2NotebookSnapshot, V2Store};
 use relay_core::view::Snapshot;
 use serde::Serialize;
 use std::sync::Arc;
@@ -46,6 +47,21 @@ impl From<StoreError> for CommandError {
         // `ClaimConflict` already renders the holder name, claim id and lease.
         Self::new(error.kind(), error.to_string())
     }
+}
+
+impl From<V2Error> for CommandError {
+    fn from(error: V2Error) -> Self {
+        Self::new(error.kind(), error.to_string())
+    }
+}
+
+/// The v2 read boundary. It opens on an empty fresh store with typed defaults and
+/// never touches the legacy store or any credential.
+#[tauri::command(async)]
+pub fn v2_notebook_snapshot(
+    store: State<'_, Arc<V2Store>>,
+) -> Result<V2NotebookSnapshot, CommandError> {
+    Ok(store.notebook_snapshot()?)
 }
 
 /// The snapshot behind `getSnapshot()` in `src/ipc.ts`. Off the main thread, so a refresh

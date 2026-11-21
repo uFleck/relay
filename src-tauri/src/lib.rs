@@ -14,6 +14,7 @@ mod slack;
 use hover::HoverState;
 use relay_core::model::NewProject;
 use relay_core::store::Store;
+use relay_core::v2::V2Store;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
@@ -266,6 +267,7 @@ pub fn run() {
             set_dnd,
             check_for_updates,
             commands::relay_snapshot,
+            commands::v2_notebook_snapshot,
             commands::ack_change,
             commands::decide_proposal,
             commands::notes_list,
@@ -359,6 +361,10 @@ pub fn run() {
             }
             let store = Arc::new(store);
             app.manage(store.clone());
+            // v2 owns its own file and version. It has no credential dependency and
+            // never reopens or migrates the legacy database.
+            let v2_store = Arc::new(V2Store::open(dir.join("relay-v2.db"))?);
+            app.manage(v2_store);
             mcp::start(app.handle().clone(), store.clone(), &dir);
             slack::start(app.handle().clone(), store.clone());
             github::start(app.handle().clone());
