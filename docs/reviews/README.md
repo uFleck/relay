@@ -88,6 +88,7 @@ Then state the commit reviewed and any follow-up package that should be opened.
 | 2026-11-21 | [Live work-provider reads and persistent Reference recovery](2026-11-21-provider-references.md) | `a22f5c1dc9d32c74a070226e0895857bc93cc461` | T3 Code / hy4-flash-free | Local implementation complete; live UI deferred; awaiting Opus review |
 | 2026-11-21 | [Create-only Note Import](2026-11-21-create-only-note-import.md) | `7546788d07b75adbfe381b0a117b2d0c2997f27f` | T3 Code / hy4-flash-free | Local implementation complete; live UI deferred; awaiting Opus review |
 | 2026-11-21 | [Slack permalink thread resolver](2026-11-21-slack-thread-resolver.md) | `05511e6286df8eefaffc3892a9fe22b720616f91` | T3 Code / hy4-flash-free | Local implementation complete; live connector smoke deferred; awaiting Opus review |
+| 2026-11-21 | [Slack directory, frozen windows and explicit search](2026-11-21-slack-directory-windows-search.md) | `ceea936254885749412e03b0b888db16630ff04a` | T3 Code / hy4-flash-free | Local implementation complete; live connector smoke deferred; awaiting Opus review |
 
 The release audit is a section of the scaffold record because it audits the
 scaffold's release pipeline; it does not change the scaffold commit.
