@@ -881,56 +881,13 @@ pub fn retry(store: &V2Store, task_id: &str) -> Result<Option<BriefInput>, V2Err
     begin_attempt(store, task_id)
 }
 
-/// The one core readiness query for #36. `None` means at least one gate is closed.
+/// The one core readiness query for #36. `None` means at least one gate is closed. The policy
+/// lives on the store connection so a dispatch claim can recheck it inside its write transaction.
 pub fn dispatch_readiness(
     store: &V2Store,
     task_id: &str,
 ) -> Result<Option<BriefReadiness>, V2Error> {
-    let state = task_line_state(store, task_id)?;
-    if !matches!(
-        state.task.agent_mode,
-        AgentMode::Act | AgentMode::Wait | AgentMode::Grill
-    ) {
-        return Ok(None);
-    }
-    let Some(project_id) = state.task.project_id.clone() else {
-        return Ok(None);
-    };
-    if store.project_exists(&project_id)? == false {
-        return Ok(None);
-    }
-    let Some(record) = store.brief(task_id)? else {
-        return Ok(None);
-    };
-    if record.status != BriefStatus::Approved && state.task.agent_mode == AgentMode::Wait {
-        return Ok(None);
-    }
-    if !matches!(record.status, BriefStatus::Ready | BriefStatus::Approved) {
-        return Ok(None);
-    }
-    if record.source_signature != source_signature(&state.line_text, &state.references) {
-        return Ok(None);
-    }
-    // Grill adds one more gate: the exchange must have been closed by the single approval.
-    if state.task.agent_mode == AgentMode::Grill {
-        let exchange = store
-            .grill(task_id)?
-            .ok_or_else(|| V2Error::NotFound(format!("grilling exchange for {task_id}")))?;
-        if exchange.status != super::grilling::GrillStatus::Approved
-            || exchange.source_signature != record.source_signature
-        {
-            return Ok(None);
-        }
-    }
-    let Some(rendered) = record.rendered.filter(|text| !text.trim().is_empty()) else {
-        return Ok(None);
-    };
-    Ok(Some(BriefReadiness {
-        task_id: task_id.to_string(),
-        project_id,
-        brief_revision: record.revision,
-        rendered_brief: rendered,
-    }))
+    store.dispatch_readiness(task_id)
 }
 
 /// True when the saved Brief was written for a different Task line than the one on disk now.

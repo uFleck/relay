@@ -9,9 +9,14 @@ use std::{
     time::Duration,
 };
 
-use rusqlite::{Connection, OptionalExtension, Row, Transaction, TransactionBehavior, params};
+use rusqlite::{
+    Connection, ErrorCode, OptionalExtension, Row, Transaction, TransactionBehavior, params,
+};
 
-use super::briefing::{BriefContent, BriefRecord, BriefStatus, TaskLineState};
+use super::briefing::{
+    BriefContent, BriefRecord, BriefReadiness, BriefStatus, TaskLineState, source_signature,
+};
+use crate::t3_dispatch::{DispatchAttempt, DispatchState, ThreadIdentity as DispatchThreadIdentity};
 use super::grilling::{GrillEntry, GrillRecord, GrillStatus};
 use super::import::{ImportCandidate, ImportOutcome, ImportRefreshTarget, RefreshUpdate};
 use super::model::{
@@ -81,6 +86,10 @@ const MIGRATIONS: &[Migration] = &[
     Migration {
         sql: include_str!("../../migrations/v2/0009_grilling.sql"),
         applied: "EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'grills')",
+    },
+    Migration {
+        sql: include_str!("../../migrations/v2/0010_dispatch.sql"),
+        applied: "EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'dispatch_attempts')",
     },
 ];
 /// 'RELY' as an integer. A non-zero application id marks a file as ours.
@@ -642,6 +651,280 @@ impl V2Store {
         let updated = task_by_id(&tx, task_id)?;
         tx.commit()?;
         Ok(updated)
+    }
+
+    // -----------------------------------------------------------------------
+    // T3 dispatch (#36)
+    // -----------------------------------------------------------------------
+
+    /// The one readiness read. It takes a connection so the dispatch claim can recheck the exact
+    /// same gates inside its write transaction; the free function in `briefing` is a thin wrapper.
+    pub fn dispatch_readiness(&self, task_id: &str) -> Result<Option<BriefReadiness>, V2Error> {
+        dispatch_readiness_in(&self.conn(), task_id)
+    }
+
+    /// Atomically rechecks readiness, mapping and closure, then reserves one attempt. Returning
+    /// `None` is the single-flight answer: a losing caller must not start a child process.
+    pub fn claim_dispatch(
+        &self,
+        attempt: &DispatchAttempt,
+        expected: &BriefReadiness,
+    ) -> Result<Option<DispatchAttempt>, V2Error> {
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let ready = dispatch_readiness_in(&tx, &attempt.task_id)?;
+        let unchanged = ready.as_ref().is_some_and(|readiness| {
+            readiness.task_id == expected.task_id
+                && readiness.project_id == expected.project_id
+                && readiness.brief_revision == expected.brief_revision
+                && readiness.rendered_brief == expected.rendered_brief
+        });
+        if !unchanged {
+            return Ok(None);
+        }
+        let open: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM dispatch_attempts
+              WHERE task_id = ?1 AND state IN ('launching','reconcile_required','bound'))",
+            params![attempt.task_id],
+            |row| row.get(0),
+        )?;
+        if open {
+            return Ok(None);
+        }
+        let mapping: Option<String> = tx
+            .query_row(
+                "SELECT t3_target FROM projects WHERE id = ?1",
+                params![attempt.project_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if mapping.as_deref() != Some(attempt.project_selector.as_str()) {
+            return Ok(None);
+        }
+        match insert_dispatch_attempt(&tx, attempt) {
+            Ok(()) => {
+                tx.commit()?;
+                Ok(Some(attempt.clone()))
+            }
+            // Another caller won the partial unique index between the read and the insert.
+            Err(rusqlite::Error::SqliteFailure(error, _))
+                if error.code == ErrorCode::ConstraintViolation =>
+            {
+                Ok(None)
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    /// One attempt by id, for verifying an identity before it is bound.
+    pub fn dispatch_attempt(&self, attempt_id: &str) -> Result<Option<DispatchAttempt>, V2Error> {
+        dispatch_attempt_by_id(&self.conn(), attempt_id)
+    }
+
+    /// The newest attempt for a Task, including a known failure. Drives the Task sheet view.
+    pub fn latest_dispatch_attempt(
+        &self,
+        task_id: &str,
+    ) -> Result<Option<DispatchAttempt>, V2Error> {
+        let conn = self.conn();
+        Ok(conn
+            .query_row(
+                "SELECT attempt_id, task_id, project_id, project_selector, t3_data_dir,
+                        frozen_line, brief_revision, base_ref, title, state, thread_id,
+                        run_id, thread_url, failure_reason, created_at, updated_at
+                 FROM dispatch_attempts WHERE task_id = ?1
+                 ORDER BY created_at DESC, attempt_id DESC LIMIT 1",
+                params![task_id],
+                dispatch_attempt_from_row,
+            )
+            .optional()?)
+    }
+
+    /// Every attempt that still fences a Task. Startup turns `launching` into
+    /// `reconcile_required`, so the returned rows are all uncertain and read-only recoverable.
+    pub fn open_dispatch_attempts(&self) -> Result<Vec<DispatchAttempt>, V2Error> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT attempt_id, task_id, project_id, project_selector, t3_data_dir,
+                    frozen_line, brief_revision, base_ref, title, state, thread_id,
+                    run_id, thread_url, failure_reason, created_at, updated_at
+             FROM dispatch_attempts
+             WHERE state IN ('launching','reconcile_required')
+             ORDER BY created_at ASC, attempt_id ASC",
+        )?;
+        Ok(stmt
+            .query_map([], dispatch_attempt_from_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Ready Tasks that never reserved an attempt. Startup starts only these; a Task with a known
+    /// failure is deliberately excluded so it waits for the user's manual Retry.
+    pub fn tasks_without_dispatch(&self) -> Result<Vec<String>, V2Error> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT t.id FROM tasks t
+             WHERE t.status = 'briefing'
+               AND NOT EXISTS (SELECT 1 FROM dispatch_attempts d WHERE d.task_id = t.id)
+             ORDER BY t.created_at ASC, t.id ASC",
+        )?;
+        Ok(stmt
+            .query_map([], |row| row.get(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Transitions an attempt only from the listed states and mirrors the resulting Task status
+    /// in the same transaction. A stale result from another attempt cannot move the Task.
+    #[allow(clippy::too_many_arguments)]
+    pub fn finish_dispatch(
+        &self,
+        attempt_id: &str,
+        from: &[DispatchState],
+        to: DispatchState,
+        identity: Option<&DispatchThreadIdentity>,
+        failure_reason: Option<String>,
+        task_status: TaskStatus,
+        pending_action: Option<String>,
+    ) -> Result<Option<DispatchAttempt>, V2Error> {
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let Some(mut attempt) = dispatch_attempt_by_id(&tx, attempt_id)? else {
+            return Ok(None);
+        };
+        if !from.contains(&attempt.state) {
+            return Ok(None);
+        }
+        if let Some(identity) = identity {
+            if attempt
+                .thread_id
+                .as_deref()
+                .is_some_and(|saved| saved != identity.thread_id)
+            {
+                return Ok(None);
+            }
+            attempt.thread_id = Some(identity.thread_id.clone());
+            attempt.run_id = Some(identity.run_id.clone());
+            attempt.thread_url = Some(identity.link.clone());
+            attempt.failure_reason = None;
+        }
+        attempt.state = to;
+        attempt.failure_reason = failure_reason.or(attempt.failure_reason);
+        attempt.updated_at = now();
+        let result = tx.execute(
+            "UPDATE dispatch_attempts SET state = ?2, thread_id = ?3, run_id = ?4,
+                 thread_url = ?5, failure_reason = ?6, updated_at = ?7 WHERE attempt_id = ?1",
+            params![
+                attempt_id,
+                attempt.state.as_str(),
+                attempt.thread_id,
+                attempt.run_id,
+                attempt.thread_url,
+                attempt.failure_reason,
+                attempt.updated_at,
+            ],
+        );
+        if let Err(rusqlite::Error::SqliteFailure(error, _)) = result
+            && error.code == ErrorCode::ConstraintViolation
+        {
+            // The thread id is already bound to another Task.
+            return Err(V2Error::InvalidInput(
+                "that T3 thread is already linked to another Task".into(),
+            ));
+        }
+        result?;
+        tx.execute(
+            "UPDATE tasks SET status = ?2, thread_url = ?3, failure_stage = ?4,
+                 failure_reason = ?5, pending_action = ?6, updated_at = ?7 WHERE id = ?1",
+            params![
+                attempt.task_id,
+                task_status.as_str(),
+                attempt.thread_url,
+                (task_status == TaskStatus::Failed).then(|| crate::t3_dispatch::FAILURE_STAGE),
+                attempt.failure_reason,
+                pending_action,
+                attempt.updated_at,
+            ],
+        )?;
+        tx.commit()?;
+        Ok(Some(attempt))
+    }
+
+    /// Saves a validated thread id immediately and fences the Task, before run id and link are
+    /// hydrated. The Task stays undispatched until `finish_dispatch` commits the full identity.
+    pub fn save_dispatch_thread_id(
+        &self,
+        attempt_id: &str,
+        thread_id: &str,
+    ) -> Result<Option<DispatchAttempt>, V2Error> {
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let Some(mut attempt) = dispatch_attempt_by_id(&tx, attempt_id)? else {
+            return Ok(None);
+        };
+        if !matches!(attempt.state, DispatchState::Launching | DispatchState::ReconcileRequired) {
+            return Ok(None);
+        }
+        if attempt.thread_id.as_deref().is_some_and(|saved| saved != thread_id) {
+            return Ok(None);
+        }
+        let at = now();
+        attempt.thread_id = Some(thread_id.to_string());
+        attempt.state = DispatchState::ReconcileRequired;
+        attempt.failure_reason = Some(
+            "The T3 thread was created but its full identity is still being confirmed.".into(),
+        );
+        attempt.updated_at = at.clone();
+        let result = tx.execute(
+            "UPDATE dispatch_attempts SET state = ?2, thread_id = ?3, failure_reason = ?4,
+                 updated_at = ?5 WHERE attempt_id = ?1",
+            params![attempt_id, attempt.state.as_str(), thread_id, attempt.failure_reason, at],
+        );
+        if let Err(rusqlite::Error::SqliteFailure(error, _)) = result
+            && error.code == ErrorCode::ConstraintViolation
+        {
+            return Err(V2Error::InvalidInput(
+                "that T3 thread is already linked to another Task".into(),
+            ));
+        }
+        result?;
+        tx.execute(
+            "UPDATE tasks SET failure_stage = ?2, failure_reason = ?3,
+                 pending_action = ?4, updated_at = ?5 WHERE id = ?1",
+            params![
+                attempt.task_id,
+                crate::t3_dispatch::FAILURE_STAGE,
+                attempt.failure_reason,
+                "Confirming the new T3 thread…",
+                at,
+            ],
+        )?;
+        tx.commit()?;
+        Ok(Some(attempt))
+    }
+
+    /// A child process abandoned by a restart may have started a thread. Mark it uncertain so
+    /// startup reconciliation is mandatory and no fresh start can be attempted.
+    pub fn mark_launches_unresolved(&self) -> Result<usize, V2Error> {
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let at = now();
+        let count = tx.execute(
+            "UPDATE dispatch_attempts SET state = 'reconcile_required',
+                 failure_reason = 'Relay restarted before the T3 start result was confirmed.',
+                 updated_at = ?1 WHERE state = 'launching'",
+            params![at],
+        )?;
+        if count > 0 {
+            tx.execute(
+                "UPDATE tasks SET failure_stage = ?1,
+                     failure_reason = 'Relay restarted before the T3 start result was confirmed.',
+                     pending_action = 'Check again or link the existing T3 thread.', updated_at = ?2
+                 WHERE id IN (SELECT task_id FROM dispatch_attempts
+                              WHERE state = 'reconcile_required' AND updated_at = ?2)",
+                params![crate::t3_dispatch::FAILURE_STAGE, at],
+            )?;
+        }
+        tx.commit()?;
+        Ok(count)
     }
 
     // -----------------------------------------------------------------------
@@ -2792,6 +3075,157 @@ fn task_by_id(conn: &Connection, id: &str) -> Result<V2Task, V2Error> {
         references: refs_for(conn, "task_refs", "task_id", id)?,
         ..row
     })
+}
+
+const DISPATCH_COLUMNS: &str = "attempt_id, task_id, project_id, project_selector, t3_data_dir, \
+     frozen_line, brief_revision, base_ref, title, state, thread_id, run_id, thread_url, \
+     failure_reason, created_at, updated_at";
+
+fn dispatch_attempt_from_row(row: &Row<'_>) -> rusqlite::Result<DispatchAttempt> {
+    let state: String = row.get("state")?;
+    Ok(DispatchAttempt {
+        attempt_id: row.get("attempt_id")?,
+        task_id: row.get("task_id")?,
+        project_id: row.get("project_id")?,
+        project_selector: row.get("project_selector")?,
+        t3_data_dir: row.get("t3_data_dir")?,
+        frozen_line: row.get("frozen_line")?,
+        brief_revision: row.get("brief_revision")?,
+        base_ref: row.get("base_ref")?,
+        title: row.get("title")?,
+        state: DispatchState::parse(&state).unwrap_or(DispatchState::ReconcileRequired),
+        thread_id: row.get("thread_id")?,
+        run_id: row.get("run_id")?,
+        thread_url: row.get("thread_url")?,
+        failure_reason: row.get("failure_reason")?,
+        created_at: row.get("created_at")?,
+        updated_at: row.get("updated_at")?,
+    })
+}
+
+fn dispatch_attempt_by_id(
+    conn: &Connection,
+    attempt_id: &str,
+) -> Result<Option<DispatchAttempt>, V2Error> {
+    Ok(conn
+        .query_row(
+            &format!(
+                "SELECT {DISPATCH_COLUMNS} FROM dispatch_attempts WHERE attempt_id = ?1"
+            ),
+            params![attempt_id],
+            dispatch_attempt_from_row,
+        )
+        .optional()?)
+}
+
+fn insert_dispatch_attempt(tx: &Transaction<'_>, attempt: &DispatchAttempt) -> rusqlite::Result<()> {
+    tx.execute(
+        "INSERT INTO dispatch_attempts
+             (attempt_id, task_id, project_id, project_selector, t3_data_dir, frozen_line,
+              brief_revision, base_ref, title, state, thread_id, run_id, thread_url,
+              failure_reason, created_at, updated_at)
+          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+        params![
+            attempt.attempt_id,
+            attempt.task_id,
+            attempt.project_id,
+            attempt.project_selector,
+            attempt.t3_data_dir,
+            attempt.frozen_line,
+            attempt.brief_revision,
+            attempt.base_ref,
+            attempt.title,
+            attempt.state.as_str(),
+            attempt.thread_id,
+            attempt.run_id,
+            attempt.thread_url,
+            attempt.failure_reason,
+            attempt.created_at,
+            attempt.updated_at,
+        ],
+    )?;
+    Ok(())
+}
+
+/// The readiness policy, shared by the Task view and the dispatch claim. Keeping it on a
+/// connection lets the claim recheck the exact same gates in one `BEGIN IMMEDIATE` transaction.
+fn dispatch_readiness_in(
+    conn: &Connection,
+    task_id: &str,
+) -> Result<Option<BriefReadiness>, V2Error> {
+    let task = task_by_id(conn, task_id)?;
+    if !matches!(
+        task.agent_mode,
+        AgentMode::Act | AgentMode::Wait | AgentMode::Grill
+    ) {
+        return Ok(None);
+    }
+    let Some(project_id) = task.project_id.clone() else {
+        return Ok(None);
+    };
+    let exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM projects WHERE id = ?1)",
+        params![project_id],
+        |row| row.get(0),
+    )?;
+    if !exists {
+        return Ok(None);
+    }
+    let line_text: String = conn.query_row(
+        "SELECT text FROM note_lines WHERE id = ?1",
+        params![task.source_line_id],
+        |row| row.get(0),
+    )?;
+    let references = refs_for(conn, "task_refs", "task_id", task_id)?;
+    let record: Option<BriefRecord> = conn
+        .query_row(
+            "SELECT task_id, revision, source_signature, status, content_json, rendered,
+                    link_only_refs, wait_approval_revision, attempt_id, rewrite_instruction,
+                    failure_stage, failure_reason, created_at, updated_at
+             FROM briefs WHERE task_id = ?1",
+            params![task_id],
+            brief_from_row,
+        )
+        .optional()?;
+    let Some(record) = record else {
+        return Ok(None);
+    };
+    if record.status != BriefStatus::Approved && task.agent_mode == AgentMode::Wait {
+        return Ok(None);
+    }
+    if !matches!(record.status, BriefStatus::Ready | BriefStatus::Approved) {
+        return Ok(None);
+    }
+    if record.source_signature != source_signature(&line_text, &references) {
+        return Ok(None);
+    }
+    if task.agent_mode == AgentMode::Grill {
+        let exchange: Option<GrillRecord> = conn
+            .query_row(
+                "SELECT task_id, revision, source_signature, status, attempt_id, question,
+                        transcript, reference_ids, failure_stage, failure_reason,
+                        created_at, updated_at
+                 FROM grills WHERE task_id = ?1 ORDER BY revision DESC LIMIT 1",
+                params![task_id],
+                grill_from_row,
+            )
+            .optional()?;
+        let closed = exchange.as_ref().is_some_and(|grill| {
+            grill.status == GrillStatus::Approved && grill.source_signature == record.source_signature
+        });
+        if !closed {
+            return Ok(None);
+        }
+    }
+    let Some(rendered) = record.rendered.filter(|text| !text.trim().is_empty()) else {
+        return Ok(None);
+    };
+    Ok(Some(BriefReadiness {
+        task_id: task_id.to_string(),
+        project_id,
+        brief_revision: record.revision,
+        rendered_brief: rendered,
+    }))
 }
 
 fn parse_grill_turn(value: Option<String>) -> Result<Option<GrillTurn>, V2Error> {
