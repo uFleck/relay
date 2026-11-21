@@ -3,11 +3,13 @@
 
 use relay_core::model::{Note, ProposalDecision, Task};
 use relay_core::store::{Store, StoreError};
-use relay_core::v2::{V2Error, V2NotebookSnapshot, V2Store};
+use relay_core::v2::{
+    ComposerSaveRequest, V2Error, V2Note, V2NotebookSnapshot, V2Store, V2Task, composer,
+};
 use relay_core::view::Snapshot;
 use serde::Serialize;
 use std::sync::Arc;
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::github::{self, GithubState};
@@ -55,6 +57,10 @@ impl From<V2Error> for CommandError {
     }
 }
 
+/// Sent to both windows after a committed v2 write, so a Dock submission refreshes the
+/// main Notebook without waiting for focus or a timer.
+pub const V2_CHANGE_EVENT: &str = "relay://v2-change";
+
 /// The v2 read boundary. It opens on an empty fresh store with typed defaults and
 /// never touches the legacy store or any credential.
 #[tauri::command(async)]
@@ -62,6 +68,32 @@ pub fn v2_notebook_snapshot(
     store: State<'_, Arc<V2Store>>,
 ) -> Result<V2NotebookSnapshot, CommandError> {
     Ok(store.notebook_snapshot()?)
+}
+
+/// Parses and saves a Composer submission. The core owns parsing, project inference and the
+/// guarded write; this command only reports the saved aggregate and announces the change.
+#[tauri::command(async)]
+pub fn v2_composer_save(
+    request: ComposerSaveRequest,
+    app: AppHandle,
+    store: State<'_, Arc<V2Store>>,
+) -> Result<V2Note, CommandError> {
+    let saved = composer::save_submission(&store, request)?;
+    let _ = app.emit(V2_CHANGE_EVENT, saved.id.clone());
+    Ok(saved)
+}
+
+/// Names a project for an unassigned Task. A repeat of the same choice is a no-op.
+#[tauri::command(async)]
+pub fn v2_task_assign_project(
+    task_id: String,
+    project_id: String,
+    app: AppHandle,
+    store: State<'_, Arc<V2Store>>,
+) -> Result<V2Task, CommandError> {
+    let task = store.assign_task_project(&task_id, &project_id)?;
+    let _ = app.emit(V2_CHANGE_EVENT, task.note_id.clone());
+    Ok(task)
 }
 
 /// The snapshot behind `getSnapshot()` in `src/ipc.ts`. Off the main thread, so a refresh

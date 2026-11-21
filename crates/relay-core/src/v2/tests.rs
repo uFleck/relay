@@ -195,10 +195,8 @@ fn round_trip_persists_lines_tasks_references_settings_project_and_ledger() {
         .unwrap();
     assert_eq!(saved.revision, 1);
     assert_eq!(saved.source, "composer");
-    assert_eq!(
-        saved.body,
-        "a plain thought\n!ship the fix\n??think it through"
-    );
+    // Only plain lines are Note prose; directive lines stay as raw editable lines and Tasks.
+    assert_eq!(saved.body, "a plain thought");
     assert_eq!(saved.lines.len(), 3);
     assert_eq!(saved.tasks.len(), 2);
     assert_eq!(saved.tasks[0].status, TaskStatus::Briefing);

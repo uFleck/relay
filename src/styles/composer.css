@@ -1,0 +1,203 @@
+/* Shared Composer styling. Every size is relative to its host so the same component fits
+   both the Notes capture pane and the bounded hover panel. */
+
+.composer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.composer-input,
+.composer-line-input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--border-default);
+  border-radius: var(--r);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  font: inherit;
+  padding: 8px 10px;
+  outline: none;
+}
+
+.composer-input:focus,
+.composer-line-input:focus {
+  border-color: var(--accent);
+  box-shadow: var(--ring);
+}
+
+.composer-input {
+  min-height: 64px;
+  max-height: 160px;
+  resize: vertical;
+  overflow: auto;
+  line-height: 1.45;
+}
+
+/* The hover sizes its window from the DOM, so its input must never grow past the panel. */
+.hov .composer-input {
+  max-height: 104px;
+  resize: none;
+  overflow: auto;
+}
+
+.composer-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: 180px;
+  overflow: auto;
+  min-width: 0;
+}
+
+.composer-line {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.composer-line-input {
+  flex: 1;
+  min-width: 0;
+  height: 34px;
+}
+
+.composer-err {
+  color: var(--err);
+  font-size: 0.85em;
+  overflow-wrap: anywhere;
+}
+
+.composer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.composer-actions .meta {
+  flex: 1;
+  min-width: 0;
+}
+
+.composer.compact .composer-actions .meta {
+  display: none;
+}
+
+/* v2 capture pane on the Notes route */
+.v2-capture {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border-default);
+  max-height: 55%;
+  overflow: auto;
+  box-sizing: border-box;
+}
+
+.v2-capture-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.v2-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.v2-note {
+  border: 1px solid var(--border-default);
+  border-radius: var(--r);
+  background: var(--bg-surface);
+  padding: 8px 10px;
+  min-width: 0;
+}
+
+.v2-note-head,
+.v2-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.v2-note-head {
+  justify-content: space-between;
+}
+
+.v2-line {
+  flex-direction: column;
+  align-items: stretch;
+  padding: 4px 0;
+}
+
+.v2-line-text {
+  overflow-wrap: anywhere;
+}
+
+.v2-refs {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+
+.v2-ref {
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-family: var(--font-mono);
+  font-size: 0.8em;
+  padding: 1px 7px;
+}
+
+.v2-task {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  border-left: 2px solid var(--accent);
+  padding: 3px 6px;
+  min-width: 0;
+}
+
+.v2-task.mode-act {
+  border-left-color: var(--i3);
+}
+.v2-task.mode-wait {
+  border-left-color: var(--i2);
+}
+.v2-task.mode-grill {
+  border-left-color: var(--i4);
+}
+
+.v2-sigil {
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
+
+.v2-task-line {
+  overflow-wrap: anywhere;
+}
+
+.v2-task-status {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.8em;
+}
+
+.v2-project,
+.v2-project-pick {
+  font-family: var(--font-mono);
+  font-size: 0.8em;
+}

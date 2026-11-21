@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Composer } from "../components/Composer";
 import { Icon, Mark } from "../components/Icon";
 import { ProposalCard } from "../components/ProposalCard";
 import {
   getSnapshot,
   hoverDrag,
+  hoverFocus,
   hoverPlace,
   hoverPointer,
   hoverReady,
@@ -57,14 +59,16 @@ export function HoverApp() {
   const [flags, setFlags] = useState<HoverFlags>({ pinned: false, dnd: false, paused: false, ready: false, visible: false });
   const [placement, setPlacement] = useState<{ screen: Screen; anchor: Anchor } | null>(null);
   const [pulsing, setPulsing] = useState(false);
+  const [composing, setComposing] = useState(false);
+  const composerActive = useRef(false);
   const update = useUpdater();
   const shell = useRef<HTMLDivElement>(null);
   const seen = useRef<Set<string> | null>(null);
   const collapseTimer = useRef<number | undefined>(undefined);
   const dragging = useRef(false);
   // The pointer poll and the timers read these without restarting.
-  const live = useRef({ mode, pinned: flags.pinned, dnd: flags.dnd });
-  live.current = { mode, pinned: flags.pinned, dnd: flags.dnd };
+  const live = useRef({ mode, pinned: flags.pinned, dnd: flags.dnd, composer: false });
+  live.current = { mode, pinned: flags.pinned, dnd: flags.dnd, composer: composerActive.current };
 
   const pulse = useCallback(() => {
     if (live.current.dnd) return;
@@ -131,12 +135,32 @@ export function HoverApp() {
   }, []);
 
   const scheduleCollapse = useCallback(() => {
-    if (live.current.pinned || dragging.current || collapseTimer.current !== undefined) return;
+    if (live.current.pinned || dragging.current || composerActive.current || collapseTimer.current !== undefined) return;
     collapseTimer.current = window.setTimeout(() => {
       collapseTimer.current = undefined;
-      if (!live.current.pinned) setMode("tab");
+      if (live.current.pinned || composerActive.current) return;
+      setMode("tab");
+      setComposing(false);
+      void hoverFocus(false);
     }, COLLAPSE_GRACE_MS);
   }, []);
+
+  // A click-to-compose control takes keyboard focus for the shared Composer. While it is
+  // focused or saving, the panel stays open and the hotkey keeps summoning the main window.
+  const openComposer = useCallback(() => {
+    window.clearTimeout(collapseTimer.current);
+    collapseTimer.current = undefined;
+    setMode("open");
+    setComposing(true);
+    void hoverFocus(true);
+  }, []);
+
+  const closeComposer = useCallback(() => {
+    setComposing(false);
+    composerActive.current = false;
+    void hoverFocus(false);
+    scheduleCollapse();
+  }, [scheduleCollapse]);
 
   // The webview misreports hover once focus has moved elsewhere, so in the app the page asks Rust where
   // the cursor is. Only while the window is on screen.
@@ -227,6 +251,7 @@ export function HoverApp() {
         <div
           ref={shell}
           className={`hov${fit ? " fit" : ""}`}
+          data-compose={composing ? "on" : undefined}
           onMouseEnter={inTauri ? undefined : expand}
           onMouseLeave={inTauri ? undefined : scheduleCollapse}
         >
@@ -238,6 +263,18 @@ export function HoverApp() {
             onPin={() => void togglePin()}
             onDnd={() => void toggleDnd()}
             onDrag={() => void drag()}
+            composing={composing}
+            onCompose={openComposer}
+            onCloseComposer={closeComposer}
+            onComposerActive={(active) => {
+              composerActive.current = active;
+              if (active) {
+                window.clearTimeout(collapseTimer.current);
+                collapseTimer.current = undefined;
+              } else {
+                scheduleCollapse();
+              }
+            }}
           />
         </div>
       )}
@@ -266,9 +303,25 @@ interface PanelProps {
   onPin: () => void;
   onDnd: () => void;
   onDrag: () => void;
+  composing: boolean;
+  onCompose: () => void;
+  onCloseComposer: () => void;
+  onComposerActive: (active: boolean) => void;
 }
 
-function Panel({ snap, flags, update, failed, onPin, onDnd, onDrag }: PanelProps) {
+function Panel({
+  snap,
+  flags,
+  update,
+  failed,
+  onPin,
+  onDnd,
+  onDrag,
+  composing,
+  onCompose,
+  onCloseComposer,
+  onComposerActive,
+}: PanelProps) {
   const now = useNow();
   const scope = todayScope(snap);
   const needs = scope.needsYou > 0;
@@ -340,6 +393,9 @@ function Panel({ snap, flags, update, failed, onPin, onDnd, onDrag }: PanelProps
         <b>Relay</b>
         {flags.paused && <span className="meta">capture paused</span>}
         <span className="push" />
+        <button type="button" className={`rb${composing ? " on" : ""}`} title="Capture a note" aria-pressed={composing} onClick={onCompose}>
+          <Icon name="pencil" />
+        </button>
         <button type="button" className={`rb${flags.dnd ? " on" : ""}`} title="Do not disturb" aria-pressed={flags.dnd} onClick={onDnd}>
           <Icon name="moon" />
         </button>
@@ -377,6 +433,15 @@ function Panel({ snap, flags, update, failed, onPin, onDnd, onDrag }: PanelProps
       </div>
 
       <div className="hb">{needs ? [needsSection, claimsSection] : [claimsSection, dueSection, needsSection]}</div>
+
+      {composing && (
+        <section className="hcomposer" aria-label="Capture">
+          <Composer compact autoFocus onActiveChange={onComposerActive} />
+          <button type="button" className="btn ghost" onClick={onCloseComposer}>
+            Close composer
+          </button>
+        </section>
+      )}
 
       <div className="hfoot">
         {failed ? (

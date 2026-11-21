@@ -4,6 +4,7 @@ import { createNote, deleteNote, errorText, listNotes, noteToTask, openT3, setNo
 import { composePrompt, noteLabel, PROMPT_TEMPLATES, sortNotes, type PromptTemplate } from "../notes";
 import type { Project } from "../types";
 import { Select } from "../ui/controls";
+import { V2Capture } from "./V2Capture";
 
 /* Notes: a list and an editor. Edits save on their own after a short pause; switching notes, leaving the
    view or reloading saves first. Saves run one after another so an older text never lands last. */
@@ -199,6 +200,7 @@ export function NotesView({ projects, onNotice, onTaskCreated }: Props) {
 
   return (
     <section className="main notes">
+      <V2Capture onNotice={onNotice} />
       <header className="head">
         <div>
           <h1>Notes</h1>

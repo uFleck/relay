@@ -268,6 +268,8 @@ pub fn run() {
             check_for_updates,
             commands::relay_snapshot,
             commands::v2_notebook_snapshot,
+            commands::v2_composer_save,
+            commands::v2_task_assign_project,
             commands::ack_change,
             commands::decide_proposal,
             commands::notes_list,

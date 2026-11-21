@@ -149,6 +149,22 @@ svg.i {
   height: auto;
   max-height: var(--hov-h);
 }
+/* The Composer takes its own row inside the fixed panel; the needs list shrinks instead. */
+.hov[data-compose="on"] {
+  grid-template-rows: auto auto auto minmax(0, 1fr) auto auto auto;
+}
+.hcomposer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+  overflow: hidden;
+  padding: 4px 2px;
+}
+.hcomposer .composer-input {
+  max-height: 84px;
+  resize: none;
+}
 [data-edge="left"] .hov {
   left: 0;
   right: auto;

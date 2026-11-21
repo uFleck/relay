@@ -351,9 +351,13 @@ impl V2Store {
             }
         }
 
+        // The Note body is the plain-line projection: directive lines create Tasks and keep
+        // their own frozen `original_line`, so they do not become Note prose. Every raw line
+        // (including its sigil and URL text) stays in `note_lines` for in-place editing.
         let body = write
             .lines
             .iter()
+            .filter(|line| line.task_intent.is_none())
             .map(|line| line.text.as_str())
             .collect::<Vec<_>>()
             .join("\n");

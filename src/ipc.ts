@@ -30,6 +30,12 @@ export function errorText(error: unknown) {
   return String(error);
 }
 
+/** The stable code behind a command error, used to detect a stale draft. */
+export function errorKind(error: unknown): string | null {
+  if (error && typeof error === "object" && "kind" in error) return String((error as { kind: unknown }).kind);
+  return null;
+}
+
 export const getSnapshot = () => call<Snapshot>("relay_snapshot", undefined, () => structuredClone(mockSnapshot));
 
 export const ackChange = (args: { taskId: string; changeId: string; rev: number }) =>
@@ -185,6 +191,112 @@ export const noteToTask = (id: string, projectId: string) =>
 
 /** Brings T3 Code to the front (`t3code://`). It only opens the app; the prompt goes on the clipboard. */
 export const openT3 = () => call<void>("open_t3", undefined, () => console.info("[relay] open_t3"));
+
+/* ── v2 notebook ── */
+
+export type V2AgentMode = "act" | "wait" | "grill";
+export type V2TaskStatus =
+  | "briefing" | "grilling" | "needs_project" | "awaiting_approval" | "dispatched"
+  | "needs_answer" | "returned" | "failed" | "done" | "cancelled";
+
+export interface V2Reference {
+  id: string;
+  kind: string;
+  targetId: string;
+  canonicalUrl: string;
+  snapshotJson: string | null;
+}
+
+export interface V2NoteLine {
+  id: string;
+  text: string;
+  position: number | null;
+  references: V2Reference[];
+}
+
+export interface V2Task {
+  id: string;
+  sourceLineId: string;
+  noteId: string;
+  originalLine: string;
+  agentMode: V2AgentMode;
+  status: V2TaskStatus;
+  projectId: string | null;
+  brief: string | null;
+  references: V2Reference[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface V2Note {
+  id: string;
+  revision: number;
+  source: string;
+  body: string;
+  createdAt: string;
+  updatedAt: string;
+  lines: V2NoteLine[];
+  tasks: V2Task[];
+}
+
+export interface V2Project {
+  id: string;
+  name: string;
+  slug: string;
+  repoPath: string | null;
+  ownerRepo: string | null;
+  t3Target: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface V2Settings {
+  importClickupEnabled: boolean;
+  importGithubEnabled: boolean;
+  importScope: string | null;
+  updatedAt: string;
+}
+
+export interface V2NotebookSnapshot {
+  notes: V2Note[];
+  projects: V2Project[];
+  settings: V2Settings;
+}
+
+export interface V2LineInput {
+  lineId: string | null;
+  text: string;
+}
+
+export type V2ComposerSaveRequest =
+  | { kind: "create"; submissionKey: string; text: string }
+  | { kind: "edit"; noteId: string; expectedRevision: number; lines: V2LineInput[] };
+
+const emptyV2Snapshot = (): V2NotebookSnapshot => ({
+  notes: [],
+  projects: [],
+  settings: {
+    importClickupEnabled: false,
+    importGithubEnabled: false,
+    importScope: null,
+    updatedAt: new Date(0).toISOString(),
+  },
+});
+
+export const v2NotebookSnapshot = () =>
+  call<V2NotebookSnapshot>("v2_notebook_snapshot", undefined, emptyV2Snapshot);
+
+/* Writes never fall back to a mock: a missing command or a stale revision must surface as
+   an error, not as a note that looks saved. In a plain browser there is no store at all. */
+export async function v2ComposerSave(request: V2ComposerSaveRequest): Promise<V2Note> {
+  if (!inTauri) throw new Error("Saving a note requires the Relay desktop app.");
+  return await invoke<V2Note>("v2_composer_save", { request });
+}
+
+export async function v2TaskAssignProject(taskId: string, projectId: string): Promise<V2Task> {
+  if (!inTauri) throw new Error("Assigning a project requires the Relay desktop app.");
+  return await invoke<V2Task>("v2_task_assign_project", { taskId, projectId });
+}
 
 /* ── events ── */
 
@@ -500,6 +612,8 @@ interface Events {
   /** A route string for the main window. */
   "relay://open": string;
   "relay://change": ChangeEvent;
+  /** A committed v2 write; the payload is the saved Note id. */
+  "relay://v2-change": string;
   "relay://state": HoverFlags;
   "mcp://status": McpStatus;
   "slack://status": SlackStatus;
