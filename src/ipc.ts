@@ -1034,7 +1034,6 @@ interface Events {
   "relay://state": HoverFlags;
   "relay://dock-focus": DockFocusEvent;
   "relay://dock-dpi": DockDpiEvent;
-  "mcp://status": McpStatus;
   "slack://status": SlackStatus;
   "github://status": GithubStatus;
   /** Secret-free provider status map from the v2 Settings boundary. */

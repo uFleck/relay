@@ -3,7 +3,7 @@ import { EMPTY_DRAFT, type DraftSummary } from "../directives";
 import { Composer } from "../components/Composer";
 import { BriefPanel } from "../components/BriefPanel";
 import { GrillPanel } from "../components/GrillPanel";
-import { Icon, Mark } from "../components/Icon";
+import { Icon } from "../components/Icon";
 import {
   dockDismiss,
   dockReady,
@@ -81,8 +81,6 @@ export function HoverApp() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const escConsumed = useRef(false);
   const waitingIds = useRef<Set<string> | null>(null);
-  const collapseTimer = useRef<number | undefined>(undefined);
-  const dragging = useRef(false);
   // Native session plumbing. Every queued measurement carries the session id it started with.
   const sessionRef = useRef<number | null>(null);
   const layoutRef = useRef(dockLayout);
@@ -286,20 +284,6 @@ export function HoverApp() {
       requestAnimationFrame(() => void applyHeight(true));
     });
   }, [applyHeight]);
-
-  const scheduleCollapse = useCallback(() => {
-    if (
-      live.current.pinned || dragging.current || composerActive.current || live.current.waiting ||
-      live.current.brief || collapseTimer.current !== undefined
-    ) return;
-    collapseTimer.current = window.setTimeout(() => {
-      collapseTimer.current = undefined;
-      if (live.current.pinned || composerActive.current || live.current.waiting || live.current.brief) return;
-      setMode("tab");
-      setComposing(false);
-      void hoverFocus(false);
-    }, COLLAPSE_GRACE_MS);
-  }, []);
 
   // The measurable content root only exists once both reads resolve, so the observer must attach
   // when that happens and not only on the first mount (which renders the loading tab instead).
