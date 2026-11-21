@@ -47,6 +47,35 @@ pub enum TaskStatus {
     Cancelled,
 }
 
+/// Whose move a Grilling Task is waiting on. The producer lives in #35; the v2 views
+/// only read it. `UserQuestion` and `ClosingApproval` both need the user; `Agent` does not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GrillTurn {
+    Agent,
+    UserQuestion,
+    ClosingApproval,
+}
+
+impl GrillTurn {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Agent => "agent",
+            Self::UserQuestion => "user_question",
+            Self::ClosingApproval => "closing_approval",
+        }
+    }
+
+    pub(crate) fn parse(value: &str) -> Option<Self> {
+        match value {
+            "agent" => Some(Self::Agent),
+            "user_question" => Some(Self::UserQuestion),
+            "closing_approval" => Some(Self::ClosingApproval),
+            _ => None,
+        }
+    }
+}
+
 impl TaskStatus {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -204,9 +233,29 @@ pub struct V2Task {
     pub status: TaskStatus,
     pub project_id: Option<String>,
     pub brief: Option<String>,
+    /// Only meaningful on a Grilling Task. `None` is the same as `Agent`.
+    pub grill_turn: Option<GrillTurn>,
+    /// One-line summary of what the user or an agent is expected to do next.
+    pub pending_action: Option<String>,
+    pub failure_stage: Option<String>,
+    pub failure_reason: Option<String>,
+    /// Link to the T3 thread once the Task has been dispatched.
+    pub thread_url: Option<String>,
     pub references: Vec<V2Reference>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+/// The writable slice of Task progress. #35-#37 write these through
+/// `V2Store::update_task_progress`; views never construct it. `None` clears a field.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskProgressUpdate {
+    pub grill_turn: Option<GrillTurn>,
+    pub pending_action: Option<String>,
+    pub failure_stage: Option<String>,
+    pub failure_reason: Option<String>,
+    pub thread_url: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

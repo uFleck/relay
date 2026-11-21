@@ -5,6 +5,8 @@ import {
   v2WorkspaceSearch,
   v2WorkspaceSnapshot,
   type V2Note,
+  type V2Task,
+  type V2TaskStatus,
   type V2WorkspaceSnapshot,
   type WorkspaceSearchResult,
 } from "./ipc";
@@ -169,3 +171,81 @@ export function taskMatches(
   if (!filter.filtering || !filter.taskIds) return true;
   return filter.taskIds.has(task.id);
 }
+
+/* ── Task grouping and the single needs-you predicate (#27) ──
+   Pure functions over the unfiltered workspace snapshot. Both the main window and the
+   Dock import the same attention rule, so a filter can never change the badge. */
+
+/** The five stored statuses that wait on the user, independent of Grilling turn. */
+export const NEEDS_YOU_STATUSES: ReadonlySet<V2TaskStatus> = new Set<V2TaskStatus>([
+  "needs_project",
+  "awaiting_approval",
+  "needs_answer",
+  "returned",
+  "failed",
+]);
+
+export type TaskGroupId = "needsYou" | "inFlight" | "closed";
+
+const TASK_GROUP: Readonly<Record<V2TaskStatus, TaskGroupId>> = {
+  needs_project: "needsYou",
+  awaiting_approval: "needsYou",
+  needs_answer: "needsYou",
+  returned: "needsYou",
+  failed: "needsYou",
+  briefing: "inFlight",
+  grilling: "inFlight",
+  dispatched: "inFlight",
+  done: "closed",
+  cancelled: "closed",
+};
+
+export function taskGroup(status: V2TaskStatus): TaskGroupId {
+  return TASK_GROUP[status];
+}
+
+/** Latest stored change first; the immutable ULID breaks equal-timestamp ties. */
+export function byLatestChange(a: V2Task, b: V2Task) {
+  return Date.parse(b.updatedAt) - Date.parse(a.updatedAt) || a.id.localeCompare(b.id);
+}
+
+export interface TaskGroups {
+  needsYou: V2Task[];
+  inFlight: V2Task[];
+  closed: V2Task[];
+}
+
+/** Filters with the shared search first, then sorts each group by latest change. */
+export function groupTasks(tasks: readonly V2Task[], filter: WorkspaceFilter): TaskGroups {
+  const groups: TaskGroups = { needsYou: [], inFlight: [], closed: [] };
+  for (const task of tasks) {
+    if (!taskMatches(task, filter)) continue;
+    groups[taskGroup(task.status)].push(task);
+  }
+  for (const group of Object.values(groups)) group.sort(byLatestChange);
+  return groups;
+}
+
+/** The one attention predicate. A Grill Task needs you only on the user's turn, and it
+    still belongs to In flight; `needs answer` is a pending T3 question, not Grilling. */
+export function needsAttention(task: V2Task): boolean {
+  if (NEEDS_YOU_STATUSES.has(task.status)) return true;
+  return (
+    task.status === "grilling" &&
+    (task.grillTurn === "user_question" || task.grillTurn === "closing_approval")
+  );
+}
+
+/** Unfiltered, deduplicated by id, newest change first. Used by the badge and Dock list. */
+export function waitingTasks(tasks: readonly V2Task[]): V2Task[] {
+  const seen = new Set<string>();
+  const waiting: V2Task[] = [];
+  for (const task of tasks) {
+    if (seen.has(task.id)) continue;
+    seen.add(task.id);
+    if (needsAttention(task)) waiting.push(task);
+  }
+  return waiting.sort(byLatestChange);
+}
+
+export const needsYouCount = (tasks: readonly V2Task[]): number => waitingTasks(tasks).length;

@@ -12,18 +12,27 @@ use std::{
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, TransactionBehavior, params};
 
 use super::model::{
-    AgentMode, ImportRecord, NewImportRecord, NewV2Project, NoteWrite, PreparedLine,
-    PreparedNoteWrite, PreparedReference, TaskStatus, V2Note, V2NoteLine, V2NotebookSnapshot,
-    V2Project, V2Reference, V2Settings, V2SettingsUpdate, V2Task, V2WorkspaceSnapshot,
-    WorkspaceSearchResult,
+    AgentMode, GrillTurn, ImportRecord, NewImportRecord, NewV2Project, NoteWrite, PreparedLine,
+    PreparedNoteWrite, PreparedReference, TaskProgressUpdate, TaskStatus, V2Note, V2NoteLine,
+    V2NotebookSnapshot, V2Project, V2Reference, V2Settings, V2SettingsUpdate, V2Task,
+    V2WorkspaceSnapshot, WorkspaceSearchResult,
 };
 use crate::model::{new_id, now};
 
-const MIGRATION: &str = include_str!("../../migrations/v2/0001_init.sql");
+/// Migrations run in order; each one advances `user_version` by one. v2 has no v1 migration.
+const MIGRATIONS: [&str; 2] = [
+    include_str!("../../migrations/v2/0001_init.sql"),
+    include_str!("../../migrations/v2/0002_task_progress.sql"),
+];
 /// 'RELY' as an integer. A non-zero application id marks a file as ours.
 pub(super) const APPLICATION_ID: i64 = 0x5245_4C59;
-pub(super) const USER_VERSION: i64 = 1;
+pub(super) const USER_VERSION: i64 = MIGRATIONS.len() as i64;
 const BUSY_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Column order shared by the two queries that feed `task_from_row`.
+const TASK_COLUMNS: &str = "t.id, t.source_line_id, n.id, t.original_line, t.agent_mode, t.status, \
+     t.project_id, t.brief, t.grill_turn, t.pending_action, t.failure_stage, t.failure_reason, \
+     t.thread_url, t.created_at, t.updated_at";
 
 #[derive(Debug, thiserror::Error)]
 pub enum V2Error {
@@ -327,11 +336,13 @@ impl V2Store {
                         AgentMode::Grill => TaskStatus::Grilling,
                     };
                     let task_id = new_id();
+                    let grill_turn =
+                        (status == TaskStatus::Grilling).then(|| GrillTurn::Agent.as_str());
                     tx.execute(
                         "INSERT INTO tasks
                              (id, source_line_id, original_line, agent_mode, status, project_id,
-                              brief, created_at, updated_at)
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7, ?7)",
+                              brief, grill_turn, created_at, updated_at)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7, ?8, ?8)",
                         params![
                             task_id,
                             line_id,
@@ -339,6 +350,7 @@ impl V2Store {
                             intent.agent_mode.as_str(),
                             status.as_str(),
                             intent.project_id,
+                            grill_turn,
                             at,
                         ],
                     )?;
@@ -401,6 +413,36 @@ impl V2Store {
         tx.execute(
             "UPDATE tasks SET project_id = ?1, updated_at = ?2 WHERE id = ?3",
             params![project_id, now(), task_id],
+        )?;
+        let updated = task_by_id(&tx, task_id)?;
+        tx.commit()?;
+        Ok(updated)
+    }
+
+    /// Writes the progress fields the v2 views read. #35-#37 own the producers; this is
+    /// also the fixture path used to exercise a stored Grilling turn through SQLite. Every
+    /// call bumps `updated_at`, so the Task becomes the newest change in its group.
+    pub fn update_task_progress(
+        &self,
+        task_id: &str,
+        update: TaskProgressUpdate,
+    ) -> Result<V2Task, V2Error> {
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        task_by_id(&tx, task_id)?;
+        tx.execute(
+            "UPDATE tasks SET grill_turn = ?2, pending_action = ?3, failure_stage = ?4,
+                 failure_reason = ?5, thread_url = ?6, updated_at = ?7
+             WHERE id = ?1",
+            params![
+                task_id,
+                update.grill_turn.map(GrillTurn::as_str),
+                update.pending_action,
+                update.failure_stage,
+                update.failure_reason,
+                update.thread_url,
+                now(),
+            ],
         )?;
         let updated = task_by_id(&tx, task_id)?;
         tx.commit()?;
@@ -684,14 +726,13 @@ impl V2Store {
             return Ok(Vec::new());
         }
         let conn = self.conn();
-        let mut stmt = conn.prepare(
-            "SELECT t.id, t.source_line_id, n.id, t.original_line, t.agent_mode, t.status,
-                    t.project_id, t.brief, t.created_at, t.updated_at
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {TASK_COLUMNS}
              FROM tasks_fts JOIN tasks t ON t.seq = tasks_fts.rowid
              JOIN note_lines l ON l.id = t.source_line_id
              JOIN notes n ON n.id = l.note_id
-             WHERE tasks_fts MATCH ?1 ORDER BY rank LIMIT ?2",
-        )?;
+             WHERE tasks_fts MATCH ?1 ORDER BY rank LIMIT ?2"
+        ))?;
         let rows = stmt.query_map(params![fts_literal(text), limit as i64], task_from_row)?;
         rows.collect::<rusqlite::Result<Vec<_>>>()
             .map_err(Into::into)
@@ -723,26 +764,29 @@ fn inspect_database(conn: &Connection) -> Result<(), V2Error> {
 }
 
 fn migrate(conn: &Connection) -> Result<(), V2Error> {
-    let version: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
-    if version == USER_VERSION {
-        return Ok(());
-    }
-    if version != 0 {
+    let mut version: i64 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
+    if version > USER_VERSION {
         return Err(V2Error::UnexpectedDatabase(format!(
             "unsupported v2 user_version {version}"
         )));
     }
-    let tx = conn.unchecked_transaction()?;
-    tx.execute_batch(MIGRATION)?;
-    tx.execute(
-        "INSERT INTO settings
-             (id, import_clickup_enabled, import_github_enabled, import_scope, updated_at)
-         VALUES (1, 0, 0, NULL, ?1)",
-        params![now()],
-    )?;
-    tx.pragma_update(None, "application_id", APPLICATION_ID)?;
-    tx.pragma_update(None, "user_version", USER_VERSION)?;
-    tx.commit()?;
+    while (version as usize) < MIGRATIONS.len() {
+        let next = version + 1;
+        let tx = conn.unchecked_transaction()?;
+        tx.execute_batch(MIGRATIONS[version as usize])?;
+        if version == 0 {
+            tx.execute(
+                "INSERT INTO settings
+                     (id, import_clickup_enabled, import_github_enabled, import_scope, updated_at)
+                 VALUES (1, 0, 0, NULL, ?1)",
+                params![now()],
+            )?;
+            tx.pragma_update(None, "application_id", APPLICATION_ID)?;
+        }
+        tx.pragma_update(None, "user_version", next)?;
+        tx.commit()?;
+        version = next;
+    }
     Ok(())
 }
 
@@ -975,7 +1019,8 @@ fn note_by_id(conn: &Connection, id: &str) -> Result<V2Note, V2Error> {
     let task_rows = {
         let mut stmt = conn.prepare(
             "SELECT id, source_line_id, original_line, agent_mode, status, project_id,
-                    brief, created_at, updated_at
+                    brief, grill_turn, pending_action, failure_stage, failure_reason,
+                    thread_url, created_at, updated_at
              FROM tasks WHERE source_line_id IN (SELECT id FROM note_lines WHERE note_id = ?1)
              ORDER BY seq",
         )?;
@@ -988,8 +1033,13 @@ fn note_by_id(conn: &Connection, id: &str) -> Result<V2Note, V2Error> {
                 row.get::<_, String>(4)?,
                 row.get::<_, Option<String>>(5)?,
                 row.get::<_, Option<String>>(6)?,
-                row.get::<_, String>(7)?,
-                row.get::<_, String>(8)?,
+                row.get::<_, Option<String>>(7)?,
+                row.get::<_, Option<String>>(8)?,
+                row.get::<_, Option<String>>(9)?,
+                row.get::<_, Option<String>>(10)?,
+                row.get::<_, Option<String>>(11)?,
+                row.get::<_, String>(12)?,
+                row.get::<_, String>(13)?,
             ))
         })?;
         rows.collect::<rusqlite::Result<Vec<_>>>()?
@@ -1003,6 +1053,11 @@ fn note_by_id(conn: &Connection, id: &str) -> Result<V2Note, V2Error> {
         status,
         project_id,
         brief,
+        grill_turn,
+        pending_action,
+        failure_stage,
+        failure_reason,
+        thread_url,
         created_at,
         updated_at,
     ) in task_rows
@@ -1020,6 +1075,11 @@ fn note_by_id(conn: &Connection, id: &str) -> Result<V2Note, V2Error> {
             status: task_status,
             project_id,
             brief,
+            grill_turn: parse_grill_turn(grill_turn)?,
+            pending_action,
+            failure_stage,
+            failure_reason,
+            thread_url,
             references: refs_for(conn, "task_refs", "task_id", &task_id)?,
             created_at,
             updated_at,
@@ -1041,12 +1101,13 @@ fn note_by_id(conn: &Connection, id: &str) -> Result<V2Note, V2Error> {
 fn task_by_id(conn: &Connection, id: &str) -> Result<V2Task, V2Error> {
     let row = conn
         .query_row(
-            "SELECT t.id, t.source_line_id, n.id, t.original_line, t.agent_mode, t.status,
-                    t.project_id, t.brief, t.created_at, t.updated_at
+            &format!(
+                "SELECT {TASK_COLUMNS}
              FROM tasks t
              JOIN note_lines l ON l.id = t.source_line_id
              JOIN notes n ON n.id = l.note_id
-             WHERE t.id = ?1",
+             WHERE t.id = ?1"
+            ),
             params![id],
             task_from_row,
         )
@@ -1058,10 +1119,17 @@ fn task_by_id(conn: &Connection, id: &str) -> Result<V2Task, V2Error> {
     })
 }
 
+fn parse_grill_turn(value: Option<String>) -> Result<Option<GrillTurn>, V2Error> {
+    match value {
+        Some(value) => GrillTurn::parse(&value)
+            .map(Some)
+            .ok_or_else(|| V2Error::InvalidInput(format!("unsupported grill turn: {value}"))),
+        None => Ok(None),
+    }
+}
+
 fn task_from_row(row: &Row<'_>) -> rusqlite::Result<V2Task> {
-    // Column order shared by task_by_id and search_tasks:
-    // id, source_line_id, note_id, original_line, agent_mode, status, project_id,
-    // brief, created_at, updated_at.
+    // Column order is TASK_COLUMNS; task_by_id and search_tasks share this mapper.
     let mode: String = row.get(4)?;
     let status: String = row.get(5)?;
     let agent_mode = AgentMode::parse(&mode).ok_or_else(|| {
@@ -1078,6 +1146,13 @@ fn task_from_row(row: &Row<'_>) -> rusqlite::Result<V2Task> {
             format!("unsupported task status: {status}").into(),
         )
     })?;
+    let grill_turn = parse_grill_turn(row.get(8)?).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(
+            8,
+            rusqlite::types::Type::Text,
+            error.to_string().into(),
+        )
+    })?;
     Ok(V2Task {
         id: row.get(0)?,
         source_line_id: row.get(1)?,
@@ -1087,9 +1162,14 @@ fn task_from_row(row: &Row<'_>) -> rusqlite::Result<V2Task> {
         status: task_status,
         project_id: row.get(6)?,
         brief: row.get(7)?,
+        grill_turn,
+        pending_action: row.get(9)?,
+        failure_stage: row.get(10)?,
+        failure_reason: row.get(11)?,
+        thread_url: row.get(12)?,
         references: Vec::new(),
-        created_at: row.get(8)?,
-        updated_at: row.get(9)?,
+        created_at: row.get(13)?,
+        updated_at: row.get(14)?,
     })
 }
 

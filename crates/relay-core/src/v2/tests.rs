@@ -604,3 +604,201 @@ fn qualified_filters_resolve_distinct_canonical_reference_identities() {
         .unwrap();
     assert!(search("+beta").task_ids.contains(&task_note.tasks[0].id));
 }
+
+/// Test-only fixture writer: set the stored lifecycle status directly, the way a later
+/// producer would, so every status round-trips through the real SQLite read path.
+fn force_status(store: &V2Store, task_id: &str, status: &str) {
+    let at = crate::model::now();
+    store
+        .conn()
+        .execute(
+            "UPDATE tasks SET status = ?2, updated_at = ?3 WHERE id = ?1",
+            params![task_id, status, at],
+        )
+        .unwrap();
+}
+
+#[test]
+fn stored_progress_round_trips_every_status_and_the_grill_turn_flip() {
+    let dir = TempDir::new("progress");
+    let path = dir.file("relay-v2.db");
+    let store = V2Store::open(&path).unwrap();
+    assert_eq!(
+        {
+            let v: i64 = store
+                .conn()
+                .pragma_query_value(None, "user_version", |row| row.get(0))
+                .unwrap();
+            v
+        },
+        USER_VERSION
+    );
+
+    let statuses = [
+        "briefing",
+        "grilling",
+        "needs_project",
+        "awaiting_approval",
+        "dispatched",
+        "needs_answer",
+        "returned",
+        "failed",
+        "done",
+        "cancelled",
+    ];
+    let note = store
+        .save_note(create(
+            "all-statuses",
+            (0..statuses.len())
+                .map(|i| directive(&format!("!task {i}"), AgentMode::Act, None))
+                .collect(),
+        ))
+        .unwrap();
+    let ids: Vec<String> = note.tasks.iter().map(|t| t.id.clone()).collect();
+    for (id, status) in ids.iter().zip(statuses) {
+        force_status(&store, id, status);
+    }
+
+    // A Grill Task is created on the agent's turn and stays that way until a producer
+    // writes otherwise. All progress fields are optional and start unset.
+    let grill = store
+        .save_note(create(
+            "grill",
+            vec![directive("??clarify", AgentMode::Grill, None)],
+        ))
+        .unwrap()
+        .tasks
+        .into_iter()
+        .next()
+        .unwrap();
+    assert_eq!(grill.status, TaskStatus::Grilling);
+    assert_eq!(grill.grill_turn, Some(GrillTurn::Agent));
+    assert_eq!(grill.pending_action, None);
+    assert_eq!(grill.thread_url, None);
+
+    let waiting = store
+        .update_task_progress(
+            &grill.id,
+            TaskProgressUpdate {
+                grill_turn: Some(GrillTurn::UserQuestion),
+                pending_action: Some("Answer the question in the thread".into()),
+                ..TaskProgressUpdate::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(waiting.grill_turn, Some(GrillTurn::UserQuestion));
+    assert_eq!(waiting.status, TaskStatus::Grilling);
+    assert_eq!(
+        waiting.pending_action.as_deref(),
+        Some("Answer the question in the thread")
+    );
+    assert!(waiting.updated_at >= grill.updated_at);
+
+    let failed = store
+        .update_task_progress(
+            &ids[7],
+            TaskProgressUpdate {
+                failure_stage: Some("dispatch".into()),
+                failure_reason: Some("T3 is not running".into()),
+                thread_url: Some("http://localhost/thread/1".into()),
+                ..TaskProgressUpdate::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(failed.status, TaskStatus::Failed);
+    assert_eq!(failed.failure_stage.as_deref(), Some("dispatch"));
+    assert_eq!(failed.failure_reason.as_deref(), Some("T3 is not running"));
+    assert_eq!(
+        failed.thread_url.as_deref(),
+        Some("http://localhost/thread/1")
+    );
+
+    // Reopen: every field and every status survives a real file round-trip.
+    drop(store);
+    let reopened = V2Store::open(&path).unwrap();
+    let workspace = reopened.workspace_snapshot().unwrap();
+    assert_eq!(workspace.tasks.len(), statuses.len() + 1);
+    let by_id: std::collections::HashMap<_, _> = workspace
+        .tasks
+        .iter()
+        .map(|task| (task.id.as_str(), task))
+        .collect();
+    for (id, status) in ids.iter().zip(statuses) {
+        assert_eq!(by_id[id.as_str()].status.as_str(), status);
+    }
+    assert_eq!(
+        by_id[grill.id.as_str()].grill_turn,
+        Some(GrillTurn::UserQuestion)
+    );
+    assert_eq!(
+        by_id[ids[7].as_str()].failure_stage.as_deref(),
+        Some("dispatch")
+    );
+
+    // The fixture harness flips the turn back to the agent; the status does not change.
+    let back = reopened
+        .update_task_progress(
+            &grill.id,
+            TaskProgressUpdate {
+                grill_turn: Some(GrillTurn::Agent),
+                pending_action: None,
+                ..TaskProgressUpdate::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(back.grill_turn, Some(GrillTurn::Agent));
+    assert_eq!(back.status, TaskStatus::Grilling);
+    assert_eq!(back.pending_action, None);
+
+    // IPC JSON keeps the documented camelCase contract.
+    let json = serde_json::to_string(&back).unwrap();
+    assert!(json.contains("\"grillTurn\":\"agent\""));
+    assert!(json.contains("\"threadUrl\""));
+    assert!(json.contains("\"status\":\"grilling\""));
+}
+
+#[test]
+fn a_version_one_v2_file_gains_the_progress_columns() {
+    let dir = TempDir::new("migrate");
+    let path = dir.file("relay-v2.db");
+    // Build the 0001 schema only, using the real migration file.
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    conn.execute_batch(include_str!("../../migrations/v2/0001_init.sql"))
+        .unwrap();
+    conn.execute(
+        "INSERT INTO settings (id, import_clickup_enabled, import_github_enabled, import_scope, updated_at)
+         VALUES (1, 0, 0, NULL, '2026-11-21T00:00:00Z')",
+        [],
+    )
+    .unwrap();
+    conn.pragma_update(None, "application_id", super::store::APPLICATION_ID)
+        .unwrap();
+    conn.pragma_update(None, "user_version", 1_i64).unwrap();
+    drop(conn);
+
+    let store = V2Store::open(&path).unwrap();
+    let columns: Vec<String> = store
+        .conn()
+        .prepare("PRAGMA table_info(tasks)")
+        .unwrap()
+        .query_map([], |row| row.get::<_, String>(1))
+        .unwrap()
+        .map(|row| row.unwrap())
+        .collect();
+    for column in [
+        "grill_turn",
+        "pending_action",
+        "failure_stage",
+        "failure_reason",
+        "thread_url",
+    ] {
+        assert!(
+            columns.iter().any(|name| name == column),
+            "missing {column}"
+        );
+    }
+    assert_eq!(
+        store.notebook_snapshot().unwrap().settings.updated_at,
+        "2026-11-21T00:00:00Z"
+    );
+}

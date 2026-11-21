@@ -199,6 +199,8 @@ export type V2AgentMode = "act" | "wait" | "grill";
 export type V2TaskStatus =
   | "briefing" | "grilling" | "needs_project" | "awaiting_approval" | "dispatched"
   | "needs_answer" | "returned" | "failed" | "done" | "cancelled";
+/** Whose move a Grilling Task waits on. Produced by #35, read by the attention selector. */
+export type V2GrillTurn = "agent" | "user_question" | "closing_approval";
 
 export interface V2Reference {
   id: string;
@@ -224,6 +226,12 @@ export interface V2Task {
   status: V2TaskStatus;
   projectId: string | null;
   brief: string | null;
+  /** Only meaningful on a Grilling Task. Null is the same as "agent". */
+  grillTurn: V2GrillTurn | null;
+  pendingAction: string | null;
+  failureStage: string | null;
+  failureReason: string | null;
+  threadUrl: string | null;
   references: V2Reference[];
   createdAt: string;
   updatedAt: string;
