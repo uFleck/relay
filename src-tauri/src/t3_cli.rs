@@ -743,56 +743,138 @@ mod tests {
     #[ignore = "needs a running T3 Code server and a disposable registered test project"]
     fn windows_lost_start_response() {
         use relay_core::model::new_id;
+        use relay_core::t3_dispatch::{
+            DispatchStart, DispatchState, bind, claim as claim_dispatch,
+            recover as recover_dispatch,
+        };
+        use relay_core::v2::{
+            AgentMode, NewV2Project, NoteWrite, PreparedLine, PreparedNoteWrite,
+            PreparedTaskIntent, T3Target, TaskStatus, V2Store, begin_attempt, complete_attempt,
+        };
 
-        let Some(_launcher) = resolve_launcher() else {
+        let Some(launcher) = resolve_launcher() else {
             eprintln!("SKIP: T3 launcher is not installed");
             return;
         };
+        eprintln!("launcher {}", launcher.display());
         let Some(data_dir) = t3_home() else {
             eprintln!("SKIP: no T3 data directory");
             return;
         };
+        let data_dir = data_dir.to_string_lossy().to_string();
         let selector = std::env::var("RELAY_T3_TEST_PROJECT").unwrap_or_default();
         if selector.is_empty() {
             eprintln!("SKIP: set RELAY_T3_TEST_PROJECT to a disposable registered project");
             return;
         }
+        let kind = std::env::var("RELAY_T3_TEST_PROJECT_KIND").unwrap_or_else(|_| "id".into());
+        let Ok(target) = T3Target::parse(&kind, &selector) else {
+            eprintln!("SKIP: invalid RELAY_T3_TEST_PROJECT selector");
+            return;
+        };
         let probe_arguments = vec![
             "thread".to_string(),
             "list".to_string(),
             "--project".to_string(),
-            selector.clone(),
+            target.value().to_string(),
             "--json".to_string(),
             "--base-dir".to_string(),
-            data_dir.to_string_lossy().to_string(),
+            data_dir.clone(),
         ];
-        let probe = run_with(
-            None,
-            &probe_arguments,
-            None,
-            &data_dir.to_string_lossy(),
-            QUERY_TIMEOUT,
-        );
-        if probe.is_err() {
+        if run_with(None, &probe_arguments, None, &data_dir, QUERY_TIMEOUT).is_err() {
             eprintln!("SKIP: T3 server or test project is unavailable");
             return;
         }
-        let title = format!("Relay Task {}", new_id());
-        let brief = "Read-only smoke: reply with the single word OK. Do not edit any files.";
-        let started = start(&selector, &data_dir.to_string_lossy(), &title, brief, None).unwrap();
+
+        let dir = std::env::temp_dir().join(format!("relay-36-lost-{}", new_id()));
+        let path = dir.join("relay-v2.db");
+        let (attempt_id, task_id, title, brief) = {
+            let store = V2Store::open(&path).unwrap();
+            let project = store
+                .register_project(NewV2Project {
+                    name: "Dispatch smoke".into(),
+                    slug: "dispatch-smoke".into(),
+                    repo_path: None,
+                    owner_repo: None,
+                    t3_target: None,
+                })
+                .unwrap();
+            store.set_t3_target(&project.id, Some(target)).unwrap();
+            let note = store
+                .save_note(PreparedNoteWrite {
+                    write: NoteWrite::Create {
+                        submission_key: format!("lost-response-{}", new_id()),
+                    },
+                    source: "smoke".into(),
+                    lines: vec![PreparedLine {
+                        line_id: None,
+                        text: "! Read-only dispatch smoke".into(),
+                        references: vec![],
+                        task_intent: Some(PreparedTaskIntent {
+                            agent_mode: AgentMode::Act,
+                            project_id: Some(project.id.clone()),
+                        }),
+                    }],
+                })
+                .unwrap();
+            let task = note.tasks[0].clone();
+            let input = begin_attempt(&store, &task.id).unwrap().unwrap();
+            let output = r#"{"goal":"Reply OK","decisions":["Reply only"],"constraints":["Read only"],"openRisks":["None"]}"#;
+            complete_attempt(&store, &task.id, &input.attempt_id, output).unwrap();
+            let claim = claim_dispatch(
+                &store,
+                &DispatchStart {
+                    task_id: task.id.clone(),
+                    data_dir: data_dir.clone(),
+                    base_ref: None,
+                },
+            )
+            .unwrap()
+            .expect("a ready Task must claim one attempt");
+            (
+                claim.attempt.attempt_id,
+                task.id,
+                claim.attempt.title,
+                claim.brief,
+            )
+        };
+
+        // The real CLI starts the thread. Its response is deliberately discarded at the test
+        // boundary: the production app needs no fault switch and no partial identity is saved.
+        let started = start(&selector, &data_dir, &title, &brief, None).unwrap();
         assert!(
             matches!(started, LaunchClass::Responded(_)),
             "the disposable start must succeed"
         );
-        // Discard the response at the test boundary and reconcile from list + show alone.
-        let candidates: Vec<ListedThread> = list(&selector, &data_dir.to_string_lossy())
+
+        // Reopen the store as a restart would, then reconcile from list + show alone.
+        let reopened = V2Store::open(&path).unwrap();
+        let recovery = recover_dispatch(&reopened).unwrap();
+        assert_eq!(recovery.reconcile.len(), 1);
+        assert_eq!(recovery.reconcile[0].attempt_id, attempt_id);
+        assert_eq!(
+            recovery.reconcile[0].state,
+            DispatchState::ReconcileRequired
+        );
+        let selector_value = T3Target::from_storage(&recovery.reconcile[0].project_selector)
+            .unwrap()
+            .value()
+            .to_string();
+        let exact: Vec<ListedThread> = list(&selector_value, &data_dir)
             .unwrap()
             .into_iter()
             .filter(|thread| thread.title.as_deref() == Some(title.as_str()))
             .collect();
-        assert_eq!(candidates.len(), 1, "exactly one exact attempt-title match");
-        let identity = show(&candidates[0].thread_id, &data_dir.to_string_lossy()).unwrap();
-        assert_eq!(identity.thread_id, candidates[0].thread_id);
-        assert_eq!(identity.project_id, selector);
+        assert_eq!(exact.len(), 1, "exactly one exact attempt-title match");
+        let identity = show(&exact[0].thread_id, &data_dir).unwrap();
+        assert_eq!(identity.thread_id, exact[0].thread_id);
+        let bound = bind(&reopened, &attempt_id, &identity)
+            .unwrap()
+            .expect("the unique thread must be adopted");
+        assert_eq!(bound.state, DispatchState::Bound);
+        let after = reopened.workspace_snapshot().unwrap();
+        let saved = after.tasks.iter().find(|task| task.id == task_id).unwrap();
+        assert_eq!(saved.status, TaskStatus::Dispatched);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
