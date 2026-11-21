@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Composer } from "../components/Composer";
+import type { DraftSummary } from "../directives";
 import type { V2Note, V2Project, V2Task, V2WorkspaceSnapshot } from "../ipc";
+import { useEntering } from "../ui/motion";
 import {
   groupByDay,
   nearBottom,
   noteMatches,
   SIGIL,
+  statusTone,
   todayKey,
   type WorkspaceFilter,
 } from "../workspace";
@@ -20,9 +23,10 @@ interface Props {
   onOpenTask: (id: string) => void;
   onNotice: (message: string) => void;
   onSaved: () => void;
+  onDraftChange?: (draft: DraftSummary) => void;
 }
 
-export function Notebook({ workspace, filter, selectedTaskId, onOpenTask, onNotice, onSaved }: Props) {
+export function Notebook({ workspace, filter, selectedTaskId, onOpenTask, onNotice, onSaved, onDraftChange }: Props) {
   const [editing, setEditing] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const followNewest = useRef(true);
@@ -36,6 +40,8 @@ export function Notebook({ workspace, filter, selectedTaskId, onOpenTask, onNoti
   );
   const groups = useMemo(() => groupByDay(notes), [notes]);
   const projects = workspace?.projects ?? [];
+  const enteringNotes = useEntering(notes.map((note) => note.id));
+  const enteringTasks = useEntering(notes.flatMap((note) => note.tasks.map((task) => task.id)));
 
   const scrollToToday = () => {
     const scroller = scrollRef.current;
@@ -126,6 +132,8 @@ export function Notebook({ workspace, filter, selectedTaskId, onOpenTask, onNoti
                 projects={projects}
                 editing={editing === note.id}
                 selectedTaskId={selectedTaskId}
+                fresh={enteringNotes.has(note.id)}
+                freshTasks={enteringTasks}
                 onEdit={() => openEditor(note)}
                 onCloseEdit={closeEditor}
                 onOpenTask={onOpenTask}
@@ -140,7 +148,7 @@ export function Notebook({ workspace, filter, selectedTaskId, onOpenTask, onNoti
         ))}
         <div className="nb-composer">
           <div className="nb-composer-label meta">New note · newest at the bottom</div>
-          <Composer onSaved={() => onSaved()} onNotice={onNotice} />
+          <Composer onSaved={() => onSaved()} onNotice={onNotice} onDraftChange={onDraftChange} />
         </div>
       </div>
     </section>
@@ -152,6 +160,8 @@ interface CardProps {
   projects: V2Project[];
   editing: boolean;
   selectedTaskId: string | null;
+  fresh: boolean;
+  freshTasks: ReadonlySet<string>;
   onEdit: () => void;
   onCloseEdit: () => void;
   onOpenTask: (id: string) => void;
@@ -164,6 +174,8 @@ function NoteCard({
   projects,
   editing,
   selectedTaskId,
+  fresh,
+  freshTasks,
   onEdit,
   onCloseEdit,
   onOpenTask,
@@ -176,7 +188,12 @@ function NoteCard({
   const detached = note.tasks.filter((task) => !active.has(task.sourceLineId));
 
   return (
-    <article className="nb-note" data-note-id={note.id} data-revision={note.revision}>
+    <article
+      className={`nb-note${fresh ? " fresh" : ""}`}
+      data-note-id={note.id}
+      data-revision={note.revision}
+      data-mode={note.tasks[0]?.agentMode ?? undefined}
+    >
       <div className="nb-note-head">
         <span className="nb-dot" aria-hidden="true" />
         {note.source === "import" && note.lines[0]?.references[0] && (
@@ -236,6 +253,7 @@ function NoteCard({
                     task={task}
                     project={projects.find((candidate) => candidate.id === task.projectId)}
                     selected={task.id === selectedTaskId}
+                    fresh={freshTasks.has(task.id)}
                     onOpen={() => onOpenTask(task.id)}
                   />
                 ))}
@@ -247,6 +265,7 @@ function NoteCard({
               task={task}
               project={projects.find((candidate) => candidate.id === task.projectId)}
               selected={task.id === selectedTaskId}
+              fresh={freshTasks.has(task.id)}
               onOpen={() => onOpenTask(task.id)}
               detached
             />
@@ -261,27 +280,30 @@ function TaskBranch({
   task,
   project,
   selected,
+  fresh,
   onOpen,
   detached,
 }: {
   task: V2Task;
   project: V2Project | undefined;
   selected: boolean;
+  fresh: boolean;
   onOpen: () => void;
   detached?: boolean;
 }) {
   return (
     <button
       type="button"
-      className={`nb-branch mode-${task.agentMode}${selected ? " on" : ""}${detached ? " detached" : ""}`}
+      className={`nb-branch mode-${task.agentMode}${selected ? " on" : ""}${detached ? " detached" : ""}${fresh ? " fresh" : ""}`}
       data-task-id={task.id}
+      data-tone={statusTone(task.status)}
       onClick={onOpen}
       title={detached ? "Source line removed; showing the saved Task line" : "Open Task"}
     >
       <span className="nb-sigil">{SIGIL[task.agentMode]}</span>
       <span className="nb-branch-line">{task.originalLine}</span>
       <span className="nb-status">{task.status.replace(/_/g, " ")}</span>
-      {project && <span className="nb-project">{project.name}</span>}
+      {project && <span className="nb-project">+{project.name}</span>}
     </button>
   );
 }

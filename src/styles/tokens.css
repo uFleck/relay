@@ -1,48 +1,74 @@
-/* Design tokens shared by the panel: the Circuit theme. Night is the default; `tokens-light.css` holds day.
-   The older token names (--bg-*, --text-*, --accent...) stay, so every surface follows the theme. */
+@import "@fontsource-variable/bricolage-grotesque";
+@import "@fontsource-variable/geist-mono";
+
+/* Variant J (Dock + Lens) design tokens, shared by index.html and hover.html.
+   The legacy names stay so every older surface follows the same system theme. */
 
 :root {
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
-  --spring: cubic-bezier(0.2, 0.9, 0.25, 1.15);
+  --spring: cubic-bezier(0.3, 1.5, 0.5, 1);
   --fast: 140ms;
   --med: 260ms;
-  --font-ui: "Schibsted Grotesk", "Segoe UI", system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", "SF Mono", Consolas, monospace;
-  --font-pixel: "Pixelify Sans", "JetBrains Mono", Consolas, monospace;
+
+  --font-ui: "Bricolage Grotesque Variable", "Bricolage Grotesque", "Segoe UI", sans-serif;
+  --font-prose: var(--font-ui);
+  --font-mono: "Geist Mono Variable", "Geist Mono", Consolas, monospace;
+  --font-pixel: "Pixelify Sans", var(--font-mono), monospace;
+
   --r: 8px;
   --r-lg: 14px;
   --r-xl: 20px;
   --pad: 16px;
   --ctl: 36px;
+
+  /* Dock geometry. The native host owns the window box; the DOM caps itself to it. */
+  --dock-w: 760px;
+  --dock-lh: 30px;
+  --dock-gut: 40px;
 }
 
 :root {
   color-scheme: dark;
-  --bg-page: #0f1219;
-  --bg-surface: #151922;
-  --bg-elevated: #1d2230;
-  --border-default: #2a3042;
-  --border-strong: #3b445c;
-  --text-primary: #eef0f6;
-  --text-secondary: #aab1c3;
-  --text-tertiary: #6f778d;
+  --bg-page: #0f1015;
+  --bg-surface: #171921;
+  --bg-elevated: #1d2029;
+  --border-default: #262935;
+  --border-strong: #3b4050;
+  --text-primary: #eceef5;
+  --text-secondary: #9196ab;
+  --text-tertiary: #565b70;
+
   --accent: #7d98ff;
   --accent-hover: #9bb0ff;
-  --accent-text: #9bb0ff;
+  --accent-text: #b3bcff;
   --on-accent: #0b1030;
   --accent-soft: rgba(125, 152, 255, 0.16);
   --hover-tint: rgba(255, 255, 255, 0.05);
   --press-tint: rgba(255, 255, 255, 0.09);
   --sel-bg: rgba(125, 152, 255, 0.18);
   --sel-fg: #ffffff;
+
+  /* Directive lights: Act coral, Wait teal, Grill violet. */
+  --act: #ff6a4d;
+  --wait: #19c3b1;
+  --grill: #a07dff;
+  --on-act: #ffffff;
+
+  /* References: rounded indigo chips, red for unresolved targets. */
+  --chip: #222849;
+  --chip-ink: #b3bcff;
+  --chip-unresolved: #ff5d63;
+  --chip-unresolved-bg: rgba(255, 93, 99, 0.14);
+
   --ok: #3ddc84;
   --warn: #f2b73a;
-  --err: #ff6050;
+  --err: #ff5d63;
   --i1: #7d98ff;
-  --i2: #3ddc84;
-  --i3: #ff9b6a;
-  --i4: #c39bff;
+  --i2: #19c3b1;
+  --i3: #ff6a4d;
+  --i4: #a07dff;
   --i5: #f2b73a;
+
   /* circuit: wire, status colours (2xx..5xx), method colours, glow */
   --wire: #4a2c2c;
   --hop-k: #05070b;
@@ -58,4 +84,39 @@
   --ring: 0 0 0 2px rgba(125, 152, 255, 0.6);
   --scroll: rgba(255, 255, 255, 0.1);
   --scroll-h: rgba(255, 255, 255, 0.22);
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color-scheme: light;
+    --bg-page: #f1f2f6;
+    --bg-surface: #ffffff;
+    --bg-elevated: #f6f7fa;
+    --border-default: #e1e3ea;
+    --border-strong: #c9ccd8;
+    --text-primary: #191b25;
+    --text-secondary: #686d86;
+    --text-tertiary: #a6aabd;
+
+    --accent: #3a46c4;
+    --accent-hover: #2b35a0;
+    --accent-text: #3a46c4;
+    --on-accent: #ffffff;
+    --accent-soft: rgba(58, 70, 196, 0.1);
+    --hover-tint: rgba(25, 27, 37, 0.05);
+    --press-tint: rgba(25, 27, 37, 0.09);
+    --sel-bg: rgba(58, 70, 196, 0.12);
+    --sel-fg: #191b25;
+
+    --chip: #eef0ff;
+    --chip-ink: #3a46c4;
+    --chip-unresolved: #c42b1c;
+    --chip-unresolved-bg: rgba(196, 43, 28, 0.1);
+
+    --i1: #3a46c4;
+    --shadow-pop: 0 14px 34px rgba(25, 27, 37, 0.16);
+    --ring: 0 0 0 2px rgba(58, 70, 196, 0.55);
+    --scroll: rgba(25, 27, 37, 0.12);
+    --scroll-h: rgba(25, 27, 37, 0.24);
+  }
 }

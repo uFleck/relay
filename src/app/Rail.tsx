@@ -1,8 +1,11 @@
-import { Icon, Mark, type IconName } from "../components/Icon";
+import type { V2AgentMode } from "../ipc";
+import { SUMMON_CHORD } from "../hover/dock";
+import { Icon, type IconName } from "../components/Icon";
 import type { View } from "../route";
 
 /* The v2 rail: Notebook, Tasks and Settings. The single Needs-you count is owned by #27;
-   this transition rail shows the count when one is supplied. */
+   this rail shows the count when one is supplied. The wordmark dot follows the draft's
+   first directive and pops when that directive changes. */
 
 interface Props {
   view: View;
@@ -11,9 +14,10 @@ interface Props {
   needsYou?: number;
   /** The update notice, above Settings. */
   notice?: React.ReactNode;
+  wordmarkMode?: V2AgentMode | null;
 }
 
-export function Rail({ view, onView, version, needsYou, notice }: Props) {
+export function Rail({ view, onView, version, needsYou, notice, wordmarkMode }: Props) {
   const item = (v: View, icon: IconName, label: string, trail?: React.ReactNode) => (
     <button
       type="button"
@@ -29,9 +33,11 @@ export function Rail({ view, onView, version, needsYou, notice }: Props) {
 
   return (
     <nav className="rail" aria-label="Views">
-      <div className="mark">
-        <Mark />
-        Relay<span className="ver meta">{version}</span>
+      <div className="mark" data-mode={wordmarkMode ?? undefined}>
+        <span className="wordmark">
+          relay<span className="dot" key={wordmarkMode ?? "none"}>.</span>
+        </span>
+        <span className="ver meta">{version}</span>
       </div>
       {item("notebook", "pencil", "Notebook")}
       {item(
@@ -47,6 +53,17 @@ export function Rail({ view, onView, version, needsYou, notice }: Props) {
       <div className="sp" />
       {notice}
       {item("settings", "gear", "Settings")}
+      <div className="hint meta">
+        <div>
+          <kbd>{SUMMON_CHORD}</kbd> summon
+        </div>
+        <div>
+          <kbd>Ctrl</kbd>+<kbd>↵</kbd> send
+        </div>
+        <div>
+          <kbd>Esc</kbd> dismiss
+        </div>
+      </div>
     </nav>
   );
 }

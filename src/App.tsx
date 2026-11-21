@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { EMPTY_DRAFT, type DraftSummary } from "./directives";
 import { TitleBar } from "./app/TitleBar";
 import { Rail } from "./app/Rail";
 import { Notebook } from "./app/Notebook";
@@ -21,6 +22,7 @@ export default function App() {
   /** The raw filter query lives in the shell, so rail navigation never clears it. */
   const [query, setQuery] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
+  const [draft, setDraft] = useState<DraftSummary>(EMPTY_DRAFT);
   const update = useUpdater();
   const searchRef = useRef<HTMLInputElement>(null);
   const { workspace, version: workspaceVersion, error: workspaceError, refresh } = useWorkspace();
@@ -127,6 +129,7 @@ export default function App() {
           version={version}
           needsYou={needsYou}
           notice={<UpdateNotice update={update} />}
+          wordmarkMode={draft.mode}
         />
 
         {route.view === "notebook" && (
@@ -137,6 +140,7 @@ export default function App() {
             onOpenTask={openTask}
             onNotice={setNotice}
             onSaved={afterSave}
+            onDraftChange={setDraft}
           />
         )}
         {route.view === "tasks" && (
