@@ -13,7 +13,7 @@ Status: complete locally; independent review pending.
   | Command | Result |
   | --- | --- |
   | `git rev-parse HEAD` | `52bf8b70236b8fe86f27da159232589053eac2ea`, branch `relay-v2/41-legacy-mcp-cleanup`, clean tree. Pass. |
-  | `git grep -n -E 'mcp_token\|mcp_status\|mcp-(agent\|analyst)\.token\|/mcp/analyst\|McpSetup\|claim_task\|unacked_changes\|ack_change\|project_statuses' -- crates/relay-core/src src-tauri/src src` | Before: 75 hits. After: 6 hits, all documented under Known risks. No MCP, token, route, setup, `claim_task` call, `ack_change` call or `unacked_changes` field remains. Pass with documented gaps. |
+  | `git grep -n -E 'mcp_token\|mcp_status\|mcp-(agent\|analyst)\.token\|/mcp/analyst\|McpSetup\|claim_task\|unacked_changes\|ack_change\|project_statuses' -- crates/relay-core/src src-tauri/src src` | Before: 99 hits on the starting commit. After: 6 hits, all documented under Known risks. No MCP, token, route, setup, `claim_task` call, `ack_change` call or `unacked_changes` field remains. Pass with documented gaps. |
   | `git grep -n '38547' -- crates/relay-core/src src-tauri/src src` | No hits after the retained gate test fixture was changed to a non-legacy port. Pass. |
   | `cargo test -p relay-core` | `264 passed; 0 failed; 2 ignored`, doc-tests `0`. Pass. |
   | `cargo test -p relay --lib` | `43 passed; 0 failed; 2 ignored`. Pass. |
