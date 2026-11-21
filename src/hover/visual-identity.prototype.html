@@ -1,10 +1,12 @@
 <!doctype html>
 <!--
   PROTOTYPE, throwaway (wayfinder ticket "Visual identity direction, built around the Composer", relay#14).
-  Three visual identities for Relay v2, switchable via ?variant=A|B|C and the floating bar (or ← →).
-  Each shows the hover Composer (centrepiece) docked at the screen edge and a slice of the main window's Notebook.
-  Try: type in the Composer. "!" / "?" / "??" at line start, "@" opens the picker, "+project". Ctrl+Enter sends.
-  "Play" runs a scripted demo. Nothing persists.
+  Round 2: B (Margin) dropped. A (Signal) and C (Bloom) kept as reference; D–G merge A's precision
+  (monospace ids, hairlines, keyboard feel) with C's warmth (directive hues, chips, spring motion).
+  Switch with ?variant=A|C|D|E|F|G, the floating bar, or ← →.
+  Try: "!" / "?" / "??" at line start, "@" opens the picker, "+project". Ctrl+Enter sends. "Play" runs a demo.
+  Nothing persists. The hover window today is transparent, Rust-sized and cannot paint outside its own box:
+  every variant keeps its hover surface self-contained (no outer shadow or scrim).
 -->
 <html lang="en">
 <head>
@@ -12,15 +14,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Relay v2 identity</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=Instrument+Sans:wght@400;500;600&family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@400;500;600&family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
 <style>
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }
 body { overflow: hidden; }
 section[data-v] { display: none; position: fixed; inset: 0; }
-body[data-v="A"] section[data-v="A"],
-body[data-v="B"] section[data-v="B"],
-body[data-v="C"] section[data-v="C"] { display: block; }
+body[data-v="A"] section[data-v="A"], body[data-v="C"] section[data-v="C"], body[data-v="D"] section[data-v="D"],
+body[data-v="E"] section[data-v="E"], body[data-v="F"] section[data-v="F"], body[data-v="G"] section[data-v="G"] { display: block; }
+.k-act { --k: var(--act); } .k-wait { --k: var(--wait); } .k-grill { --k: var(--grill); }
 
 /* shared composer mechanics: a transparent textarea over a highlighted mirror */
 .cmp { position: relative; }
@@ -30,40 +32,34 @@ body[data-v="C"] section[data-v="C"] { display: block; }
   white-space: pre-wrap; overflow-wrap: break-word;
 }
 .cmp .hl { pointer-events: none; color: var(--cmp-ink); min-height: var(--cmp-min); }
-.cmp textarea {
-  position: absolute; inset: 0; height: 100%; resize: none; outline: none;
-  background: transparent; color: transparent; caret-color: var(--cmp-caret); overflow: hidden;
-}
+.cmp textarea { position: absolute; inset: 0; height: 100%; resize: none; outline: none; background: transparent; color: transparent; caret-color: var(--cmp-caret); overflow: hidden; }
 .cmp textarea::placeholder { color: var(--cmp-ph); }
 .hl .ln { display: block; min-height: var(--cmp-lh); }
 .hl .cm { display: inline-block; width: 0; }
 .pick { display: none; }
 .pick.open { display: block; }
-.pick .it.on { }
-.tag { white-space: nowrap; }
 
 /* switcher: deliberately not part of any design */
-#sw {
-  position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 99;
-  display: flex; align-items: center; gap: 6px; padding: 5px 6px;
-  background: #111; color: #fff; border-radius: 999px; font: 500 12px system-ui, sans-serif;
-  box-shadow: 0 4px 18px rgba(0,0,0,.35); outline: 2px dashed #ff0; outline-offset: 2px;
-}
+#sw { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 99; display: flex; align-items: center; gap: 6px; padding: 5px 6px; background: #111; color: #fff; border-radius: 999px; font: 500 12px system-ui, sans-serif; box-shadow: 0 4px 18px rgba(0,0,0,.35); outline: 2px dashed #ff0; outline-offset: 2px; }
 #sw button { border: 0; background: #333; color: #fff; border-radius: 999px; height: 26px; min-width: 26px; padding: 0 10px; cursor: pointer; font: inherit; }
 #sw button:hover { background: #555; }
-#sw .lbl { min-width: 150px; text-align: center; }
+#sw .lbl { min-width: 420px; text-align: center; }
+#sw .lbl small { color: #aaa; font-weight: 400; margin-left: 6px; }
 
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; } }
 
+@keyframes pop { from { transform: scale(.3); } }
+@keyframes spring-in { from { transform: scale(.6) translateY(-8px); opacity: 0; } }
+@keyframes pulse { 50% { opacity: .45; } }
+@keyframes blink { 50% { opacity: 0; } }
+@keyframes tick { 0%,100% { transform: none } 33% { transform: translateY(-3px) } 66% { transform: translateY(1px) } }
+
 /* ================================================================
-   A · SIGNAL — an instrument. Dark only, monospace, hairlines,
-   phosphor amber. The hover window is a slim command strip glued to
-   the top edge; the picker docks under it. Motion: fast, stepped,
-   mechanical (ticks, typewriter, scan).
+   A · SIGNAL (reference, round 1)
    ================================================================ */
 section[data-v="A"] {
   --bg: #0b0c0b; --bg2: #121412; --line: #262a25; --ink: #d8dccf; --dim: #7c8476; --faint: #4a5046;
-  --amb: #ffb547; --amb-soft: rgba(255,181,71,.12); --wait: #7fd1c1; --err: #ff6b5b; --ok: #9be37a;
+  --amb: #ffb547; --amb-soft: rgba(255,181,71,.12); --act: var(--amb); --wait: #7fd1c1; --grill: var(--ink); --err: #ff6b5b;
   --cmp-pad: 9px 12px; --cmp-lh: 20px; --cmp-min: 20px; --cmp-ink: var(--ink); --cmp-caret: var(--amb); --cmp-ph: var(--faint);
   background: var(--bg); color: var(--ink); font: 400 12.5px/1.5 "IBM Plex Mono", Consolas, monospace;
   background-image: linear-gradient(var(--line) 1px, transparent 1px); background-size: 100% 28px; background-position: 0 -1px;
@@ -74,8 +70,7 @@ section[data-v="A"] {
 .A-rail a { display: flex; justify-content: space-between; padding: 6px 14px; color: var(--dim); text-decoration: none; }
 .A-rail a.on { color: var(--ink); background: var(--bg2); box-shadow: inset 2px 0 var(--amb); }
 .A-rail .n { color: var(--bg); background: var(--amb); padding: 0 5px; font-family: "IBM Plex Mono"; }
-.A-rail .n.bump { animation: A-tick .36s steps(3) 1; }
-@keyframes A-tick { 0%,100% { transform: none } 33% { transform: translateY(-3px) } 66% { transform: translateY(1px) } }
+.A-rail .n.bump { animation: tick .36s steps(3) 1; }
 .A-main { overflow: auto; }
 .A-head { display: flex; gap: 16px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--line); color: var(--dim); font-size: 11px; }
 .A-head b { color: var(--ink); font-weight: 500; }
@@ -86,22 +81,18 @@ section[data-v="A"] {
 .A-log tr.sub td { border-bottom-style: dashed; color: var(--dim); }
 .A-log tr.sub td:nth-child(2)::before { content: "└─ "; color: var(--faint); }
 .A-log tr.new { animation: A-scan .5s steps(6) 1; }
-@keyframes A-scan { from { background: var(--amb-soft); clip-path: inset(0 100% 0 0) } to { background: transparent; clip-path: inset(0 0 0 0) } }
+@keyframes A-scan { from { background: var(--amb-soft); clip-path: inset(0 100% 0 0) } to { background: transparent; clip-path: inset(0) } }
 .A-st { display: inline-block; min-width: 128px; font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; }
 .A-st::before { content: "■ "; }
 .A-st.needs { color: var(--amb); } .A-st.flight { color: var(--wait); } .A-st.closed { color: var(--faint); }
-.A-st.flight::before { animation: A-blink 1s steps(2) infinite; }
-@keyframes A-blink { 50% { opacity: 0 } }
+.A-st.flight::before { animation: blink 1s steps(2) infinite; }
 .A-strip { position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: 640px; z-index: 5; }
 .A-strip .bar { display: flex; align-items: stretch; background: var(--bg2); border: 1px solid var(--amb); border-top: 0; }
 .A-strip .pfx { padding: 9px 0 0 12px; color: var(--amb); }
 .A-strip .cmp { flex: 1; }
 .A-strip .meta { display: flex; justify-content: space-between; padding: 3px 12px; font-size: 10.5px; color: var(--faint); background: var(--bg); border: 1px solid var(--line); border-top: 0; }
 .A-strip .meta b { color: var(--dim); font-weight: 500; }
-section[data-v="A"] .hl .d-act { color: var(--ink); }
-section[data-v="A"] .hl .sg { color: var(--bg); background: var(--amb); }
-section[data-v="A"] .hl .d-wait .sg { background: var(--wait); }
-section[data-v="A"] .hl .d-grill .sg { background: var(--ink); }
+section[data-v="A"] .hl .sg { color: var(--bg); background: var(--k); }
 section[data-v="A"] .ref { color: var(--amb); text-decoration: underline 1px dotted; text-underline-offset: 3px; }
 section[data-v="A"] .ref.bad { color: var(--err); text-decoration: line-through; }
 section[data-v="A"] .prj { color: var(--wait); }
@@ -113,82 +104,9 @@ section[data-v="A"] .pick .it { display: grid; grid-template-columns: 150px 1fr 
 section[data-v="A"] .pick .it .id { color: var(--ink); }
 section[data-v="A"] .pick .it.on { background: var(--amb); color: var(--bg); }
 section[data-v="A"] .pick .it.on .id { color: var(--bg); }
-.A-label { position: absolute; left: 40px; top: 34px; color: var(--dim); font-size: 11px; }
-.A-label b { color: var(--amb); font-weight: 500; letter-spacing: .3em; }
 
 /* ================================================================
-   B · MARGIN — a notebook. Paper light (warm dark at night), a
-   serif for what you write, a sans for the machine. Sigils live in a
-   ruled left margin as ink marks; References read as footnotes.
-   The hover window is an index card at the right edge. Motion: slow
-   ink — fades, underline draws, a card files into the page.
-   ================================================================ */
-section[data-v="B"] {
-  --paper: #f6f2ea; --paper2: #fffdf8; --rule: #e3dccd; --ink: #24211c; --dim: #7a7266; --faint: #b0a796;
-  --red: #c4432b; --blue: #2c5aa0; --green: #3f7a4a; --hl: #f3e3a6;
-  --cmp-pad: 10px 14px 10px 44px; --cmp-lh: 26px; --cmp-min: 78px; --cmp-ink: var(--ink); --cmp-caret: var(--red); --cmp-ph: var(--faint);
-  background: var(--paper); color: var(--ink); font: 400 13px/1.5 "Instrument Sans", "Segoe UI", sans-serif;
-}
-@media (prefers-color-scheme: dark) {
-  section[data-v="B"] { --paper: #1c1a17; --paper2: #24211d; --rule: #36322b; --ink: #ece5d8; --dim: #a39a8b; --faint: #6d665a; --red: #ef7a5f; --blue: #8fb3ec; --green: #8cc596; --hl: #5a4a1a; }
-}
-.B-win { position: absolute; left: 56px; top: 40px; right: 420px; bottom: 60px; display: grid; grid-template-rows: auto 1fr; }
-.B-tabs { display: flex; gap: 26px; align-items: baseline; padding: 0 0 14px 44px; border-bottom: 1px solid var(--rule); }
-.B-tabs .brand { font: italic 400 24px "Newsreader", serif; margin-right: 18px; }
-.B-tabs a { color: var(--dim); text-decoration: none; font-weight: 500; }
-.B-tabs a.on { color: var(--ink); text-decoration: underline 1.5px var(--red); text-underline-offset: 6px; }
-.B-tabs .n { font: italic 13px "Newsreader"; color: var(--red); margin-left: 3px; display: inline-block; }
-.B-tabs .n.bump { animation: B-ink 1.2s ease-out 1; }
-@keyframes B-ink { from { transform: scale(1.6); filter: blur(2px); opacity: 0 } to { transform: none; filter: none; opacity: 1 } }
-.B-page { overflow: auto; position: relative; background: repeating-linear-gradient(var(--paper) 0 31px, var(--rule) 31px 32px); }
-.B-page::before { content: ""; position: absolute; left: 32px; top: 0; bottom: 0; width: 1px; background: var(--red); opacity: .45; }
-.B-day { font: italic 400 15px/32px "Newsreader"; color: var(--dim); padding-left: 44px; height: 32px; }
-.B-entry { position: relative; padding-left: 44px; font: 400 17px/32px "Newsreader", serif; }
-.B-entry .t { position: absolute; right: 8px; text-align: right; font: 400 10.5px/32px "Instrument Sans"; color: var(--faint); }
-.B-entry .mk { position: absolute; left: 10px; width: 18px; text-align: center; font: 600 16px/32px "Newsreader"; color: var(--red); }
-.B-entry .mk.wait { color: var(--blue); }
-.B-entry .fn { font: 500 11px "Instrument Sans"; color: var(--blue); vertical-align: super; }
-.B-entry .src { font: 400 11px "Instrument Sans"; color: var(--faint); margin-left: 8px; }
-.B-task { padding-left: 64px; font: 400 12px/32px "Instrument Sans"; color: var(--dim); display: flex; gap: 14px; }
-.B-task .st { font-style: italic; font-family: "Newsreader"; font-size: 14px; }
-.B-task .st.needs { color: var(--red); background: linear-gradient(var(--hl), var(--hl)) 0 85% / 100% 35% no-repeat; }
-.B-task .st.flight { color: var(--blue); }
-.B-task .st.closed { color: var(--faint); text-decoration: line-through; }
-.B-new { animation: B-file 1s cubic-bezier(.2,.7,.2,1) 1; }
-@keyframes B-file { from { opacity: 0; transform: translateX(120px) rotate(1.5deg); } to { opacity: 1; transform: none; } }
-.B-card { position: absolute; right: 0; top: 120px; width: 380px; z-index: 5; background: var(--paper2); border: 1px solid var(--rule); border-right: 0; border-radius: 3px 0 0 3px; }
-.B-card .hd { display: flex; justify-content: space-between; padding: 10px 14px 0 44px; font: 400 11px "Instrument Sans"; color: var(--faint); }
-.B-card .hd b { font: italic 400 15px "Newsreader"; color: var(--ink); }
-.B-card .cmp { font: 400 17px "Newsreader", serif; background: repeating-linear-gradient(transparent 0 25px, var(--rule) 25px 26px); background-position: 0 10px; }
-.B-card .cmp::before { content: ""; position: absolute; left: 32px; top: 0; bottom: 0; width: 1px; background: var(--red); opacity: .45; }
-.B-card .ft { padding: 6px 14px 10px 44px; font-size: 11px; color: var(--faint); display: flex; justify-content: space-between; }
-section[data-v="B"] .hl .ln { position: relative; }
-section[data-v="B"] .hl .sg { position: relative; color: transparent; }
-section[data-v="B"] .hl .sg::before { content: attr(data-s); position: absolute; left: -34px; width: 22px; text-align: center; color: var(--red); font-weight: 600; animation: B-mark .6s ease-out 1; }
-section[data-v="B"] .hl .d-wait .sg::before, section[data-v="B"] .hl .d-grill .sg::before { color: var(--blue); }
-@keyframes B-mark { from { opacity: 0; transform: scale(1.8); } }
-section[data-v="B"] .hl .sgsp { display: none; }
-section[data-v="B"] .B-page .ref { font: 500 12px "Instrument Sans"; }
-section[data-v="B"] .ref { color: var(--blue); background: linear-gradient(var(--blue), var(--blue)) 0 100% / 100% 1px no-repeat; animation: B-under .5s ease-out 1; }
-@keyframes B-under { from { background-size: 0 1px; } }
-section[data-v="B"] .ref.bad { color: var(--red); background-image: none; text-decoration: wavy underline var(--red); }
-section[data-v="B"] .prj { color: var(--green); font: italic 400 17px "Newsreader"; }
-section[data-v="B"] .pick { position: absolute; right: 100%; top: 0; margin-right: 10px; width: 300px; background: var(--paper2); border: 1px solid var(--rule); border-radius: 3px; padding: 6px 0; }
-section[data-v="B"] .pick.open { animation: B-fade .35s ease-out 1; }
-@keyframes B-fade { from { opacity: 0; transform: translateX(10px); } }
-section[data-v="B"] .pick .grp { padding: 8px 14px 2px; font: italic 13px "Newsreader"; color: var(--faint); }
-section[data-v="B"] .pick .it { padding: 4px 14px; display: flex; flex-direction: column; }
-section[data-v="B"] .pick .it .id { font: 500 11.5px "Instrument Sans"; color: var(--blue); }
-section[data-v="B"] .pick .it .ti { font: 400 14px "Newsreader"; }
-section[data-v="B"] .pick .it .k { display: none; }
-section[data-v="B"] .pick .it.on { background: var(--hl); }
-
-/* ================================================================
-   C · BLOOM — soft and alive. Big rounded capsule floating near the
-   edge, chunky grotesque, each directive has its own hue (Act coral,
-   Wait teal, Grill violet). References become chips. The picker is a
-   bubble at the caret. Motion: springy — chips pop, the capsule
-   breathes while the agent works, sent lines bloom into Task cards.
+   C · BLOOM (reference, round 1)
    ================================================================ */
 section[data-v="C"] {
   --bg: #eef0f5; --card: #ffffff; --ink: #1d2030; --dim: #6b7089; --faint: #a7abbe; --line: #e2e5ee;
@@ -196,9 +114,7 @@ section[data-v="C"] {
   --cmp-pad: 14px 18px; --cmp-lh: 26px; --cmp-min: 26px; --cmp-ink: var(--ink); --cmp-caret: var(--act); --cmp-ph: var(--faint);
   background: var(--bg); color: var(--ink); font: 400 14px/1.45 "Bricolage Grotesque", "Segoe UI", sans-serif;
 }
-@media (prefers-color-scheme: dark) {
-  section[data-v="C"] { --bg: #12131a; --card: #1c1e29; --ink: #eef0fa; --dim: #9ca1bb; --faint: #5d6280; --line: #2a2d3c; --chip: #262b4a; --chip-ink: #aab4ff; }
-}
+@media (prefers-color-scheme: dark) { section[data-v="C"] { --bg: #12131a; --card: #1c1e29; --ink: #eef0fa; --dim: #9ca1bb; --faint: #5d6280; --line: #2a2d3c; --chip: #262b4a; --chip-ink: #aab4ff; } }
 .C-win { position: absolute; left: 40px; top: 40px; right: 40px; bottom: 60px; display: grid; grid-template-columns: 76px 1fr; gap: 16px; }
 .C-rail { display: flex; flex-direction: column; align-items: center; gap: 10px; padding-top: 8px; }
 .C-rail .logo { width: 44px; height: 44px; border-radius: 16px; background: conic-gradient(from 200deg, var(--act), var(--grill), var(--wait), var(--act)); margin-bottom: 14px; animation: C-breathe 4s ease-in-out infinite; }
@@ -206,102 +122,378 @@ section[data-v="C"] {
 .C-rail a { position: relative; width: 56px; padding: 8px 0; border-radius: 16px; text-align: center; color: var(--dim); text-decoration: none; font-size: 11px; font-weight: 600; }
 .C-rail a.on { background: var(--card); color: var(--ink); }
 .C-rail .n { position: absolute; top: -6px; right: -6px; min-width: 20px; height: 20px; border-radius: 10px; background: var(--act); color: #fff; font-size: 11px; line-height: 20px; }
-.C-rail .n.bump { animation: C-pop .5s cubic-bezier(.3,1.8,.5,1) 1; }
-@keyframes C-pop { from { transform: scale(.3); } }
+.C-rail .n.bump { animation: pop .5s cubic-bezier(.3,1.8,.5,1) 1; }
 .C-main { overflow: auto; padding-right: 440px; }
 .C-day { font: 700 26px "Bricolage Grotesque"; letter-spacing: -.02em; margin: 6px 0 12px; }
 .C-day span { color: var(--faint); font-weight: 400; font-size: 15px; margin-left: 8px; }
 .C-note { background: var(--card); border-radius: 20px; padding: 14px 18px; margin-bottom: 10px; }
 .C-note .t { font-size: 11px; color: var(--faint); font-family: "Geist Mono"; }
 .C-note .tx { font-size: 15px; }
-.C-chip { display: inline-flex; align-items: center; gap: 4px; padding: 0 8px; border-radius: 999px; background: var(--chip); color: var(--chip-ink); font: 500 12px/22px "Geist Mono"; }
+.C-main .ref { display: inline-flex; padding: 0 8px; border-radius: 999px; background: var(--chip); color: var(--chip-ink); font: 500 12px/22px "Geist Mono"; }
+.C-main .prj { color: var(--grill); font-weight: 600; }
 .C-tasks { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .C-task { display: flex; align-items: center; gap: 8px; padding: 6px 12px 6px 6px; border-radius: 14px; background: var(--bg); font-size: 13px; }
-.C-task .sg { width: 26px; height: 26px; border-radius: 9px; display: grid; place-items: center; color: #fff; font-weight: 700; background: var(--act); }
-.C-task.wait .sg { background: var(--wait); } .C-task.grill .sg { background: var(--grill); }
+.C-task .sg { width: 26px; height: 26px; border-radius: 9px; display: grid; place-items: center; color: #fff; font-weight: 700; background: var(--k); }
 .C-task .st { font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 999px; }
 .C-task .st.needs { background: var(--act); color: #fff; }
-.C-task .st.flight { background: color-mix(in srgb, var(--wait) 18%, transparent); color: var(--wait); animation: C-pulse 1.6s ease-in-out infinite; }
+.C-task .st.flight { background: color-mix(in srgb, var(--wait) 18%, transparent); color: var(--wait); animation: pulse 1.6s ease-in-out infinite; }
 .C-task .st.closed { color: var(--faint); }
-@keyframes C-pulse { 50% { opacity: .5; } }
-.C-new { animation: C-bloom .6s cubic-bezier(.3,1.5,.5,1) 1; transform-origin: 90% 0; }
+.C-note.new { animation: C-bloom .6s cubic-bezier(.3,1.5,.5,1) 1; transform-origin: 90% 0; }
 @keyframes C-bloom { from { transform: scale(.6) translateX(200px); opacity: 0; } }
-.C-cap { position: absolute; right: 24px; top: 40px; width: 400px; z-index: 5; background: var(--card); border-radius: 28px; border: 1px solid var(--line); transition: border-radius .3s; }
+.C-cap { position: absolute; right: 24px; top: 40px; width: 400px; z-index: 5; background: var(--card); border-radius: 28px; border: 1px solid var(--line); }
 .C-cap:focus-within { border-color: color-mix(in srgb, var(--act) 50%, var(--line)); }
 .C-cap .hd { display: flex; align-items: center; gap: 8px; padding: 12px 18px 0; font-size: 12px; color: var(--dim); }
-.C-cap .hd .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--wait); animation: C-pulse 1.6s infinite; }
+.C-cap .hd .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--wait); animation: pulse 1.6s infinite; }
 .C-cap .modes { display: flex; gap: 6px; padding: 0 14px 12px; }
 .C-cap .modes span { font-size: 11.5px; font-weight: 600; padding: 3px 10px; border-radius: 999px; background: var(--bg); color: var(--dim); transition: all .25s cubic-bezier(.3,1.6,.5,1); }
-.C-cap .modes span.on.act { background: var(--act); color: #fff; transform: scale(1.06); }
-.C-cap .modes span.on.wait { background: var(--wait); color: #fff; transform: scale(1.06); }
-.C-cap .modes span.on.grill { background: var(--grill); color: #fff; transform: scale(1.06); }
-section[data-v="C"] .hl .sg { color: var(--act); }
-section[data-v="C"] .hl .d-wait .sg { color: var(--wait); } section[data-v="C"] .hl .d-grill .sg { color: var(--grill); }
-section[data-v="C"] .hl .ref { background: var(--chip); color: var(--chip-ink); border-radius: 999px; box-shadow: 0 0 0 2px var(--chip); animation: C-pop .35s cubic-bezier(.3,1.8,.5,1) 1; display: inline-block; }
-section[data-v="C"] .hl .ref.bad { background: color-mix(in srgb, var(--err) 15%, transparent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--err) 15%, transparent); color: var(--err); }
-section[data-v="C"] .prj { color: var(--grill); }
-section[data-v="C"] .C-main .prj { font-weight: 600; }
+.C-cap .modes span.on:not(.note) { background: var(--k); color: #fff; transform: scale(1.06); }
+section[data-v="C"] .hl .sg { color: var(--k); }
+section[data-v="C"] .hl .ref { background: var(--chip); color: var(--chip-ink); border-radius: 999px; box-shadow: 0 0 0 2px var(--chip); animation: pop .35s cubic-bezier(.3,1.8,.5,1) 1; display: inline-block; }
+section[data-v="C"] .ref.bad { background: color-mix(in srgb, var(--err) 15%, transparent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--err) 15%, transparent); color: var(--err); }
+section[data-v="C"] .hl .prj { color: var(--grill); }
 section[data-v="C"] .pick { position: absolute; width: 320px; background: var(--card); border: 1px solid var(--line); border-radius: 20px; padding: 8px; z-index: 9; }
-section[data-v="C"] .pick.open { animation: C-pop .3s cubic-bezier(.3,1.6,.5,1) 1; transform-origin: 0 0; }
+section[data-v="C"] .pick.open { animation: pop .3s cubic-bezier(.3,1.6,.5,1) 1; transform-origin: 0 0; }
 section[data-v="C"] .pick .grp { padding: 6px 10px 2px; font-size: 11px; font-weight: 600; color: var(--faint); }
 section[data-v="C"] .pick .it { display: flex; gap: 8px; align-items: center; padding: 6px 10px; border-radius: 12px; }
 section[data-v="C"] .pick .it .id { font: 500 12px "Geist Mono"; color: var(--chip-ink); }
 section[data-v="C"] .pick .it .ti { color: var(--dim); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 section[data-v="C"] .pick .it .k { display: none; }
 section[data-v="C"] .pick .it.on { background: var(--chip); }
+
+/* ================================================================
+   D · CONSOLE STRIP — A's skeleton, C's blood.
+   Top-edge command strip and dense log from A; directive hues,
+   Reference chips, mode pills and spring motion from C. Geist Mono
+   for the machine, Bricolage for what you wrote. Dark first.
+   ================================================================ */
+section[data-v="D"] {
+  --bg: #0e0f13; --panel: #15171d; --line: #252833; --ink: #e6e8ef; --dim: #8a8fa3; --faint: #50546a;
+  --act: #ff6a4d; --wait: #16c2b0; --grill: #9b7bff; --chip: #1f2440; --chip-ink: #aab4ff; --err: #ff5d63;
+  --cmp-pad: 11px 14px; --cmp-lh: 22px; --cmp-min: 22px; --cmp-ink: var(--ink); --cmp-caret: var(--act); --cmp-ph: var(--faint);
+  background: var(--bg); color: var(--ink); font: 400 13px/1.5 "Geist Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: light) { section[data-v="D"] { --bg: #f3f4f7; --panel: #ffffff; --line: #e2e4eb; --ink: #1b1d27; --dim: #6b7089; --faint: #a7abbe; --chip: #eef1ff; --chip-ink: #3a46c4; } }
+.D-win { position: absolute; left: 40px; top: 92px; right: 40px; bottom: 70px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); display: grid; grid-template-columns: 170px 1fr; overflow: hidden; }
+.D-rail { border-right: 1px solid var(--line); padding: 14px 8px; display: flex; flex-direction: column; gap: 2px; }
+.D-rail .brand { display: flex; align-items: center; gap: 8px; padding: 0 8px 16px; font: 700 15px "Bricolage Grotesque"; }
+.D-rail .brand i { width: 14px; height: 14px; border-radius: 5px; background: conic-gradient(var(--act), var(--grill), var(--wait), var(--act)); }
+.D-rail a { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; border-radius: 8px; color: var(--dim); text-decoration: none; font-size: 12px; }
+.D-rail a.on { background: var(--bg); color: var(--ink); }
+.D-rail .n { min-width: 20px; height: 18px; border-radius: 9px; background: var(--act); color: #fff; font-size: 11px; text-align: center; line-height: 18px; }
+.D-rail .n.bump { animation: pop .5s cubic-bezier(.3,1.8,.5,1) 1; }
+.D-main { overflow: auto; }
+.D-head { position: sticky; top: 0; display: flex; gap: 10px; align-items: center; padding: 10px 18px; background: var(--panel); border-bottom: 1px solid var(--line); font-size: 11.5px; color: var(--dim); }
+.D-head .f { padding: 1px 8px; border-radius: 999px; border: 1px solid var(--line); }
+.D-log { width: 100%; border-collapse: collapse; }
+.D-log td { padding: 7px 18px 7px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+.D-log td:first-child { padding-left: 18px; width: 70px; color: var(--faint); font-size: 11.5px; }
+.D-log .tx { font: 400 14.5px/1.45 "Bricolage Grotesque", sans-serif; }
+.D-log .day td { font: 700 18px "Bricolage Grotesque"; color: var(--ink); padding-top: 18px; border-bottom: 0; }
+.D-log .day td span { color: var(--faint); font: 400 11.5px "Geist Mono"; margin-left: 8px; }
+.D-log tr.sub td { border-bottom: 0; padding-top: 0; }
+.D-task { display: inline-flex; align-items: center; gap: 8px; padding: 3px 10px 3px 3px; border-radius: 10px; background: color-mix(in srgb, var(--k) 10%, transparent); font-size: 12px; margin: 0 6px 6px 0; }
+.D-task b { width: 22px; height: 22px; border-radius: 7px; display: grid; place-items: center; background: var(--k); color: #fff; }
+.D-st { font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; }
+.D-st.needs { color: var(--act); font-weight: 600; } .D-st.flight { color: var(--wait); } .D-st.closed { color: var(--faint); text-decoration: line-through; }
+.D-st.flight::before { content: "● "; animation: pulse 1.4s ease-in-out infinite; }
+.D-log tr.new { animation: spring-in .55s cubic-bezier(.3,1.5,.5,1) 1; }
+.D-strip { position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: 680px; z-index: 5; background: var(--panel); border: 1px solid var(--line); border-top: 0; border-radius: 0 0 20px 20px; }
+.D-strip:focus-within { border-color: color-mix(in srgb, var(--act) 55%, var(--line)); }
+.D-strip .bar { display: flex; }
+.D-strip .pfx { padding: 11px 0 0 16px; color: var(--act); font-weight: 600; }
+.D-strip .cmp { flex: 1; }
+.D-strip .meta { display: flex; align-items: center; gap: 6px; padding: 0 14px 10px; font-size: 11px; color: var(--faint); }
+.D-strip .modes span { padding: 1px 9px; border-radius: 999px; border: 1px solid var(--line); color: var(--dim); transition: all .25s cubic-bezier(.3,1.6,.5,1); display: inline-block; }
+.D-strip .modes span.on:not(.note) { background: var(--k); border-color: var(--k); color: #fff; transform: scale(1.08); }
+.D-strip .modes span.on.note { border-color: var(--dim); color: var(--ink); }
+.D-strip .meta .st { margin-left: auto; }
+section[data-v="D"] .hl .sg { color: var(--k); font-weight: 600; }
+section[data-v="D"] .ref { background: var(--chip); color: var(--chip-ink); border-radius: 6px; box-shadow: 0 0 0 2px var(--chip); }
+section[data-v="D"] .hl .ref { animation: pop .3s cubic-bezier(.3,1.8,.5,1) 1; display: inline-block; }
+section[data-v="D"] .D-log .ref { font: 500 12px "Geist Mono"; padding: 0 2px; }
+section[data-v="D"] .ref.bad { background: transparent; box-shadow: none; color: var(--err); text-decoration: wavy underline var(--err); }
+section[data-v="D"] .prj { color: var(--grill); }
+section[data-v="D"] .pick { border-top: 1px dashed var(--line); padding: 6px; max-height: 260px; overflow: auto; }
+section[data-v="D"] .pick.open { animation: D-unfold .28s cubic-bezier(.3,1.4,.5,1) 1; transform-origin: top; }
+@keyframes D-unfold { from { transform: scaleY(.4); opacity: 0; } }
+section[data-v="D"] .pick .grp { padding: 6px 10px 2px; font-size: 10.5px; color: var(--faint); text-transform: uppercase; letter-spacing: .12em; }
+section[data-v="D"] .pick .it { display: grid; grid-template-columns: 170px 1fr auto; gap: 10px; padding: 5px 10px; border-radius: 10px; color: var(--dim); font-size: 12px; }
+section[data-v="D"] .pick .it .id { color: var(--chip-ink); }
+section[data-v="D"] .pick .it .ti { font-family: "Bricolage Grotesque"; font-size: 13.5px; }
+section[data-v="D"] .pick .it.on { background: var(--chip); color: var(--ink); }
+
+/* ================================================================
+   E · CAPSULE TERMINAL — C's skeleton, A's skin.
+   Floating capsule at the edge and a card notebook from C, but
+   dressed as an instrument: Plex Mono, hairlines, small radii, amber
+   primary, tree-drawn Task rows, stepped status blink. The picker
+   still springs out at the caret.
+   ================================================================ */
+section[data-v="E"] {
+  --bg: #0c0d0c; --panel: #131513; --line: #2a2e29; --ink: #dfe3d6; --dim: #858d7f; --faint: #4d5349;
+  --act: #ffb547; --wait: #6fd6c4; --grill: #c3a6ff; --err: #ff6b5b;
+  --cmp-pad: 10px 14px 10px 30px; --cmp-lh: 21px; --cmp-min: 42px; --cmp-ink: var(--ink); --cmp-caret: var(--act); --cmp-ph: var(--faint);
+  background: var(--bg); color: var(--ink); font: 400 12.5px/1.55 "IBM Plex Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: light) { section[data-v="E"] { --bg: #f2f1ec; --panel: #fbfaf6; --line: #dcdad1; --ink: #1f2119; --dim: #6c7064; --faint: #a9ab9f; --act: #b36b00; --wait: #0f8a7b; --grill: #6b48d6; } }
+.E-win { position: absolute; left: 40px; top: 40px; right: 470px; bottom: 70px; display: grid; grid-template-rows: auto 1fr; gap: 14px; }
+.E-tabs { display: flex; gap: 2px; font: 500 11px "IBM Plex Sans Condensed"; letter-spacing: .14em; text-transform: uppercase; }
+.E-tabs .brand { color: var(--act); letter-spacing: .32em; margin-right: 22px; padding: 6px 0; }
+.E-tabs a { padding: 6px 12px; color: var(--dim); text-decoration: none; border: 1px solid transparent; border-radius: 4px; }
+.E-tabs a.on { border-color: var(--line); color: var(--ink); background: var(--panel); }
+.E-tabs .n { margin-left: 6px; padding: 0 5px; background: var(--act); color: var(--bg); border-radius: 3px; display: inline-block; }
+.E-tabs .n.bump { animation: pop .45s cubic-bezier(.3,1.8,.5,1) 1; }
+.E-feed { overflow: auto; display: flex; flex-direction: column; gap: 8px; }
+.E-day { font: 500 10.5px "IBM Plex Sans Condensed"; letter-spacing: .24em; text-transform: uppercase; color: var(--act); padding: 8px 0 0; }
+.E-blk { border: 1px solid var(--line); border-radius: 6px; background: var(--panel); padding: 9px 12px; }
+.E-blk .t { color: var(--faint); font-size: 11px; }
+.E-tree { color: var(--dim); margin-top: 4px; }
+.E-tree div { display: flex; gap: 10px; }
+.E-tree .br { color: var(--faint); }
+.E-tree .sg { color: var(--k); font-weight: 600; width: 16px; }
+.E-tree .tt { flex: 1; }
+.E-st { font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; }
+.E-st.needs { color: var(--bg); background: var(--act); padding: 0 6px; border-radius: 3px; }
+.E-st.flight { color: var(--wait); } .E-st.flight::after { content: " ▮"; animation: blink 1s steps(2) infinite; }
+.E-st.closed { color: var(--faint); }
+.E-blk.new { animation: E-type .6s steps(8) 1; }
+@keyframes E-type { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0); } }
+.E-cap { position: absolute; right: 24px; top: 40px; width: 420px; z-index: 5; background: var(--panel); border: 1px solid var(--line); border-radius: 16px; }
+.E-cap:focus-within { border-color: var(--act); }
+.E-cap .hd { display: flex; justify-content: space-between; padding: 8px 14px 0; font-size: 10.5px; color: var(--faint); }
+.E-cap .hd b { color: var(--act); font-weight: 500; letter-spacing: .2em; }
+.E-cap .cmp::before { content: ">"; position: absolute; left: 14px; top: 10px; color: var(--act); line-height: 21px; }
+.E-cap .ft { display: flex; gap: 4px; padding: 0 10px 10px; }
+.E-cap .modes span { font-size: 10.5px; padding: 1px 8px; border-radius: 4px; border: 1px solid var(--line); color: var(--faint); transition: all .2s cubic-bezier(.3,1.6,.5,1); display: inline-block; }
+.E-cap .modes span.on:not(.note) { color: var(--bg); background: var(--k); border-color: var(--k); }
+.E-cap .modes span.on.note { color: var(--ink); }
+section[data-v="E"] .hl .sg { color: var(--bg); background: var(--k); border-radius: 2px; }
+section[data-v="E"] .ref { color: var(--act); border-bottom: 1px dotted var(--act); }
+section[data-v="E"] .ref.bad { color: var(--err); border-bottom: 1px solid var(--err); text-decoration: line-through; }
+section[data-v="E"] .prj { color: var(--wait); }
+section[data-v="E"] .pick { position: absolute; width: 360px; background: var(--panel); border: 1px solid var(--act); border-radius: 8px; padding: 4px 0; z-index: 9; }
+section[data-v="E"] .pick.open { animation: pop .28s cubic-bezier(.3,1.6,.5,1) 1; transform-origin: 0 0; }
+section[data-v="E"] .pick .grp { padding: 5px 12px 1px; font: 500 10px "IBM Plex Sans Condensed"; letter-spacing: .2em; text-transform: uppercase; color: var(--faint); }
+section[data-v="E"] .pick .it { display: grid; grid-template-columns: 150px 1fr; gap: 10px; padding: 3px 12px; color: var(--dim); }
+section[data-v="E"] .pick .it .id { color: var(--ink); }
+section[data-v="E"] .pick .it .k { display: none; }
+section[data-v="E"] .pick .it.on { background: var(--act); color: var(--bg); }
+section[data-v="E"] .pick .it.on .id { color: var(--bg); }
+
+/* ================================================================
+   F · SPOTLIGHT — summoned, centred palette.
+   The hotkey opens a big palette at the top third of the screen whose
+   left edge takes the hue of the directive you're typing; the picker
+   is a docked list with kind columns (A). The Notebook is a timeline
+   on a spine: Notes are dots, Tasks branch off in their hue (C).
+   ================================================================ */
+section[data-v="F"] {
+  --bg: #0f1015; --panel: #171921; --line: #262935; --ink: #eceef5; --dim: #9196ab; --faint: #565b70;
+  --act: #ff6a4d; --wait: #19c3b1; --grill: #a07dff; --chip: #222849; --chip-ink: #b3bcff; --err: #ff5d63;
+  --cmp-pad: 16px 20px; --cmp-lh: 30px; --cmp-min: 30px; --cmp-ink: var(--ink); --cmp-caret: var(--k, var(--ink)); --cmp-ph: var(--faint);
+  background: var(--bg); color: var(--ink); font: 400 14px/1.5 "Bricolage Grotesque", "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: light) { section[data-v="F"] { --bg: #f1f2f6; --panel: #ffffff; --line: #e1e3ea; --ink: #191b25; --dim: #686d86; --faint: #a6aabd; --chip: #eef0ff; --chip-ink: #3a46c4; } }
+.F-win { position: absolute; left: 40px; top: 40px; right: 40px; bottom: 70px; display: grid; grid-template-columns: 200px 1fr; gap: 28px; }
+.F-side { display: flex; flex-direction: column; gap: 4px; font-family: "Geist Mono"; font-size: 12px; }
+.F-side .brand { font: 700 22px "Bricolage Grotesque"; letter-spacing: -.02em; margin-bottom: 18px; }
+.F-side .brand span { color: var(--act); }
+.F-side a { display: flex; justify-content: space-between; padding: 6px 10px; border-radius: 8px; color: var(--dim); text-decoration: none; }
+.F-side a.on { background: var(--panel); color: var(--ink); }
+.F-side .n { color: var(--act); font-weight: 600; }
+.F-side .n.bump { animation: pop .5s cubic-bezier(.3,1.8,.5,1) 1; display: inline-block; }
+.F-side .hint { margin-top: auto; color: var(--faint); font-size: 11px; line-height: 1.7; }
+.F-side kbd { border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; color: var(--dim); }
+.F-feed { overflow: auto; position: relative; padding: 0 0 40px 34px; }
+.F-feed::before { content: ""; position: absolute; left: 11px; top: 8px; bottom: 0; width: 2px; background: var(--line); }
+.F-day { font: 700 13px "Geist Mono"; color: var(--dim); text-transform: uppercase; letter-spacing: .14em; margin: 14px 0 6px; position: relative; }
+.F-item { position: relative; padding: 6px 0 10px; }
+.F-item .dot { position: absolute; left: -28px; top: 13px; width: 12px; height: 12px; border-radius: 50%; background: var(--bg); border: 2px solid var(--dim); }
+.F-item.k-act .dot, .F-item.k-wait .dot, .F-item.k-grill .dot { background: var(--k); border-color: var(--k); }
+.F-item .t { font: 400 11px "Geist Mono"; color: var(--faint); }
+.F-item .tx { font-size: 16px; }
+.F-br { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; padding-left: 18px; position: relative; }
+.F-br::before { content: ""; position: absolute; left: 0; top: -2px; bottom: 12px; width: 14px; border-left: 2px solid var(--k); border-bottom: 2px solid var(--k); border-bottom-left-radius: 10px; }
+.F-task { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+.F-task b { color: var(--k); font-family: "Geist Mono"; }
+.F-st { font: 500 11px "Geist Mono"; padding: 1px 8px; border-radius: 999px; }
+.F-st.needs { background: var(--act); color: #fff; } .F-st.flight { color: var(--wait); background: color-mix(in srgb, var(--wait) 15%, transparent); animation: pulse 1.5s infinite; } .F-st.closed { color: var(--faint); }
+.F-item.new { animation: F-drop .7s cubic-bezier(.3,1.4,.5,1) 1; }
+@keyframes F-drop { from { transform: translateY(-60px) scale(.9); opacity: 0; } }
+section[data-v="F"] .ref { background: var(--chip); color: var(--chip-ink); border-radius: 999px; box-shadow: 0 0 0 2px var(--chip); }
+section[data-v="F"] .F-feed .ref { font: 500 12px "Geist Mono"; padding: 0 4px; }
+section[data-v="F"] .ref.bad { color: var(--err); background: color-mix(in srgb, var(--err) 14%, transparent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--err) 14%, transparent); }
+section[data-v="F"] .prj { color: var(--grill); }
+.F-spot { position: absolute; left: 50%; top: 18%; transform: translateX(-50%); width: 720px; z-index: 5; background: var(--panel); border: 1px solid var(--line); border-radius: 18px; overflow: hidden; }
+.F-spot::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--k, var(--line)); transition: background .3s; }
+.F-spot .cmp { font-size: 20px; }
+section[data-v="F"] .hl .sg { color: var(--k); font-weight: 700; }
+section[data-v="F"] .hl .ref { animation: pop .3s cubic-bezier(.3,1.8,.5,1) 1; display: inline-block; }
+.F-spot .ft { display: flex; gap: 14px; padding: 8px 20px; border-top: 1px solid var(--line); font: 400 11px "Geist Mono"; color: var(--faint); }
+.F-spot .ft .st { margin-left: auto; color: var(--dim); }
+section[data-v="F"] .pick { border-top: 1px solid var(--line); padding: 6px; max-height: 280px; overflow: auto; }
+section[data-v="F"] .pick.open { animation: D-unfold .3s cubic-bezier(.3,1.4,.5,1) 1; transform-origin: top; }
+section[data-v="F"] .pick .grp { padding: 6px 14px 2px; font: 500 10.5px "Geist Mono"; text-transform: uppercase; letter-spacing: .14em; color: var(--faint); }
+section[data-v="F"] .pick .it { display: grid; grid-template-columns: 200px 1fr 60px; gap: 12px; padding: 7px 14px; border-radius: 10px; }
+section[data-v="F"] .pick .it .id { font: 500 12.5px "Geist Mono"; color: var(--chip-ink); }
+section[data-v="F"] .pick .it .ti { color: var(--dim); }
+section[data-v="F"] .pick .it .k { font: 400 11px "Geist Mono"; color: var(--faint); text-align: right; }
+section[data-v="F"] .pick .it.on { background: var(--chip); }
+section[data-v="F"] .pick .it.on .ti { color: var(--ink); }
+
+/* ================================================================
+   G · SPLIT DECK — what you wrote vs what's moving.
+   Notebook is a dense mono log (A) on the left; a live lane on the
+   right holds open Tasks as hue cards that spring between groups as
+   their status changes (C). The hover Composer is a pill docked to
+   the bottom-right edge that grows upward. Condensed caps for
+   structure, Bricolage for prose.
+   ================================================================ */
+section[data-v="G"] {
+  --bg: #101114; --panel: #17181d; --panel2: #1d1f26; --line: #272a33; --ink: #e9ebf1; --dim: #8b90a2; --faint: #535868;
+  --act: #ff7a45; --wait: #2bb8d6; --grill: #a77bff; --chip: #23273a; --chip-ink: #b0baff; --err: #ff5d63;
+  --cmp-pad: 12px 16px; --cmp-lh: 23px; --cmp-min: 46px; --cmp-ink: var(--ink); --cmp-caret: var(--act); --cmp-ph: var(--faint);
+  background: var(--bg); color: var(--ink); font: 400 13.5px/1.5 "Bricolage Grotesque", "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: light) { section[data-v="G"] { --bg: #f2f3f6; --panel: #ffffff; --panel2: #f7f8fb; --line: #e1e3ea; --ink: #1a1c25; --dim: #686d86; --faint: #a6aabd; --chip: #eef0ff; --chip-ink: #3a46c4; } }
+.G-win { position: absolute; left: 40px; top: 40px; right: 40px; bottom: 70px; display: grid; grid-template-rows: 44px 1fr; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); overflow: hidden; }
+.G-top { display: flex; align-items: center; gap: 22px; padding: 0 16px; border-bottom: 1px solid var(--line); font: 600 11px "IBM Plex Sans Condensed"; letter-spacing: .16em; text-transform: uppercase; }
+.G-top .brand { font: 700 16px "Bricolage Grotesque"; letter-spacing: -.01em; text-transform: none; }
+.G-top a { color: var(--dim); text-decoration: none; padding: 13px 0; border-bottom: 2px solid transparent; }
+.G-top a.on { color: var(--ink); border-color: var(--act); }
+.G-top .n { margin-left: 6px; padding: 1px 6px; border-radius: 999px; background: var(--act); color: #fff; letter-spacing: 0; display: inline-block; }
+.G-top .n.bump { animation: pop .5s cubic-bezier(.3,1.8,.5,1) 1; }
+.G-body { display: grid; grid-template-columns: 1fr 360px; min-height: 0; }
+.G-log { overflow: auto; font: 400 12.5px/1.55 "IBM Plex Mono", monospace; }
+.G-day { position: sticky; top: 0; background: var(--panel); padding: 10px 16px 6px; font: 600 10.5px "IBM Plex Sans Condensed"; letter-spacing: .2em; text-transform: uppercase; color: var(--dim); border-bottom: 1px solid var(--line); }
+.G-row { display: grid; grid-template-columns: 56px 18px 1fr; gap: 6px; padding: 6px 16px; border-bottom: 1px solid var(--line); }
+.G-row .t { color: var(--faint); }
+.G-row .sg { color: var(--k); font-weight: 600; }
+.G-row .src { color: var(--faint); }
+.G-row.new { animation: G-flash 1s ease-out 1; }
+@keyframes G-flash { from { background: color-mix(in srgb, var(--act) 20%, transparent); } }
+.G-lane { border-left: 1px solid var(--line); background: var(--panel2); overflow: auto; padding: 12px; }
+.G-grp { font: 600 10.5px "IBM Plex Sans Condensed"; letter-spacing: .2em; text-transform: uppercase; color: var(--dim); margin: 8px 4px 8px; display: flex; justify-content: space-between; }
+.G-card { position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px 10px 16px; margin-bottom: 8px; overflow: hidden; animation: spring-in .5s cubic-bezier(.3,1.5,.5,1) 1; }
+.G-card::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--k); }
+.G-card .tt { font-size: 14px; }
+.G-card .mt { display: flex; gap: 8px; align-items: center; margin-top: 4px; font: 400 11px "IBM Plex Mono"; color: var(--faint); }
+.G-st { padding: 0 7px; border-radius: 999px; }
+.G-st.needs { background: var(--act); color: #fff; } .G-st.flight { color: var(--wait); background: color-mix(in srgb, var(--wait) 14%, transparent); animation: pulse 1.5s infinite; } .G-st.closed { color: var(--faint); }
+section[data-v="G"] .ref { color: var(--chip-ink); background: var(--chip); border-radius: 4px; box-shadow: 0 0 0 2px var(--chip); }
+section[data-v="G"] .ref.bad { color: var(--err); background: transparent; box-shadow: none; text-decoration: wavy underline var(--err); }
+section[data-v="G"] .prj { color: var(--grill); }
+.G-pill { position: absolute; right: 0; bottom: 120px; width: 440px; z-index: 5; background: var(--panel); border: 1px solid var(--line); border-right: 0; border-radius: 22px 0 0 22px; display: flex; flex-direction: column-reverse; }
+.G-pill:focus-within { border-color: color-mix(in srgb, var(--act) 55%, var(--line)); }
+.G-pill .ft { display: flex; gap: 6px; align-items: center; padding: 0 14px 10px; font: 400 11px "IBM Plex Mono"; color: var(--faint); }
+.G-pill .modes span { width: 22px; height: 22px; border-radius: 7px; display: inline-grid; place-items: center; background: var(--panel2); color: var(--faint); font-weight: 600; transition: all .25s cubic-bezier(.3,1.6,.5,1); }
+.G-pill .modes span.note { width: auto; padding: 0 8px; }
+.G-pill .modes span.on:not(.note) { background: var(--k); color: #fff; transform: scale(1.12) rotate(-4deg); }
+.G-pill .modes span.on.note { color: var(--ink); }
+.G-pill .ft .st { margin-left: auto; }
+section[data-v="G"] .hl .sg { color: var(--k); font-weight: 700; }
+section[data-v="G"] .hl .ref { animation: pop .3s cubic-bezier(.3,1.8,.5,1) 1; display: inline-block; }
+section[data-v="G"] .pick { border-bottom: 1px solid var(--line); padding: 6px; max-height: 260px; overflow: auto; }
+section[data-v="G"] .pick.open { animation: G-rise .3s cubic-bezier(.3,1.4,.5,1) 1; transform-origin: bottom; }
+@keyframes G-rise { from { transform: scaleY(.4) translateY(20px); opacity: 0; } }
+section[data-v="G"] .pick .grp { padding: 6px 10px 2px; font: 600 10px "IBM Plex Sans Condensed"; letter-spacing: .2em; text-transform: uppercase; color: var(--faint); }
+section[data-v="G"] .pick .it { display: grid; grid-template-columns: 160px 1fr; gap: 10px; padding: 5px 10px; border-radius: 10px; }
+section[data-v="G"] .pick .it .id { font: 500 12px "IBM Plex Mono"; color: var(--chip-ink); }
+section[data-v="G"] .pick .it .ti { color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+section[data-v="G"] .pick .it .k { display: none; }
+section[data-v="G"] .pick .it.on { background: var(--chip); }
+section[data-v="G"] .pick .it.on .ti { color: var(--ink); }
+.D-strip .modes span.st { border: 0; padding: 0; }
+.E-cap .modes span:last-child { border: 0; }
+.G-pill .modes span.st { width: auto; height: auto; background: none; display: inline; transform: none; }
 </style>
 </head>
-<body data-v="A">
+<body data-v="D">
 
-<!-- ======================= A · SIGNAL ======================= -->
+<!-- ======================= A · SIGNAL (reference) ======================= -->
 <section data-v="A">
-  <div class="A-label"><b>RELAY</b> · direction A · Signal: an instrument</div>
   <div class="A-strip">
-    <div class="bar"><span class="pfx">&gt;</span><div class="cmp" data-cmp><div class="hl"></div><textarea rows="1" spellcheck="false" placeholder="note, or ! act  ? wait  ?? grill  @ref  +project"></textarea></div></div>
-    <div class="pick" data-pick></div>
-    <div class="meta"><span data-status>idle</span><span><b>ctrl+↵</b> send · <b>esc</b> hide · <b>@</b> ref</span></div>
+    <div class="bar"><span class="pfx">&gt;</span><div class="cmp"><div class="hl"></div><textarea rows="1" spellcheck="false" placeholder="note, or ! act  ? wait  ?? grill  @ref  +project"></textarea></div></div>
+    <div class="pick"></div>
+    <div class="meta"><span class="st">idle</span><span><b>ctrl+↵</b> send · <b>esc</b> hide · <b>@</b> ref</span></div>
   </div>
   <div class="A-win">
-    <nav class="A-rail"><div class="brand">RELAY</div><a class="on" href="#">Notebook</a><a href="#">Tasks <span class="n" data-badge>3</span></a><a href="#">Settings</a></nav>
-    <div class="A-main">
-      <div class="A-head"><b>notebook</b><span>filter: <span style="color:var(--wait)">+any</span> <span style="color:var(--amb)">@any</span></span><span style="margin-left:auto">5 notes · 4 tasks</span></div>
-      <table class="A-log"><tbody data-feed></tbody></table>
-    </div>
+    <nav class="A-rail"><div class="brand">RELAY</div><a class="on" href="#">Notebook</a><a href="#">Tasks <span class="n badge">3</span></a><a href="#">Settings</a></nav>
+    <div class="A-main"><div class="A-head"><b>notebook</b><span>filter: <span style="color:var(--wait)">+any</span> <span style="color:var(--amb)">@any</span></span></div><table class="A-log"><tbody class="feed"></tbody></table></div>
   </div>
 </section>
 
-<!-- ======================= B · MARGIN ======================= -->
-<section data-v="B">
-  <div class="B-win">
-    <nav class="B-tabs"><span class="brand">Relay</span><a class="on" href="#">Notebook</a><a href="#">Tasks<span class="n" data-badge>3</span></a><a href="#">Settings</a></nav>
-    <div class="B-page" data-feed></div>
-  </div>
-  <div class="B-card">
-    <div class="hd"><b>New entry</b><span data-status>blank card</span></div>
-    <div class="cmp" data-cmp><div class="hl"></div><textarea rows="3" spellcheck="false" placeholder="Write. Start a line with ! or ? to hand it off."></textarea></div>
-    <div class="pick" data-pick></div>
-    <div class="ft"><span>! act · ? wait · ?? grill · @ ref · + project</span><span>ctrl ↵ to file</span></div>
-  </div>
-</section>
-
-<!-- ======================= C · BLOOM ======================= -->
+<!-- ======================= C · BLOOM (reference) ======================= -->
 <section data-v="C">
   <div class="C-win">
-    <nav class="C-rail"><div class="logo"></div><a class="on" href="#">Notebook</a><a href="#">Tasks<span class="n" data-badge>3</span></a><a href="#">Settings</a></nav>
-    <div class="C-main" data-feed></div>
+    <nav class="C-rail"><div class="logo"></div><a class="on" href="#">Notebook</a><a href="#">Tasks<span class="n badge">3</span></a><a href="#">Settings</a></nav>
+    <div class="C-main feed"></div>
   </div>
   <div class="C-cap">
-    <div class="hd"><span class="dot"></span><span data-status>listening</span><span style="margin-left:auto">ctrl ↵</span></div>
-    <div class="cmp" data-cmp><div class="hl"></div><textarea rows="1" spellcheck="false" placeholder="What's on your mind?"></textarea></div>
-    <div class="modes"><span class="note on">Note</span><span class="act">! Act</span><span class="wait">? Wait</span><span class="grill">?? Grill</span></div>
-    <div class="pick" data-pick></div>
+    <div class="hd"><span class="dot"></span><span class="st">listening</span><span style="margin-left:auto">ctrl ↵</span></div>
+    <div class="cmp"><div class="hl"></div><textarea rows="1" spellcheck="false" placeholder="What's on your mind?"></textarea></div>
+    <div class="modes"><span class="note on">Note</span><span class="k-act">! Act</span><span class="k-wait">? Wait</span><span class="k-grill">?? Grill</span></div>
+    <div class="pick"></div>
+  </div>
+</section>
+
+<!-- ======================= D · CONSOLE STRIP ======================= -->
+<section data-v="D">
+  <div class="D-strip">
+    <div class="bar"><span class="pfx">›</span><div class="cmp"><div class="hl"></div><textarea rows="1" spellcheck="false" placeholder="note · ! act · ? wait · ?? grill · @ref · +project"></textarea></div></div>
+    <div class="pick"></div>
+    <div class="meta modes"><span class="note on">note</span><span class="k-act">! act</span><span class="k-wait">? wait</span><span class="k-grill">?? grill</span><span class="st">idle</span></div>
+  </div>
+  <div class="D-win">
+    <nav class="D-rail"><div class="brand"><i></i>Relay</div><a class="on" href="#">Notebook</a><a href="#">Tasks <span class="n badge">3</span></a><a href="#">Settings</a></nav>
+    <div class="D-main"><div class="D-head">Notebook <span class="f">+any</span><span class="f">@any</span><span style="margin-left:auto">today</span></div><table class="D-log"><tbody class="feed"></tbody></table></div>
+  </div>
+</section>
+
+<!-- ======================= E · CAPSULE TERMINAL ======================= -->
+<section data-v="E">
+  <div class="E-win">
+    <nav class="E-tabs"><span class="brand">RELAY</span><a class="on" href="#">Notebook</a><a href="#">Tasks<span class="n badge">3</span></a><a href="#">Settings</a></nav>
+    <div class="E-feed feed"></div>
+  </div>
+  <div class="E-cap">
+    <div class="hd"><b>RELAY</b><span class="st">idle</span></div>
+    <div class="cmp"><div class="hl"></div><textarea rows="2" spellcheck="false" placeholder="note · ! act · ? wait · ?? grill"></textarea></div>
+    <div class="ft modes"><span class="note on">note</span><span class="k-act">! act</span><span class="k-wait">? wait</span><span class="k-grill">?? grill</span><span style="margin-left:auto;color:var(--faint);font-size:10.5px">ctrl+↵</span></div>
+    <div class="pick"></div>
+  </div>
+</section>
+
+<!-- ======================= F · SPOTLIGHT ======================= -->
+<section data-v="F">
+  <div class="F-win">
+    <nav class="F-side"><div class="brand">relay<span>.</span></div><a class="on" href="#">Notebook</a><a href="#">Tasks <span class="n badge">3</span></a><a href="#">Settings</a>
+      <div class="hint"><kbd>alt</kbd>+<kbd>space</kbd> summon<br /><kbd>ctrl</kbd>+<kbd>↵</kbd> send<br /><kbd>esc</kbd> dismiss</div></nav>
+    <div class="F-feed feed"></div>
+  </div>
+  <div class="F-spot">
+    <div class="cmp"><div class="hl"></div><textarea rows="1" spellcheck="false" placeholder="Write a note. ! acts, ? waits, ?? grills."></textarea></div>
+    <div class="pick"></div>
+    <div class="ft"><span>@ reference</span><span>+ project</span><span>ctrl ↵ send</span><span class="st">note</span></div>
+  </div>
+</section>
+
+<!-- ======================= G · SPLIT DECK ======================= -->
+<section data-v="G">
+  <div class="G-win">
+    <nav class="G-top"><span class="brand">Relay</span><a class="on" href="#">Notebook</a><a href="#">Tasks<span class="n badge">3</span></a><a href="#">Settings</a></nav>
+    <div class="G-body"><div class="G-log feed"></div><div class="G-lane lane"></div></div>
+  </div>
+  <div class="G-pill">
+    <div class="ft modes"><span class="note on">note</span><span class="k-act">!</span><span class="k-wait">?</span><span class="k-grill">??</span><span class="st">idle</span></div>
+    <div class="cmp"><div class="hl"></div><textarea rows="2" spellcheck="false" placeholder="Jot it. ! to act, ? to wait, ?? to grill."></textarea></div>
+    <div class="pick"></div>
   </div>
 </section>
 
 <div id="sw"><button data-prev>←</button><span class="lbl"></span><button data-next>→</button><button data-play>▶ Play</button></div>
 
 <script>
-const NAMES = { A: "Signal", B: "Margin", C: "Bloom" };
 const REFS = [
   { kind: "Card", id: "CU-8x1k2", title: "Retry storm on webhooks" },
   { kind: "Card", id: "CU-7h2p9", title: "CSV export times out" },
@@ -314,6 +506,7 @@ const REFS = [
 ];
 const KNOWN = new Set(REFS.map(r => r.id));
 const STATUS = { "briefing": "flight", "grilling": "flight", "dispatched": "flight", "awaiting approval": "needs", "needs answer": "needs", "needs project": "needs", "returned": "needs", "done": "closed" };
+const NMARK = "\u0000";
 
 let feed = [
   { day: "Yesterday", t: "17:40", text: "@billing-api#139 Add idempotency keys", src: "PR", tasks: [] },
@@ -323,81 +516,101 @@ let feed = [
   { day: "Today", t: "10:05", text: "? draft a migration plan for @CU-7h2p9", tasks: [{ sg: "?", text: "draft a migration plan", st: "awaiting approval", prj: "web-app" }] },
 ];
 
-const esc = s => s.replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+const esc = s => s.replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const dirOf = line => line.startsWith("??") ? ["??", "grill"] : line.startsWith("!") ? ["!", "act"] : line.startsWith("?") ? ["?", "wait"] : null;
-function inline(s) {
-  return esc(s).replace(/(@[\w#\/.\-]+)|(\+[\w-]+)/g, (m, r, p) =>
-    r ? `<span class="ref${KNOWN.has(r.slice(1)) ? "" : " bad"}">${r}</span>` : `<span class="prj">${p}</span>`);
-}
+const kOf = sg => sg === "!" ? "k-act" : sg === "?" ? "k-wait" : "k-grill";
+const inline = s => esc(s).replace(/(@[\w#\/.\-]+)|(\+[\w-]+)/g, (m, r, p) =>
+  r ? `<span class="ref${KNOWN.has(r.slice(1)) ? "" : " bad"}">${r}</span>` : `<span class="prj">${p}</span>`);
+const bare = s => inline(s.replace(/^(\?\?|!|\?)\s*/, ""));
+const dayLabel = d => d === "Today" ? "Sat 21 Nov" : "Fri 20 Nov";
+
 function highlight(text, caret) {
-  // caret marker lets each variant place its picker at the caret
-  const withMark = text.slice(0, caret) + "\u0000" + text.slice(caret);
+  const withMark = text.slice(0, caret) + NMARK + text.slice(caret);
   return withMark.split("\n").map(line => {
-    const d = dirOf(line.replace("\u0000", ""));
+    const d = dirOf(line.replace(NMARK, ""));
     let body = line, sg = "";
-    if (d) { const n = d[0].length + (line.indexOf("\u0000") < d[0].length && line.indexOf("\u0000") >= 0 ? 1 : 0); sg = line.slice(0, n); body = line.slice(n); }
-    const h = s => inline(s).replace("\u0000", '<i class="cm"></i>');
-    return `<span class="ln${d ? " d-" + d[1] : ""}">${sg ? `<span class="sg" data-s="${esc(sg.replace("\u0000", ""))}">${h(sg)}</span>` : ""}${h(body) || "&#8203;"}</span>`;
+    if (d) { const at = line.indexOf(NMARK), n = d[0].length + (at >= 0 && at < d[0].length ? 1 : 0); sg = line.slice(0, n); body = line.slice(n); }
+    const h = s => inline(s).replace(NMARK, '<i class="cm"></i>');
+    return `<span class="ln${d ? " k-" + d[1] : ""}">${sg ? `<span class="sg">${h(sg)}</span>` : ""}${h(body) || "&#8203;"}</span>`;
   }).join("");
 }
 
-/* ---------- feed renderers: structurally different per variant ---------- */
-const pretty = s => inline(s.replace(/^(\?\?|!|\?)\s*/, ""));
-function taskHtml(v, k) {
-  const cls = STATUS[k.st], kind = k.sg === "!" ? "act" : k.sg === "?" ? "wait" : "grill";
-  if (v === "A") return `<tr class="sub"><td></td><td>${esc(k.sg)} ${esc(k.text)}</td><td><span class="A-st ${cls}">${k.st}</span></td><td style="color:var(--wait)">+${k.prj}</td></tr>`;
-  if (v === "B") return `<div class="B-task"><span>${k.sg === "!" ? "handed off" : k.sg === "?" ? "waiting on you" : "being grilled"}</span><span class="st ${cls}">${k.st}</span><span>${k.prj}</span></div>`;
-  return `<div class="C-task ${kind}"><span class="sg">${esc(k.sg)}</span>${esc(k.text)}<span class="st ${cls}">${k.st}</span></div>`;
-}
-function renderFeed(v) {
-  const el = document.querySelector(`section[data-v="${v}"] [data-feed]`);
+/* ---------- per-variant feed renderers (structure differs per variant) ---------- */
+function byDay(items, onDay, onItem) {
   let out = "", day = null;
-  const items = v === "A" ? feed : [...feed].reverse();
-  for (const [i, e] of items.entries()) {
-    const fresh = e.fresh ? (v === "A" ? " new" : v === "B" ? " B-new" : " C-new") : "";
-    if (e.day !== day) {
-      day = e.day;
-      out += v === "A" ? `<tr class="day"><td colspan="4">${day}</td></tr>`
-          : v === "B" ? `<div class="B-day">${day}</div>`
-          : `<div class="C-day">${day}<span>${day === "Today" ? "Fri 20 Nov" : "Thu 19 Nov"}</span></div>`;
-    }
-    const d = dirOf(e.text);
-    if (v === "A") {
-      out += `<tr class="${fresh}"><td>${e.t}</td><td colspan="3">${e.src ? `<span style="color:var(--faint)">[import ${e.src}]</span> ` : ""}${inline(e.text)}</td></tr>`;
-      out += e.tasks.map(k => taskHtml(v, k)).join("");
-    } else if (v === "B") {
-      const mk = d ? `<span class="mk ${d[1] === "act" ? "" : "wait"}">${esc(d[0])}</span>` : "";
-      out += `<div class="${fresh}"><div class="B-entry"><span class="t">${e.t}</span>${mk}${pretty(e.text)}${e.src ? `<span class="src">imported ${e.src}</span>` : ""}</div>${e.tasks.map(k => taskHtml(v, k)).join("")}</div>`;
-    } else {
-      out += `<div class="C-note${fresh}"><div class="t">${e.t}${e.src ? " · imported " + e.src : ""}</div><div class="tx">${pretty(e.text).replace(/class="ref"/g, 'class="C-chip"')}</div>${e.tasks.length ? `<div class="C-tasks">${e.tasks.map(k => taskHtml(v, k)).join("")}</div>` : ""}</div>`;
-    }
-  }
-  el.innerHTML = out;
-  if (v !== "A") el.scrollTop = 0; else el.parentElement.scrollTop = 1e6;
+  for (const e of items) { if (e.day !== day) { day = e.day; out += onDay(day); } out += onItem(e); }
+  return out;
 }
-function needsCount() { return feed.flatMap(e => e.tasks).filter(k => STATUS[k.st] === "needs").length + 2; }
-function renderBadge(v, bump) {
-  const b = document.querySelector(`section[data-v="${v}"] [data-badge]`);
-  b.textContent = needsCount();
-  if (bump) { b.classList.remove("bump"); void b.offsetWidth; b.classList.add("bump"); }
+const fresh = e => e.fresh ? " new" : "";
+const RENDER = {
+  A(sec) {
+    sec.querySelector(".feed").innerHTML = byDay(feed, d => `<tr class="day"><td colspan="4">${d}</td></tr>`, e =>
+      `<tr class="${fresh(e)}"><td>${e.t}</td><td colspan="3">${e.src ? `<span style="color:var(--faint)">[import ${e.src}]</span> ` : ""}${inline(e.text)}</td></tr>` +
+      e.tasks.map(k => `<tr class="sub"><td></td><td>${esc(k.sg)} ${esc(k.text)}</td><td><span class="A-st ${STATUS[k.st]}">${k.st}</span></td><td style="color:var(--wait)">+${k.prj}</td></tr>`).join(""));
+    sec.querySelector(".A-main").scrollTop = 1e6;
+  },
+  C(sec) {
+    sec.querySelector(".feed").innerHTML = byDay([...feed].reverse(), d => `<div class="C-day">${d}<span>${dayLabel(d)}</span></div>`, e =>
+      `<div class="C-note${fresh(e)}"><div class="t">${e.t}${e.src ? " · imported " + e.src : ""}</div><div class="tx">${bare(e.text)}</div>${e.tasks.length ? `<div class="C-tasks">${e.tasks.map(k => `<div class="C-task ${kOf(k.sg)}"><span class="sg">${esc(k.sg)}</span>${esc(k.text)}<span class="st ${STATUS[k.st]}">${k.st}</span></div>`).join("")}</div>` : ""}</div>`);
+  },
+  D(sec) {
+    sec.querySelector(".feed").innerHTML = byDay(feed, d => `<tr class="day"><td colspan="2">${d}<span>${dayLabel(d)}</span></td></tr>`, e =>
+      `<tr class="${fresh(e)}"><td>${e.t}</td><td class="tx">${e.src ? `<span style="color:var(--faint);font:11px 'Geist Mono'">import·${e.src}</span> ` : ""}${bare(e.text)}</td></tr>` +
+      (e.tasks.length ? `<tr class="sub${fresh(e)}"><td></td><td>${e.tasks.map(k => `<span class="D-task ${kOf(k.sg)}"><b>${esc(k.sg)}</b>${esc(k.text)} <span class="D-st ${STATUS[k.st]}">${k.st}</span> <span class="prj">+${k.prj}</span></span>`).join("")}</td></tr>` : ""));
+    sec.querySelector(".D-main").scrollTop = 1e6;
+  },
+  E(sec) {
+    sec.querySelector(".feed").innerHTML = byDay([...feed].reverse(), d => `<div class="E-day">${d} · ${dayLabel(d)}</div>`, e =>
+      `<div class="E-blk${fresh(e)}"><div class="t">${e.t}${e.src ? " · import " + e.src : ""}</div><div>${inline(e.text)}</div>${e.tasks.length ? `<div class="E-tree">${e.tasks.map((k, i, a) => `<div class="${kOf(k.sg)}"><span class="br">${i === a.length - 1 ? "└─" : "├─"}</span><span class="sg">${esc(k.sg)}</span><span class="tt">${esc(k.text)} <span class="prj">+${k.prj}</span></span><span class="E-st ${STATUS[k.st]}">${k.st}</span></div>`).join("")}</div>` : ""}</div>`);
+  },
+  F(sec) {
+    sec.querySelector(".feed").innerHTML = byDay([...feed].reverse(), d => `<div class="F-day">${d} <span style="color:var(--faint)">${dayLabel(d)}</span></div>`, e => {
+      const k = e.tasks[0] ? kOf(e.tasks[0].sg) : "";
+      return `<div class="F-item ${k}${fresh(e)}"><span class="dot"></span><div class="t">${e.t}${e.src ? " · imported " + e.src : ""}</div><div class="tx">${bare(e.text)}</div>${e.tasks.length ? `<div class="F-br">${e.tasks.map(t => `<div class="F-task ${kOf(t.sg)}"><b>${esc(t.sg)}</b>${esc(t.text)}<span class="F-st ${STATUS[t.st]}">${t.st}</span><span class="prj" style="font:11px 'Geist Mono'">+${t.prj}</span></div>`).join("")}</div>` : ""}</div>`;
+    });
+  },
+  G(sec) {
+    sec.querySelector(".feed").innerHTML = byDay([...feed].reverse(), d => `<div class="G-day">${d} · ${dayLabel(d)}</div>`, e => {
+      const d = dirOf(e.text);
+      return `<div class="G-row${fresh(e)} ${d ? kOf(d[0]) : ""}"><span class="t">${e.t}</span><span class="sg">${d ? esc(d[0]) : e.src ? "↘" : "·"}</span><span>${bare(e.text)}${e.src ? ` <span class="src">import ${e.src}</span>` : ""}</span></div>`;
+    });
+    const open = feed.flatMap(e => e.tasks).filter(k => STATUS[k.st] !== "closed").reverse();
+    const grp = (name, cls) => { const ks = open.filter(k => STATUS[k.st] === cls); return `<div class="G-grp"><span>${name}</span><span>${ks.length}</span></div>` + ks.map(k => `<div class="G-card ${kOf(k.sg)}"><div class="tt">${esc(k.text)}</div><div class="mt"><span class="G-st ${STATUS[k.st]}">${k.st}</span><span class="prj">+${k.prj}</span></div></div>`).join(""); };
+    sec.querySelector(".lane").innerHTML = grp("Needs you", "needs") + grp("In flight", "flight");
+  },
+};
+const KEYS = ["D", "E", "F", "G", "A", "C"];
+const NAMES = {
+  A: ["Signal", "round 1 reference"], C: ["Bloom", "round 1 reference"],
+  D: ["Console Strip", "A's strip + log, C's hues, chips, spring"],
+  E: ["Capsule Terminal", "C's capsule + cards, A's mono, amber, hairlines"],
+  F: ["Spotlight", "centred palette, timeline spine"],
+  G: ["Split Deck", "mono log + live Task lane, bottom pill"],
+};
+const secOf = v => document.querySelector(`section[data-v="${v}"]`);
+const needsCount = () => feed.flatMap(e => e.tasks).filter(k => STATUS[k.st] === "needs").length + 2;
+function renderAll(bump) {
+  for (const v of KEYS) {
+    const sec = secOf(v); RENDER[v](sec);
+    const b = sec.querySelector(".badge"); b.textContent = needsCount();
+    if (bump) { b.classList.remove("bump"); void b.offsetWidth; b.classList.add("bump"); }
+  }
 }
 
 /* ---------- composer behaviour, shared ---------- */
 function setupComposer(v) {
-  const sec = document.querySelector(`section[data-v="${v}"]`);
-  const ta = sec.querySelector("textarea"), hl = sec.querySelector(".hl"), pick = sec.querySelector("[data-pick]"), status = sec.querySelector("[data-status]");
+  const sec = secOf(v), ta = sec.querySelector("textarea"), hl = sec.querySelector(".hl"), pick = sec.querySelector(".pick"), status = sec.querySelector(".st");
+  const caretPick = getComputedStyle(pick).position === "absolute";
+  const idle = status.textContent;
   let items = [], sel = 0, query = null;
-  const caretQuery = () => { const m = ta.value.slice(0, ta.selectionStart).match(/@([\w#\/.\-]*)$/); return m ? m[1] : null; };
   function paint() {
     hl.innerHTML = highlight(ta.value, ta.selectionStart);
     ta.style.height = hl.offsetHeight + "px";
-    const lines = ta.value.split("\n"), dirs = lines.map(dirOf).filter(Boolean);
-    status.textContent = dirs.length ? `${dirs.length} task${dirs.length > 1 ? "s" : ""}: ${dirs.map(d => d[1]).join(", ")}` : ta.value.trim() ? (v === "B" ? "a plain note" : "note") : (v === "A" ? "idle" : v === "B" ? "blank card" : "listening");
-    if (v === "C") {
-      const first = dirs[0]?.[1] ?? "note";
-      sec.querySelectorAll(".modes span").forEach(s => s.classList.toggle("on", s.classList.contains(first)));
-    }
-    query = caretQuery();
+    const dirs = ta.value.split("\n").map(dirOf).filter(Boolean), first = dirs[0]?.[1];
+    status.textContent = dirs.length ? `${dirs.length} task${dirs.length > 1 ? "s" : ""}: ${dirs.map(d => d[1]).join(", ")}` : ta.value.trim() ? "note" : idle;
+    sec.querySelectorAll(".modes span").forEach(s => s.classList.toggle("on", first ? s.classList.contains("k-" + first) : s.classList.contains("note")));
+    const host = sec.querySelector(".F-spot"); if (host) host.className = "F-spot" + (first ? " k-" + first : "");
+    const m = ta.value.slice(0, ta.selectionStart).match(/@([\w#\/.\-]*)$/); query = m ? m[1] : null;
     if (query === null) { pick.classList.remove("open"); return; }
     const q = query.toLowerCase();
     items = REFS.filter(r => (r.id + " " + r.title).toLowerCase().includes(q));
@@ -406,12 +619,14 @@ function setupComposer(v) {
     let last = null, html = "";
     items.forEach((r, i) => {
       if (r.kind !== last) { html += `<div class="grp">${r.kind}</div>`; last = r.kind; }
-      html += `<div class="it${i === sel ? " on" : ""}" data-i="${i}"><span class="id">@${esc(r.id)}</span><span class="ti">${esc(r.title)}</span><span class="k">${r.kind}</span></div>`;
+      html += `<div class="it${i === sel ? " on" : ""}"><span class="id">@${esc(r.id)}</span><span class="ti">${esc(r.title)}</span><span class="k">${r.kind}</span></div>`;
     });
-    const wasOpen = pick.classList.contains("open");
-    pick.innerHTML = html;
-    if (!wasOpen) { pick.classList.add("open"); }
-    if (v === "C") { const m = hl.querySelector(".cm"), box = sec.querySelector(".C-cap").getBoundingClientRect(), mb = m.getBoundingClientRect(); pick.style.left = Math.min(mb.left - box.left - 8, box.width - 330) + "px"; pick.style.top = (mb.bottom - box.top + 6) + "px"; }
+    pick.innerHTML = html; pick.classList.add("open");
+    if (caretPick) {
+      const mk = hl.querySelector(".cm").getBoundingClientRect(), box = pick.offsetParent.getBoundingClientRect();
+      pick.style.left = Math.max(0, Math.min(mk.left - box.left - 8, box.width - pick.offsetWidth - 8)) + "px";
+      pick.style.top = (mk.bottom - box.top + 6) + "px";
+    }
   }
   function accept() {
     const r = items[sel], start = ta.selectionStart - query.length - 1;
@@ -420,19 +635,12 @@ function setupComposer(v) {
   }
   function send() {
     const text = ta.value.trim(); if (!text) return;
-    const lines = text.split("\n"), now = new Date(), t = now.toTimeString().slice(0, 5);
-    const prjM = text.match(/\+([\w-]+)/), refRepo = text.match(/@([\w-]+)#\d+/);
-    const prj = prjM ? prjM[1] : refRepo ? refRepo[1] : null;
+    const lines = text.split("\n"), t = new Date().toTimeString().slice(0, 5);
+    const prjM = text.match(/\+([\w-]+)/), refRepo = text.match(/@([\w-]+)#\d+/), prj = prjM ? prjM[1] : refRepo ? refRepo[1] : null;
     const tasks = lines.filter(dirOf).map(l => { const d = dirOf(l); return { sg: d[0], text: l.slice(d[0].length).replace(/@\S+|\+\S+/g, "").trim(), st: d[1] === "grill" ? "grilling" : "briefing", prj: prj ?? "?", kind: d[1] }; });
-    const entry = { day: "Today", t, text: lines.find(l => !dirOf(l)) ?? lines[0], tasks, fresh: true };
-    if (lines.length > 1 && tasks.length) entry.text = lines.filter(l => !dirOf(l)).join(" ") || lines[0];
-    feed.push(entry);
-    ta.value = ""; paint();
-    ["A", "B", "C"].forEach(x => renderFeed(x)); entry.fresh = false;
-    // drive the new tasks through their first statuses so status motion is visible
-    tasks.forEach(k => {
-      setTimeout(() => { k.st = !prj ? "needs project" : k.kind === "act" ? "dispatched" : "awaiting approval"; ["A", "B", "C"].forEach(x => { renderFeed(x); renderBadge(x, STATUS[k.st] === "needs"); }); }, 1800);
-    });
+    const entry = { day: "Today", t, text: lines.filter(l => !dirOf(l)).join(" ") || lines[0], tasks, fresh: true };
+    feed.push(entry); ta.value = ""; paint(); renderAll(false); entry.fresh = false;
+    tasks.forEach(k => setTimeout(() => { k.st = !prj ? "needs project" : k.kind === "act" ? "dispatched" : "awaiting approval"; renderAll(STATUS[k.st] === "needs"); }, 1800));
   }
   ta.addEventListener("input", paint);
   ta.addEventListener("click", paint);
@@ -446,15 +654,28 @@ function setupComposer(v) {
     }
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { send(); e.preventDefault(); }
   });
-  paint();
-  return { ta, paint, accept, send, pick };
+  return { ta, paint, accept, send };
 }
-const comps = Object.fromEntries(["A", "B", "C"].map(v => [v, setupComposer(v)]));
-["A", "B", "C"].forEach(v => { renderFeed(v); renderBadge(v); });
+
+/* ---------- switcher ---------- */
+const comps = {};
+function setV(v, push = true) {
+  document.body.dataset.v = v;
+  document.querySelector("#sw .lbl").innerHTML = `${v} · ${NAMES[v][0]}<small>${NAMES[v][1]}</small>`;
+  if (push) { const u = new URL(location); u.searchParams.set("variant", v); history.replaceState(null, "", u); }
+  comps[v] ??= setupComposer(v); comps[v].paint(); RENDER[v](secOf(v));
+}
+const step = d => setV(KEYS[(KEYS.indexOf(document.body.dataset.v) + d + KEYS.length) % KEYS.length]);
+document.querySelector("[data-prev]").onclick = () => step(-1);
+document.querySelector("[data-next]").onclick = () => step(1);
+addEventListener("keydown", e => {
+  if (e.target.closest("input, textarea, [contenteditable]")) return;
+  if (e.key === "ArrowLeft") step(-1); if (e.key === "ArrowRight") step(1);
+});
 
 /* ---------- scripted demo ---------- */
 let playing = false;
-async function play() {
+document.querySelector("[data-play]").onclick = async () => {
   if (playing) return; playing = true;
   const c = comps[document.body.dataset.v], wait = ms => new Promise(r => setTimeout(r, ms));
   c.ta.focus(); c.ta.value = ""; c.paint();
@@ -464,25 +685,11 @@ async function play() {
   c.ta.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown" })); await wait(500); c.accept(); await wait(300);
   await type("\n? check whether @CU-0000 is the same bug"); await wait(1400);
   c.send(); playing = false;
-}
+};
 
-/* ---------- switcher ---------- */
-const KEYS = ["A", "B", "C"];
-function setV(v, push = true) {
-  document.body.dataset.v = v;
-  document.querySelector("#sw .lbl").textContent = `${v} (${NAMES[v]})`;
-  if (push) { const u = new URL(location); u.searchParams.set("variant", v); history.replaceState(null, "", u); }
-  renderFeed(v);
-}
-const step = d => setV(KEYS[(KEYS.indexOf(document.body.dataset.v) + d + KEYS.length) % KEYS.length]);
-document.querySelector("[data-prev]").onclick = () => step(-1);
-document.querySelector("[data-next]").onclick = () => step(1);
-document.querySelector("[data-play]").onclick = play;
-addEventListener("keydown", e => {
-  if (e.target.closest("input, textarea, [contenteditable]")) return;
-  if (e.key === "ArrowLeft") step(-1); if (e.key === "ArrowRight") step(1);
-});
-setV(KEYS.includes(new URLSearchParams(location.search).get("variant")) ? new URLSearchParams(location.search).get("variant") : "A", false);
+renderAll(false);
+const qv = new URLSearchParams(location.search).get("variant");
+setV(KEYS.includes(qv) ? qv : "D", false);
 </script>
 </body>
 </html>
