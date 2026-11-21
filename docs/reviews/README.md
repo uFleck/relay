@@ -88,6 +88,7 @@ Then state the commit reviewed and any follow-up package that should be opened.
 | 2026-11-21 | [Live work-provider reads and persistent Reference recovery](2026-11-21-provider-references.md) | `a22f5c1dc9d32c74a070226e0895857bc93cc461` | T3 Code / hy4-flash-free | Local implementation complete; live UI deferred; awaiting Opus review |
 | 2026-11-21 | [Create-only Note Import](2026-11-21-create-only-note-import.md) | `7546788d07b75adbfe381b0a117b2d0c2997f27f` | T3 Code / hy4-flash-free | Local implementation complete; live UI deferred; awaiting Opus review |
 | 2026-11-21 | [Dock + Lens styling](2026-11-21-dock-lens-styling.md) | `b2717fcaf647e01621de7537e3acf5332a131adf` | T3 Code / hy4-flash-free | Local implementation complete; provider/native acceptance deferred; awaiting Opus review |
+| 2026-11-21 | [Windows Dock summon, focus and resize](2026-11-21-windows-dock.md) | `ff4a8d5` | T3 Code / hy4-flash-free | Local implementation complete; isolated desktop smoke passed; elevated/full-screen/mixed-DPI deferred; awaiting Opus review |
 
 The release audit is a section of the scaffold record because it audits the
 scaffold's release pipeline; it does not change the scaffold commit.
