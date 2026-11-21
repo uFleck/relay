@@ -1,0 +1,488 @@
+<!doctype html>
+<!--
+  PROTOTYPE, throwaway (wayfinder ticket "Visual identity direction, built around the Composer", relay#14).
+  Three visual identities for Relay v2, switchable via ?variant=A|B|C and the floating bar (or ← →).
+  Each shows the hover Composer (centrepiece) docked at the screen edge and a slice of the main window's Notebook.
+  Try: type in the Composer. "!" / "?" / "??" at line start, "@" opens the picker, "+project". Ctrl+Enter sends.
+  "Play" runs a scripted demo. Nothing persists.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Relay v2 identity</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=Instrument+Sans:wght@400;500;600&family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { overflow: hidden; }
+section[data-v] { display: none; position: fixed; inset: 0; }
+body[data-v="A"] section[data-v="A"],
+body[data-v="B"] section[data-v="B"],
+body[data-v="C"] section[data-v="C"] { display: block; }
+
+/* shared composer mechanics: a transparent textarea over a highlighted mirror */
+.cmp { position: relative; }
+.cmp textarea, .cmp .hl {
+  margin: 0; border: 0; padding: var(--cmp-pad); width: 100%;
+  font: inherit; line-height: var(--cmp-lh); letter-spacing: inherit;
+  white-space: pre-wrap; overflow-wrap: break-word;
+}
+.cmp .hl { pointer-events: none; color: var(--cmp-ink); min-height: var(--cmp-min); }
+.cmp textarea {
+  position: absolute; inset: 0; height: 100%; resize: none; outline: none;
+  background: transparent; color: transparent; caret-color: var(--cmp-caret); overflow: hidden;
+}
+.cmp textarea::placeholder { color: var(--cmp-ph); }
+.hl .ln { display: block; min-height: var(--cmp-lh); }
+.hl .cm { display: inline-block; width: 0; }
+.pick { display: none; }
+.pick.open { display: block; }
+.pick .it.on { }
+.tag { white-space: nowrap; }
+
+/* switcher: deliberately not part of any design */
+#sw {
+  position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 99;
+  display: flex; align-items: center; gap: 6px; padding: 5px 6px;
+  background: #111; color: #fff; border-radius: 999px; font: 500 12px system-ui, sans-serif;
+  box-shadow: 0 4px 18px rgba(0,0,0,.35); outline: 2px dashed #ff0; outline-offset: 2px;
+}
+#sw button { border: 0; background: #333; color: #fff; border-radius: 999px; height: 26px; min-width: 26px; padding: 0 10px; cursor: pointer; font: inherit; }
+#sw button:hover { background: #555; }
+#sw .lbl { min-width: 150px; text-align: center; }
+
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; } }
+
+/* ================================================================
+   A · SIGNAL — an instrument. Dark only, monospace, hairlines,
+   phosphor amber. The hover window is a slim command strip glued to
+   the top edge; the picker docks under it. Motion: fast, stepped,
+   mechanical (ticks, typewriter, scan).
+   ================================================================ */
+section[data-v="A"] {
+  --bg: #0b0c0b; --bg2: #121412; --line: #262a25; --ink: #d8dccf; --dim: #7c8476; --faint: #4a5046;
+  --amb: #ffb547; --amb-soft: rgba(255,181,71,.12); --wait: #7fd1c1; --err: #ff6b5b; --ok: #9be37a;
+  --cmp-pad: 9px 12px; --cmp-lh: 20px; --cmp-min: 20px; --cmp-ink: var(--ink); --cmp-caret: var(--amb); --cmp-ph: var(--faint);
+  background: var(--bg); color: var(--ink); font: 400 12.5px/1.5 "IBM Plex Mono", Consolas, monospace;
+  background-image: linear-gradient(var(--line) 1px, transparent 1px); background-size: 100% 28px; background-position: 0 -1px;
+}
+.A-win { position: absolute; left: 40px; top: 84px; right: 40px; bottom: 70px; border: 1px solid var(--line); background: var(--bg); display: grid; grid-template-columns: 148px 1fr; }
+.A-rail { border-right: 1px solid var(--line); padding: 10px 0; font: 500 11px "IBM Plex Sans Condensed", sans-serif; letter-spacing: .08em; text-transform: uppercase; }
+.A-rail .brand { padding: 0 14px 14px; color: var(--amb); letter-spacing: .3em; }
+.A-rail a { display: flex; justify-content: space-between; padding: 6px 14px; color: var(--dim); text-decoration: none; }
+.A-rail a.on { color: var(--ink); background: var(--bg2); box-shadow: inset 2px 0 var(--amb); }
+.A-rail .n { color: var(--bg); background: var(--amb); padding: 0 5px; font-family: "IBM Plex Mono"; }
+.A-rail .n.bump { animation: A-tick .36s steps(3) 1; }
+@keyframes A-tick { 0%,100% { transform: none } 33% { transform: translateY(-3px) } 66% { transform: translateY(1px) } }
+.A-main { overflow: auto; }
+.A-head { display: flex; gap: 16px; align-items: center; padding: 10px 16px; border-bottom: 1px solid var(--line); color: var(--dim); font-size: 11px; }
+.A-head b { color: var(--ink); font-weight: 500; }
+.A-log { width: 100%; border-collapse: collapse; }
+.A-log td { padding: 5px 16px 5px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+.A-log td:first-child { padding-left: 16px; color: var(--faint); width: 64px; }
+.A-log .day td { color: var(--amb); font: 500 10.5px "IBM Plex Sans Condensed"; letter-spacing: .2em; text-transform: uppercase; padding-top: 14px; border-bottom-color: var(--amb-soft); }
+.A-log tr.sub td { border-bottom-style: dashed; color: var(--dim); }
+.A-log tr.sub td:nth-child(2)::before { content: "└─ "; color: var(--faint); }
+.A-log tr.new { animation: A-scan .5s steps(6) 1; }
+@keyframes A-scan { from { background: var(--amb-soft); clip-path: inset(0 100% 0 0) } to { background: transparent; clip-path: inset(0 0 0 0) } }
+.A-st { display: inline-block; min-width: 128px; font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; }
+.A-st::before { content: "■ "; }
+.A-st.needs { color: var(--amb); } .A-st.flight { color: var(--wait); } .A-st.closed { color: var(--faint); }
+.A-st.flight::before { animation: A-blink 1s steps(2) infinite; }
+@keyframes A-blink { 50% { opacity: 0 } }
+.A-strip { position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: 640px; z-index: 5; }
+.A-strip .bar { display: flex; align-items: stretch; background: var(--bg2); border: 1px solid var(--amb); border-top: 0; }
+.A-strip .pfx { padding: 9px 0 0 12px; color: var(--amb); }
+.A-strip .cmp { flex: 1; }
+.A-strip .meta { display: flex; justify-content: space-between; padding: 3px 12px; font-size: 10.5px; color: var(--faint); background: var(--bg); border: 1px solid var(--line); border-top: 0; }
+.A-strip .meta b { color: var(--dim); font-weight: 500; }
+section[data-v="A"] .hl .d-act { color: var(--ink); }
+section[data-v="A"] .hl .sg { color: var(--bg); background: var(--amb); }
+section[data-v="A"] .hl .d-wait .sg { background: var(--wait); }
+section[data-v="A"] .hl .d-grill .sg { background: var(--ink); }
+section[data-v="A"] .ref { color: var(--amb); text-decoration: underline 1px dotted; text-underline-offset: 3px; }
+section[data-v="A"] .ref.bad { color: var(--err); text-decoration: line-through; }
+section[data-v="A"] .prj { color: var(--wait); }
+section[data-v="A"] .pick { background: var(--bg2); border: 1px solid var(--line); border-top: 1px dashed var(--amb); max-height: 260px; overflow: auto; }
+section[data-v="A"] .pick.open { animation: A-drop .18s steps(3) 1; }
+@keyframes A-drop { from { clip-path: inset(0 0 100% 0) } to { clip-path: inset(0) } }
+section[data-v="A"] .pick .grp { padding: 6px 12px 2px; color: var(--faint); font: 500 10px "IBM Plex Sans Condensed"; letter-spacing: .2em; text-transform: uppercase; }
+section[data-v="A"] .pick .it { display: grid; grid-template-columns: 150px 1fr auto; gap: 10px; padding: 3px 12px; color: var(--dim); }
+section[data-v="A"] .pick .it .id { color: var(--ink); }
+section[data-v="A"] .pick .it.on { background: var(--amb); color: var(--bg); }
+section[data-v="A"] .pick .it.on .id { color: var(--bg); }
+.A-label { position: absolute; left: 40px; top: 34px; color: var(--dim); font-size: 11px; }
+.A-label b { color: var(--amb); font-weight: 500; letter-spacing: .3em; }
+
+/* ================================================================
+   B · MARGIN — a notebook. Paper light (warm dark at night), a
+   serif for what you write, a sans for the machine. Sigils live in a
+   ruled left margin as ink marks; References read as footnotes.
+   The hover window is an index card at the right edge. Motion: slow
+   ink — fades, underline draws, a card files into the page.
+   ================================================================ */
+section[data-v="B"] {
+  --paper: #f6f2ea; --paper2: #fffdf8; --rule: #e3dccd; --ink: #24211c; --dim: #7a7266; --faint: #b0a796;
+  --red: #c4432b; --blue: #2c5aa0; --green: #3f7a4a; --hl: #f3e3a6;
+  --cmp-pad: 10px 14px 10px 44px; --cmp-lh: 26px; --cmp-min: 78px; --cmp-ink: var(--ink); --cmp-caret: var(--red); --cmp-ph: var(--faint);
+  background: var(--paper); color: var(--ink); font: 400 13px/1.5 "Instrument Sans", "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  section[data-v="B"] { --paper: #1c1a17; --paper2: #24211d; --rule: #36322b; --ink: #ece5d8; --dim: #a39a8b; --faint: #6d665a; --red: #ef7a5f; --blue: #8fb3ec; --green: #8cc596; --hl: #5a4a1a; }
+}
+.B-win { position: absolute; left: 56px; top: 40px; right: 420px; bottom: 60px; display: grid; grid-template-rows: auto 1fr; }
+.B-tabs { display: flex; gap: 26px; align-items: baseline; padding: 0 0 14px 44px; border-bottom: 1px solid var(--rule); }
+.B-tabs .brand { font: italic 400 24px "Newsreader", serif; margin-right: 18px; }
+.B-tabs a { color: var(--dim); text-decoration: none; font-weight: 500; }
+.B-tabs a.on { color: var(--ink); text-decoration: underline 1.5px var(--red); text-underline-offset: 6px; }
+.B-tabs .n { font: italic 13px "Newsreader"; color: var(--red); margin-left: 3px; display: inline-block; }
+.B-tabs .n.bump { animation: B-ink 1.2s ease-out 1; }
+@keyframes B-ink { from { transform: scale(1.6); filter: blur(2px); opacity: 0 } to { transform: none; filter: none; opacity: 1 } }
+.B-page { overflow: auto; position: relative; background: repeating-linear-gradient(var(--paper) 0 31px, var(--rule) 31px 32px); }
+.B-page::before { content: ""; position: absolute; left: 32px; top: 0; bottom: 0; width: 1px; background: var(--red); opacity: .45; }
+.B-day { font: italic 400 15px/32px "Newsreader"; color: var(--dim); padding-left: 44px; height: 32px; }
+.B-entry { position: relative; padding-left: 44px; font: 400 17px/32px "Newsreader", serif; }
+.B-entry .t { position: absolute; right: 8px; text-align: right; font: 400 10.5px/32px "Instrument Sans"; color: var(--faint); }
+.B-entry .mk { position: absolute; left: 10px; width: 18px; text-align: center; font: 600 16px/32px "Newsreader"; color: var(--red); }
+.B-entry .mk.wait { color: var(--blue); }
+.B-entry .fn { font: 500 11px "Instrument Sans"; color: var(--blue); vertical-align: super; }
+.B-entry .src { font: 400 11px "Instrument Sans"; color: var(--faint); margin-left: 8px; }
+.B-task { padding-left: 64px; font: 400 12px/32px "Instrument Sans"; color: var(--dim); display: flex; gap: 14px; }
+.B-task .st { font-style: italic; font-family: "Newsreader"; font-size: 14px; }
+.B-task .st.needs { color: var(--red); background: linear-gradient(var(--hl), var(--hl)) 0 85% / 100% 35% no-repeat; }
+.B-task .st.flight { color: var(--blue); }
+.B-task .st.closed { color: var(--faint); text-decoration: line-through; }
+.B-new { animation: B-file 1s cubic-bezier(.2,.7,.2,1) 1; }
+@keyframes B-file { from { opacity: 0; transform: translateX(120px) rotate(1.5deg); } to { opacity: 1; transform: none; } }
+.B-card { position: absolute; right: 0; top: 120px; width: 380px; z-index: 5; background: var(--paper2); border: 1px solid var(--rule); border-right: 0; border-radius: 3px 0 0 3px; }
+.B-card .hd { display: flex; justify-content: space-between; padding: 10px 14px 0 44px; font: 400 11px "Instrument Sans"; color: var(--faint); }
+.B-card .hd b { font: italic 400 15px "Newsreader"; color: var(--ink); }
+.B-card .cmp { font: 400 17px "Newsreader", serif; background: repeating-linear-gradient(transparent 0 25px, var(--rule) 25px 26px); background-position: 0 10px; }
+.B-card .cmp::before { content: ""; position: absolute; left: 32px; top: 0; bottom: 0; width: 1px; background: var(--red); opacity: .45; }
+.B-card .ft { padding: 6px 14px 10px 44px; font-size: 11px; color: var(--faint); display: flex; justify-content: space-between; }
+section[data-v="B"] .hl .ln { position: relative; }
+section[data-v="B"] .hl .sg { position: relative; color: transparent; }
+section[data-v="B"] .hl .sg::before { content: attr(data-s); position: absolute; left: -34px; width: 22px; text-align: center; color: var(--red); font-weight: 600; animation: B-mark .6s ease-out 1; }
+section[data-v="B"] .hl .d-wait .sg::before, section[data-v="B"] .hl .d-grill .sg::before { color: var(--blue); }
+@keyframes B-mark { from { opacity: 0; transform: scale(1.8); } }
+section[data-v="B"] .hl .sgsp { display: none; }
+section[data-v="B"] .B-page .ref { font: 500 12px "Instrument Sans"; }
+section[data-v="B"] .ref { color: var(--blue); background: linear-gradient(var(--blue), var(--blue)) 0 100% / 100% 1px no-repeat; animation: B-under .5s ease-out 1; }
+@keyframes B-under { from { background-size: 0 1px; } }
+section[data-v="B"] .ref.bad { color: var(--red); background-image: none; text-decoration: wavy underline var(--red); }
+section[data-v="B"] .prj { color: var(--green); font: italic 400 17px "Newsreader"; }
+section[data-v="B"] .pick { position: absolute; right: 100%; top: 0; margin-right: 10px; width: 300px; background: var(--paper2); border: 1px solid var(--rule); border-radius: 3px; padding: 6px 0; }
+section[data-v="B"] .pick.open { animation: B-fade .35s ease-out 1; }
+@keyframes B-fade { from { opacity: 0; transform: translateX(10px); } }
+section[data-v="B"] .pick .grp { padding: 8px 14px 2px; font: italic 13px "Newsreader"; color: var(--faint); }
+section[data-v="B"] .pick .it { padding: 4px 14px; display: flex; flex-direction: column; }
+section[data-v="B"] .pick .it .id { font: 500 11.5px "Instrument Sans"; color: var(--blue); }
+section[data-v="B"] .pick .it .ti { font: 400 14px "Newsreader"; }
+section[data-v="B"] .pick .it .k { display: none; }
+section[data-v="B"] .pick .it.on { background: var(--hl); }
+
+/* ================================================================
+   C · BLOOM — soft and alive. Big rounded capsule floating near the
+   edge, chunky grotesque, each directive has its own hue (Act coral,
+   Wait teal, Grill violet). References become chips. The picker is a
+   bubble at the caret. Motion: springy — chips pop, the capsule
+   breathes while the agent works, sent lines bloom into Task cards.
+   ================================================================ */
+section[data-v="C"] {
+  --bg: #eef0f5; --card: #ffffff; --ink: #1d2030; --dim: #6b7089; --faint: #a7abbe; --line: #e2e5ee;
+  --act: #ff6a4d; --wait: #12b5a5; --grill: #8a63ff; --chip: #eef1ff; --chip-ink: #3a46c4; --err: #e5484d;
+  --cmp-pad: 14px 18px; --cmp-lh: 26px; --cmp-min: 26px; --cmp-ink: var(--ink); --cmp-caret: var(--act); --cmp-ph: var(--faint);
+  background: var(--bg); color: var(--ink); font: 400 14px/1.45 "Bricolage Grotesque", "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  section[data-v="C"] { --bg: #12131a; --card: #1c1e29; --ink: #eef0fa; --dim: #9ca1bb; --faint: #5d6280; --line: #2a2d3c; --chip: #262b4a; --chip-ink: #aab4ff; }
+}
+.C-win { position: absolute; left: 40px; top: 40px; right: 40px; bottom: 60px; display: grid; grid-template-columns: 76px 1fr; gap: 16px; }
+.C-rail { display: flex; flex-direction: column; align-items: center; gap: 10px; padding-top: 8px; }
+.C-rail .logo { width: 44px; height: 44px; border-radius: 16px; background: conic-gradient(from 200deg, var(--act), var(--grill), var(--wait), var(--act)); margin-bottom: 14px; animation: C-breathe 4s ease-in-out infinite; }
+@keyframes C-breathe { 50% { transform: scale(.92) rotate(8deg); border-radius: 22px; } }
+.C-rail a { position: relative; width: 56px; padding: 8px 0; border-radius: 16px; text-align: center; color: var(--dim); text-decoration: none; font-size: 11px; font-weight: 600; }
+.C-rail a.on { background: var(--card); color: var(--ink); }
+.C-rail .n { position: absolute; top: -6px; right: -6px; min-width: 20px; height: 20px; border-radius: 10px; background: var(--act); color: #fff; font-size: 11px; line-height: 20px; }
+.C-rail .n.bump { animation: C-pop .5s cubic-bezier(.3,1.8,.5,1) 1; }
+@keyframes C-pop { from { transform: scale(.3); } }
+.C-main { overflow: auto; padding-right: 440px; }
+.C-day { font: 700 26px "Bricolage Grotesque"; letter-spacing: -.02em; margin: 6px 0 12px; }
+.C-day span { color: var(--faint); font-weight: 400; font-size: 15px; margin-left: 8px; }
+.C-note { background: var(--card); border-radius: 20px; padding: 14px 18px; margin-bottom: 10px; }
+.C-note .t { font-size: 11px; color: var(--faint); font-family: "Geist Mono"; }
+.C-note .tx { font-size: 15px; }
+.C-chip { display: inline-flex; align-items: center; gap: 4px; padding: 0 8px; border-radius: 999px; background: var(--chip); color: var(--chip-ink); font: 500 12px/22px "Geist Mono"; }
+.C-tasks { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.C-task { display: flex; align-items: center; gap: 8px; padding: 6px 12px 6px 6px; border-radius: 14px; background: var(--bg); font-size: 13px; }
+.C-task .sg { width: 26px; height: 26px; border-radius: 9px; display: grid; place-items: center; color: #fff; font-weight: 700; background: var(--act); }
+.C-task.wait .sg { background: var(--wait); } .C-task.grill .sg { background: var(--grill); }
+.C-task .st { font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 999px; }
+.C-task .st.needs { background: var(--act); color: #fff; }
+.C-task .st.flight { background: color-mix(in srgb, var(--wait) 18%, transparent); color: var(--wait); animation: C-pulse 1.6s ease-in-out infinite; }
+.C-task .st.closed { color: var(--faint); }
+@keyframes C-pulse { 50% { opacity: .5; } }
+.C-new { animation: C-bloom .6s cubic-bezier(.3,1.5,.5,1) 1; transform-origin: 90% 0; }
+@keyframes C-bloom { from { transform: scale(.6) translateX(200px); opacity: 0; } }
+.C-cap { position: absolute; right: 24px; top: 40px; width: 400px; z-index: 5; background: var(--card); border-radius: 28px; border: 1px solid var(--line); transition: border-radius .3s; }
+.C-cap:focus-within { border-color: color-mix(in srgb, var(--act) 50%, var(--line)); }
+.C-cap .hd { display: flex; align-items: center; gap: 8px; padding: 12px 18px 0; font-size: 12px; color: var(--dim); }
+.C-cap .hd .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--wait); animation: C-pulse 1.6s infinite; }
+.C-cap .modes { display: flex; gap: 6px; padding: 0 14px 12px; }
+.C-cap .modes span { font-size: 11.5px; font-weight: 600; padding: 3px 10px; border-radius: 999px; background: var(--bg); color: var(--dim); transition: all .25s cubic-bezier(.3,1.6,.5,1); }
+.C-cap .modes span.on.act { background: var(--act); color: #fff; transform: scale(1.06); }
+.C-cap .modes span.on.wait { background: var(--wait); color: #fff; transform: scale(1.06); }
+.C-cap .modes span.on.grill { background: var(--grill); color: #fff; transform: scale(1.06); }
+section[data-v="C"] .hl .sg { color: var(--act); }
+section[data-v="C"] .hl .d-wait .sg { color: var(--wait); } section[data-v="C"] .hl .d-grill .sg { color: var(--grill); }
+section[data-v="C"] .hl .ref { background: var(--chip); color: var(--chip-ink); border-radius: 999px; box-shadow: 0 0 0 2px var(--chip); animation: C-pop .35s cubic-bezier(.3,1.8,.5,1) 1; display: inline-block; }
+section[data-v="C"] .hl .ref.bad { background: color-mix(in srgb, var(--err) 15%, transparent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--err) 15%, transparent); color: var(--err); }
+section[data-v="C"] .prj { color: var(--grill); }
+section[data-v="C"] .C-main .prj { font-weight: 600; }
+section[data-v="C"] .pick { position: absolute; width: 320px; background: var(--card); border: 1px solid var(--line); border-radius: 20px; padding: 8px; z-index: 9; }
+section[data-v="C"] .pick.open { animation: C-pop .3s cubic-bezier(.3,1.6,.5,1) 1; transform-origin: 0 0; }
+section[data-v="C"] .pick .grp { padding: 6px 10px 2px; font-size: 11px; font-weight: 600; color: var(--faint); }
+section[data-v="C"] .pick .it { display: flex; gap: 8px; align-items: center; padding: 6px 10px; border-radius: 12px; }
+section[data-v="C"] .pick .it .id { font: 500 12px "Geist Mono"; color: var(--chip-ink); }
+section[data-v="C"] .pick .it .ti { color: var(--dim); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+section[data-v="C"] .pick .it .k { display: none; }
+section[data-v="C"] .pick .it.on { background: var(--chip); }
+</style>
+</head>
+<body data-v="A">
+
+<!-- ======================= A · SIGNAL ======================= -->
+<section data-v="A">
+  <div class="A-label"><b>RELAY</b> · direction A · Signal: an instrument</div>
+  <div class="A-strip">
+    <div class="bar"><span class="pfx">&gt;</span><div class="cmp" data-cmp><div class="hl"></div><textarea rows="1" spellcheck="false" placeholder="note, or ! act  ? wait  ?? grill  @ref  +project"></textarea></div></div>
+    <div class="pick" data-pick></div>
+    <div class="meta"><span data-status>idle</span><span><b>ctrl+↵</b> send · <b>esc</b> hide · <b>@</b> ref</span></div>
+  </div>
+  <div class="A-win">
+    <nav class="A-rail"><div class="brand">RELAY</div><a class="on" href="#">Notebook</a><a href="#">Tasks <span class="n" data-badge>3</span></a><a href="#">Settings</a></nav>
+    <div class="A-main">
+      <div class="A-head"><b>notebook</b><span>filter: <span style="color:var(--wait)">+any</span> <span style="color:var(--amb)">@any</span></span><span style="margin-left:auto">5 notes · 4 tasks</span></div>
+      <table class="A-log"><tbody data-feed></tbody></table>
+    </div>
+  </div>
+</section>
+
+<!-- ======================= B · MARGIN ======================= -->
+<section data-v="B">
+  <div class="B-win">
+    <nav class="B-tabs"><span class="brand">Relay</span><a class="on" href="#">Notebook</a><a href="#">Tasks<span class="n" data-badge>3</span></a><a href="#">Settings</a></nav>
+    <div class="B-page" data-feed></div>
+  </div>
+  <div class="B-card">
+    <div class="hd"><b>New entry</b><span data-status>blank card</span></div>
+    <div class="cmp" data-cmp><div class="hl"></div><textarea rows="3" spellcheck="false" placeholder="Write. Start a line with ! or ? to hand it off."></textarea></div>
+    <div class="pick" data-pick></div>
+    <div class="ft"><span>! act · ? wait · ?? grill · @ ref · + project</span><span>ctrl ↵ to file</span></div>
+  </div>
+</section>
+
+<!-- ======================= C · BLOOM ======================= -->
+<section data-v="C">
+  <div class="C-win">
+    <nav class="C-rail"><div class="logo"></div><a class="on" href="#">Notebook</a><a href="#">Tasks<span class="n" data-badge>3</span></a><a href="#">Settings</a></nav>
+    <div class="C-main" data-feed></div>
+  </div>
+  <div class="C-cap">
+    <div class="hd"><span class="dot"></span><span data-status>listening</span><span style="margin-left:auto">ctrl ↵</span></div>
+    <div class="cmp" data-cmp><div class="hl"></div><textarea rows="1" spellcheck="false" placeholder="What's on your mind?"></textarea></div>
+    <div class="modes"><span class="note on">Note</span><span class="act">! Act</span><span class="wait">? Wait</span><span class="grill">?? Grill</span></div>
+    <div class="pick" data-pick></div>
+  </div>
+</section>
+
+<div id="sw"><button data-prev>←</button><span class="lbl"></span><button data-next>→</button><button data-play>▶ Play</button></div>
+
+<script>
+const NAMES = { A: "Signal", B: "Margin", C: "Bloom" };
+const REFS = [
+  { kind: "Card", id: "CU-8x1k2", title: "Retry storm on webhooks" },
+  { kind: "Card", id: "CU-7h2p9", title: "CSV export times out" },
+  { kind: "PR", id: "billing-api#142", title: "Backoff with jitter" },
+  { kind: "PR", id: "billing-api#139", title: "Add idempotency keys" },
+  { kind: "PR", id: "web-app#88", title: "Settings layout pass" },
+  { kind: "Issue", id: "web-app#91", title: "Dark mode contrast on tables" },
+  { kind: "Slack", id: "#support/1731000000", title: "webhooks failing for some accounts" },
+  { kind: "Note", id: "N-12", title: "Standup: retry storm again" },
+];
+const KNOWN = new Set(REFS.map(r => r.id));
+const STATUS = { "briefing": "flight", "grilling": "flight", "dispatched": "flight", "awaiting approval": "needs", "needs answer": "needs", "needs project": "needs", "returned": "needs", "done": "closed" };
+
+let feed = [
+  { day: "Yesterday", t: "17:40", text: "@billing-api#139 Add idempotency keys", src: "PR", tasks: [] },
+  { day: "Yesterday", t: "16:02", text: "?? should we drop the legacy export endpoint", tasks: [{ sg: "??", text: "drop the legacy export endpoint", st: "done", prj: "web-app" }] },
+  { day: "Today", t: "09:12", text: "Standup: retry storm on webhooks again, see @#support/1731000000", tasks: [] },
+  { day: "Today", t: "09:40", text: "! fix webhook retry backoff @billing-api#142 +billing-api", tasks: [{ sg: "!", text: "fix webhook retry backoff", st: "dispatched", prj: "billing-api" }] },
+  { day: "Today", t: "10:05", text: "? draft a migration plan for @CU-7h2p9", tasks: [{ sg: "?", text: "draft a migration plan", st: "awaiting approval", prj: "web-app" }] },
+];
+
+const esc = s => s.replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+const dirOf = line => line.startsWith("??") ? ["??", "grill"] : line.startsWith("!") ? ["!", "act"] : line.startsWith("?") ? ["?", "wait"] : null;
+function inline(s) {
+  return esc(s).replace(/(@[\w#\/.\-]+)|(\+[\w-]+)/g, (m, r, p) =>
+    r ? `<span class="ref${KNOWN.has(r.slice(1)) ? "" : " bad"}">${r}</span>` : `<span class="prj">${p}</span>`);
+}
+function highlight(text, caret) {
+  // caret marker lets each variant place its picker at the caret
+  const withMark = text.slice(0, caret) + "\u0000" + text.slice(caret);
+  return withMark.split("\n").map(line => {
+    const d = dirOf(line.replace("\u0000", ""));
+    let body = line, sg = "";
+    if (d) { const n = d[0].length + (line.indexOf("\u0000") < d[0].length && line.indexOf("\u0000") >= 0 ? 1 : 0); sg = line.slice(0, n); body = line.slice(n); }
+    const h = s => inline(s).replace("\u0000", '<i class="cm"></i>');
+    return `<span class="ln${d ? " d-" + d[1] : ""}">${sg ? `<span class="sg" data-s="${esc(sg.replace("\u0000", ""))}">${h(sg)}</span>` : ""}${h(body) || "&#8203;"}</span>`;
+  }).join("");
+}
+
+/* ---------- feed renderers: structurally different per variant ---------- */
+const pretty = s => inline(s.replace(/^(\?\?|!|\?)\s*/, ""));
+function taskHtml(v, k) {
+  const cls = STATUS[k.st], kind = k.sg === "!" ? "act" : k.sg === "?" ? "wait" : "grill";
+  if (v === "A") return `<tr class="sub"><td></td><td>${esc(k.sg)} ${esc(k.text)}</td><td><span class="A-st ${cls}">${k.st}</span></td><td style="color:var(--wait)">+${k.prj}</td></tr>`;
+  if (v === "B") return `<div class="B-task"><span>${k.sg === "!" ? "handed off" : k.sg === "?" ? "waiting on you" : "being grilled"}</span><span class="st ${cls}">${k.st}</span><span>${k.prj}</span></div>`;
+  return `<div class="C-task ${kind}"><span class="sg">${esc(k.sg)}</span>${esc(k.text)}<span class="st ${cls}">${k.st}</span></div>`;
+}
+function renderFeed(v) {
+  const el = document.querySelector(`section[data-v="${v}"] [data-feed]`);
+  let out = "", day = null;
+  const items = v === "A" ? feed : [...feed].reverse();
+  for (const [i, e] of items.entries()) {
+    const fresh = e.fresh ? (v === "A" ? " new" : v === "B" ? " B-new" : " C-new") : "";
+    if (e.day !== day) {
+      day = e.day;
+      out += v === "A" ? `<tr class="day"><td colspan="4">${day}</td></tr>`
+          : v === "B" ? `<div class="B-day">${day}</div>`
+          : `<div class="C-day">${day}<span>${day === "Today" ? "Fri 20 Nov" : "Thu 19 Nov"}</span></div>`;
+    }
+    const d = dirOf(e.text);
+    if (v === "A") {
+      out += `<tr class="${fresh}"><td>${e.t}</td><td colspan="3">${e.src ? `<span style="color:var(--faint)">[import ${e.src}]</span> ` : ""}${inline(e.text)}</td></tr>`;
+      out += e.tasks.map(k => taskHtml(v, k)).join("");
+    } else if (v === "B") {
+      const mk = d ? `<span class="mk ${d[1] === "act" ? "" : "wait"}">${esc(d[0])}</span>` : "";
+      out += `<div class="${fresh}"><div class="B-entry"><span class="t">${e.t}</span>${mk}${pretty(e.text)}${e.src ? `<span class="src">imported ${e.src}</span>` : ""}</div>${e.tasks.map(k => taskHtml(v, k)).join("")}</div>`;
+    } else {
+      out += `<div class="C-note${fresh}"><div class="t">${e.t}${e.src ? " · imported " + e.src : ""}</div><div class="tx">${pretty(e.text).replace(/class="ref"/g, 'class="C-chip"')}</div>${e.tasks.length ? `<div class="C-tasks">${e.tasks.map(k => taskHtml(v, k)).join("")}</div>` : ""}</div>`;
+    }
+  }
+  el.innerHTML = out;
+  if (v !== "A") el.scrollTop = 0; else el.parentElement.scrollTop = 1e6;
+}
+function needsCount() { return feed.flatMap(e => e.tasks).filter(k => STATUS[k.st] === "needs").length + 2; }
+function renderBadge(v, bump) {
+  const b = document.querySelector(`section[data-v="${v}"] [data-badge]`);
+  b.textContent = needsCount();
+  if (bump) { b.classList.remove("bump"); void b.offsetWidth; b.classList.add("bump"); }
+}
+
+/* ---------- composer behaviour, shared ---------- */
+function setupComposer(v) {
+  const sec = document.querySelector(`section[data-v="${v}"]`);
+  const ta = sec.querySelector("textarea"), hl = sec.querySelector(".hl"), pick = sec.querySelector("[data-pick]"), status = sec.querySelector("[data-status]");
+  let items = [], sel = 0, query = null;
+  const caretQuery = () => { const m = ta.value.slice(0, ta.selectionStart).match(/@([\w#\/.\-]*)$/); return m ? m[1] : null; };
+  function paint() {
+    hl.innerHTML = highlight(ta.value, ta.selectionStart);
+    ta.style.height = hl.offsetHeight + "px";
+    const lines = ta.value.split("\n"), dirs = lines.map(dirOf).filter(Boolean);
+    status.textContent = dirs.length ? `${dirs.length} task${dirs.length > 1 ? "s" : ""}: ${dirs.map(d => d[1]).join(", ")}` : ta.value.trim() ? (v === "B" ? "a plain note" : "note") : (v === "A" ? "idle" : v === "B" ? "blank card" : "listening");
+    if (v === "C") {
+      const first = dirs[0]?.[1] ?? "note";
+      sec.querySelectorAll(".modes span").forEach(s => s.classList.toggle("on", s.classList.contains(first)));
+    }
+    query = caretQuery();
+    if (query === null) { pick.classList.remove("open"); return; }
+    const q = query.toLowerCase();
+    items = REFS.filter(r => (r.id + " " + r.title).toLowerCase().includes(q));
+    if (!items.length) { pick.classList.remove("open"); return; }
+    sel = Math.min(sel, items.length - 1);
+    let last = null, html = "";
+    items.forEach((r, i) => {
+      if (r.kind !== last) { html += `<div class="grp">${r.kind}</div>`; last = r.kind; }
+      html += `<div class="it${i === sel ? " on" : ""}" data-i="${i}"><span class="id">@${esc(r.id)}</span><span class="ti">${esc(r.title)}</span><span class="k">${r.kind}</span></div>`;
+    });
+    const wasOpen = pick.classList.contains("open");
+    pick.innerHTML = html;
+    if (!wasOpen) { pick.classList.add("open"); }
+    if (v === "C") { const m = hl.querySelector(".cm"), box = sec.querySelector(".C-cap").getBoundingClientRect(), mb = m.getBoundingClientRect(); pick.style.left = Math.min(mb.left - box.left - 8, box.width - 330) + "px"; pick.style.top = (mb.bottom - box.top + 6) + "px"; }
+  }
+  function accept() {
+    const r = items[sel], start = ta.selectionStart - query.length - 1;
+    ta.value = ta.value.slice(0, start) + "@" + r.id + " " + ta.value.slice(ta.selectionStart);
+    ta.selectionStart = ta.selectionEnd = start + r.id.length + 2; sel = 0; paint();
+  }
+  function send() {
+    const text = ta.value.trim(); if (!text) return;
+    const lines = text.split("\n"), now = new Date(), t = now.toTimeString().slice(0, 5);
+    const prjM = text.match(/\+([\w-]+)/), refRepo = text.match(/@([\w-]+)#\d+/);
+    const prj = prjM ? prjM[1] : refRepo ? refRepo[1] : null;
+    const tasks = lines.filter(dirOf).map(l => { const d = dirOf(l); return { sg: d[0], text: l.slice(d[0].length).replace(/@\S+|\+\S+/g, "").trim(), st: d[1] === "grill" ? "grilling" : "briefing", prj: prj ?? "?", kind: d[1] }; });
+    const entry = { day: "Today", t, text: lines.find(l => !dirOf(l)) ?? lines[0], tasks, fresh: true };
+    if (lines.length > 1 && tasks.length) entry.text = lines.filter(l => !dirOf(l)).join(" ") || lines[0];
+    feed.push(entry);
+    ta.value = ""; paint();
+    ["A", "B", "C"].forEach(x => renderFeed(x)); entry.fresh = false;
+    // drive the new tasks through their first statuses so status motion is visible
+    tasks.forEach(k => {
+      setTimeout(() => { k.st = !prj ? "needs project" : k.kind === "act" ? "dispatched" : "awaiting approval"; ["A", "B", "C"].forEach(x => { renderFeed(x); renderBadge(x, STATUS[k.st] === "needs"); }); }, 1800);
+    });
+  }
+  ta.addEventListener("input", paint);
+  ta.addEventListener("click", paint);
+  ta.addEventListener("keyup", e => { if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) paint(); });
+  ta.addEventListener("keydown", e => {
+    if (pick.classList.contains("open")) {
+      if (e.key === "ArrowDown") { sel = (sel + 1) % items.length; paint(); e.preventDefault(); return; }
+      if (e.key === "ArrowUp") { sel = (sel - 1 + items.length) % items.length; paint(); e.preventDefault(); return; }
+      if (e.key === "Enter" || e.key === "Tab") { accept(); e.preventDefault(); return; }
+      if (e.key === "Escape") { pick.classList.remove("open"); e.preventDefault(); return; }
+    }
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { send(); e.preventDefault(); }
+  });
+  paint();
+  return { ta, paint, accept, send, pick };
+}
+const comps = Object.fromEntries(["A", "B", "C"].map(v => [v, setupComposer(v)]));
+["A", "B", "C"].forEach(v => { renderFeed(v); renderBadge(v); });
+
+/* ---------- scripted demo ---------- */
+let playing = false;
+async function play() {
+  if (playing) return; playing = true;
+  const c = comps[document.body.dataset.v], wait = ms => new Promise(r => setTimeout(r, ms));
+  c.ta.focus(); c.ta.value = ""; c.paint();
+  const type = async s => { for (const ch of s) { c.ta.setRangeText(ch, c.ta.selectionStart, c.ta.selectionEnd, "end"); c.paint(); await wait(ch === " " ? 70 : 45); } };
+  await type("Users report CSV export hanging past 30s, see @exp"); await wait(900); c.accept(); await wait(400);
+  await type("\n! add streaming to the export endpoint @web"); await wait(700);
+  c.ta.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown" })); await wait(500); c.accept(); await wait(300);
+  await type("\n? check whether @CU-0000 is the same bug"); await wait(1400);
+  c.send(); playing = false;
+}
+
+/* ---------- switcher ---------- */
+const KEYS = ["A", "B", "C"];
+function setV(v, push = true) {
+  document.body.dataset.v = v;
+  document.querySelector("#sw .lbl").textContent = `${v} (${NAMES[v]})`;
+  if (push) { const u = new URL(location); u.searchParams.set("variant", v); history.replaceState(null, "", u); }
+  renderFeed(v);
+}
+const step = d => setV(KEYS[(KEYS.indexOf(document.body.dataset.v) + d + KEYS.length) % KEYS.length]);
+document.querySelector("[data-prev]").onclick = () => step(-1);
+document.querySelector("[data-next]").onclick = () => step(1);
+document.querySelector("[data-play]").onclick = play;
+addEventListener("keydown", e => {
+  if (e.target.closest("input, textarea, [contenteditable]")) return;
+  if (e.key === "ArrowLeft") step(-1); if (e.key === "ArrowRight") step(1);
+});
+setV(KEYS.includes(new URLSearchParams(location.search).get("variant")) ? new URLSearchParams(location.search).get("variant") : "A", false);
+</script>
+</body>
+</html>
