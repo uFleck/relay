@@ -919,6 +919,16 @@ pub fn dispatch_readiness(
     }))
 }
 
+/// True when the saved Brief was written for a different Task line than the one on disk now.
+/// A committed source-line edit uses this to start a new generation without waiting for a panel.
+pub fn brief_is_stale(store: &V2Store, task_id: &str) -> Result<bool, V2Error> {
+    let state = task_line_state(store, task_id)?;
+    let Some(record) = store.brief(task_id)? else {
+        return Ok(false);
+    };
+    Ok(record.source_signature != source_signature(&state.line_text, &state.references))
+}
+
 /// True when **Go** is enabled. Readiness is still `None` for a Wait Task until Go records
 /// approval, so the UI needs this separate, non-dispatching gate.
 pub fn go_enabled(store: &V2Store, task_id: &str) -> Result<bool, V2Error> {
@@ -1039,6 +1049,7 @@ mod tests {
         let first = begin_attempt(&store, &task.id).unwrap().unwrap();
         complete_attempt(&store, &task.id, &first.attempt_id, OUTPUT).unwrap();
         assert!(dispatch_readiness(&store, &task.id).unwrap().is_some());
+        assert!(!brief_is_stale(&store, &task.id).unwrap());
 
         let note_id = task.note_id.clone();
         let line_id = task.source_line_id.clone();
@@ -1062,6 +1073,7 @@ mod tests {
                 }],
             })
             .unwrap();
+        assert!(brief_is_stale(&store, &task.id).unwrap());
         assert!(dispatch_readiness(&store, &task.id).unwrap().is_none());
         let next = begin_attempt(&store, &task.id).unwrap().unwrap();
         assert_ne!(next.source_signature, first.source_signature);

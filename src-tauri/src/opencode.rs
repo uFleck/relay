@@ -897,13 +897,18 @@ fn publish(app: &AppHandle, task_id: &str) {
 /// Starts Briefing for the Act and Wait Tasks a committed submission just created. The core
 /// single-flight rules make a second trigger from either surface collapse onto the same attempt.
 pub fn start_for_tasks(app: &AppHandle, note: &relay_core::v2::V2Note) {
+    let store = app.state::<Arc<V2Store>>();
     let state = app.state::<BriefingState>();
     for task in &note.tasks {
         if !matches!(
             task.agent_mode,
             relay_core::v2::AgentMode::Act | relay_core::v2::AgentMode::Wait
-        ) || task.status != relay_core::v2::TaskStatus::Briefing
-        {
+        ) {
+            continue;
+        }
+        // A fresh Task starts immediately; an edited Task line invalidates its saved Brief.
+        let stale = v2::brief_is_stale(store.inner(), &task.id).unwrap_or(false);
+        if task.status != relay_core::v2::TaskStatus::Briefing && !stale {
             continue;
         }
         if state.begin(&task.id).is_some() {
