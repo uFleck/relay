@@ -392,7 +392,7 @@ pub fn pick(store: &Store, transcript: &str) -> Vec<CandidateTask> {
         if !seen.insert(id.clone()) {
             continue;
         }
-        let Ok(detail) = store.get_task_detail(&id, None) else {
+        let Ok(detail) = store.get_task_detail(&id) else {
             continue;
         };
         out.push(CandidateTask {

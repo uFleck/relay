@@ -1,13 +1,12 @@
 import { useState } from "react";
 import { Icon } from "../components/Icon";
 import { ProposalCard } from "../components/ProposalCard";
-import type { HoverFlags, McpStatus, SlackStatus } from "../ipc";
+import type { HoverFlags, SlackStatus } from "../ipc";
 import { claimState, clock, elapsed, liveClaims, plural, statusOf, useNow } from "../model";
 import type { Proposal, ProposalDecision, Snapshot, StatusCategory, Task } from "../types";
 import { checkForUpdates, downloadUpdate, installUpdate, type UpdateState } from "../updater";
 import { GithubSettings, ProjectRepo } from "./Github";
 import { ClickupSettings } from "./Import";
-import { McpSetup } from "./McpSetup";
 import { FromSlack, JevSettings, SlackSettings } from "./Slack";
 import { TaskGroups } from "./Today";
 import { Switch } from "../ui/controls";
@@ -343,14 +342,11 @@ interface SettingsProps {
   update: UpdateState;
   flags: HoverFlags | null;
   onFlag: (flag: "dnd" | "paused", on: boolean) => Promise<void>;
-  /** Null in the browser, where there is no MCP server. */
-  mcp: McpStatus | null;
-  onMcpRetry: () => void;
   slack: SlackStatus | null;
   onSlack: (status: SlackStatus) => void;
 }
 
-export function SettingsView({ snap, update, flags, onFlag, mcp, onMcpRetry, slack, onSlack }: SettingsProps) {
+export function SettingsView({ snap, update, flags, onFlag, slack, onSlack }: SettingsProps) {
   const [saving, setSaving] = useState<string | null>(null);
   const toggle = async (flag: "dnd" | "paused") => {
     if (!flags) return;
@@ -396,9 +392,6 @@ export function SettingsView({ snap, update, flags, onFlag, mcp, onMcpRetry, sla
 
         <h3 className="sub">ClickUp</h3>
         <ClickupSettings projects={snap.projects} />
-
-        <h3 className="sub">Agents &amp; MCP</h3>
-        <McpSetup status={mcp} onRetry={onMcpRetry} />
 
         <h3 className="sub">Sources</h3>
         {snap.sync.every((s) => s.state === "off") && (

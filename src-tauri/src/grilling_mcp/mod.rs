@@ -6,6 +6,8 @@
 //! a path, searches, mutates state or talks to a provider. Completion, failure, cancellation and
 //! app exit all drop the server, which revokes the bearer and closes the listener.
 
+mod auth;
+
 use std::net::{SocketAddr, TcpListener as StdListener};
 use std::sync::{Arc, Mutex};
 
@@ -22,7 +24,7 @@ use relay_core::v2::{V2Store, grill_reference};
 use serde_json::{Value, json};
 use tokio::sync::oneshot;
 
-use crate::mcp::auth::{self, Gate};
+use self::auth::Gate;
 
 /// Bounded request body. A tool call is one id, not a bulk read.
 pub const MAX_BODY: usize = 64 * 1024;

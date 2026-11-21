@@ -1,7 +1,6 @@
 //! Relay's Tauri shell: the main window, the hover window, tray, global hotkey, single instance, autostart and the
 //! local DB. The UI in both windows is owned by the frontend; this file only routes events to it.
 
-mod analyst;
 mod clickup_sync;
 mod commands;
 mod dispatch;
@@ -10,7 +9,6 @@ mod grilling;
 mod grilling_mcp;
 mod hover;
 mod live;
-mod mcp;
 mod note_import;
 mod opencode;
 mod progress;
@@ -273,7 +271,6 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(HoverState::default())
-        .manage(mcp::McpState::default())
         .manage(opencode::BriefingState::default())
         .manage(grilling::GrillingState::default())
         .manage(dispatch::DispatchGate::default())
@@ -341,7 +338,6 @@ pub fn run() {
             note_import::v2_import_now,
             settings::v2_t3_set_target,
             settings::v2_t3_check_target,
-            commands::ack_change,
             commands::decide_proposal,
             commands::notes_list,
             commands::note_create,
@@ -350,8 +346,6 @@ pub fn run() {
             commands::note_delete,
             commands::note_to_task,
             commands::open_t3,
-            mcp::mcp_status,
-            mcp::mcp_token,
             slack::slack_status,
             slack::slack_sync_now,
             slack::slack_set_transport,
@@ -439,7 +433,6 @@ pub fn run() {
             // Background Reference recovery runs against the v2 database and never touches the
             // legacy store. It reads due rows first and releases SQLite before any network await.
             recovery::start(app.handle().clone());
-            mcp::start(app.handle().clone(), store.clone(), &dir);
             slack::start(app.handle().clone(), store.clone());
             github::start(app.handle().clone());
             // #34: an OpenCode attempt abandoned by a previous run becomes a manual Retry.

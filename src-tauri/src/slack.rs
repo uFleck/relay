@@ -786,7 +786,7 @@ enum Existing {
 
 /// Runs JEV over one episode. `shadow` stores the answers but takes no action.
 async fn analyze(
-    app: &AppHandle,
+    _app: &AppHandle,
     state: &SlackState,
     conversation_id: &str,
     shadow: bool,
@@ -935,8 +935,13 @@ async fn analyze(
         match &route {
             Route::Ignore => ("done", "screened: not work".to_string()),
             Route::Review { reason } => ("pending", format!("needs a human: {reason}")),
-            Route::Change { .. } => ("pending_agent", "append to an existing task".to_string()),
-            Route::NewTask { .. } => ("pending_agent", "create one new task".to_string()),
+            // #41: the headless reviewer is retired. Never queue a reviewer-bound job;
+            // #40 removes this analysis pipeline and its job states altogether.
+            Route::Change { .. } => (
+                "done",
+                "reviewer retired; no task change queued".to_string(),
+            ),
+            Route::NewTask { .. } => ("done", "reviewer retired; no task created".to_string()),
             Route::Rescreen { .. } => ("done", "rescreen at close".to_string()),
         }
     };
@@ -944,9 +949,6 @@ async fn analyze(
         .store
         .set_job_status(&job.id, job_state, Some(&summary), None)
         .map_err(|error| error.to_string())?;
-    if job_state == "pending_agent" {
-        crate::analyst::spawn_job(app.clone(), job.id.clone());
-    }
 
     let episode_state = if shadow {
         "analyzed"
@@ -1328,10 +1330,11 @@ pub fn slack_clear_capture(app: AppHandle, state: State<'_, SlackState>) -> Resu
     Ok(deleted)
 }
 
-/// Requeues a failed or stuck job and starts the reviewer again.
+/// Retries a failed or stuck job. #41 severed the headless reviewer: no job is requeued for
+/// an agent. The remaining v1 job surface is retired wholesale by #40.
 #[tauri::command]
 pub fn job_retry(
-    app: AppHandle,
+    _app: AppHandle,
     state: State<'_, SlackState>,
     id: String,
 ) -> Result<AnalysisJob, String> {
@@ -1354,15 +1357,14 @@ pub fn job_retry(
             "job {id} already wrote; resume or inspect it instead of rerunning"
         ));
     }
-    let job = state
+    state
         .store
-        .set_job_status(&id, "pending_agent", None, None)
-        .map_err(|error| error.to_string())?;
-    crate::analyst::spawn_job(app, id);
-    Ok(job)
+        .set_job_status(&id, "done", None, Some("reviewer retired; no agent retry"))
+        .map_err(|error| error.to_string())
 }
 
-/// Settles a job waiting in Review: `send` starts the reviewer on it, otherwise it is dismissed.
+/// Settles a job waiting in Review. #41 severed the reviewer-send action: accepting a
+/// proposal no longer starts an agent, and #40 retires the whole review queue.
 #[tauri::command]
 pub fn job_resolve_review(
     app: AppHandle,
@@ -1374,13 +1376,9 @@ pub fn job_resolve_review(
         .store
         .resolve_review_job(&id, send)
         .map_err(|error| error.to_string())?;
-    let episode_state = if send { "waiting" } else { "analyzed" };
     let _ = state
         .store
-        .set_slack_episode_state(&job.conversation_id, episode_state);
-    if send {
-        crate::analyst::spawn_job(app.clone(), id);
-    }
+        .set_slack_episode_state(&job.conversation_id, "analyzed");
     let _ = app.emit("relay://change", ());
     Ok(job)
 }

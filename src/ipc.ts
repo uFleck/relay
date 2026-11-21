@@ -46,9 +46,6 @@ export function errorKind(error: unknown): string | null {
 
 export const getSnapshot = () => call<Snapshot>("relay_snapshot", undefined, () => structuredClone(mockSnapshot));
 
-export const ackChange = (args: { taskId: string; changeId: string; rev: number }) =>
-  call<void>("ack_change", args, () => undefined);
-
 export const decideProposal = (args: { proposalId: string; decision: ProposalDecision; rev: number }) =>
   call<void>("decide_proposal", args, () => undefined);
 
@@ -100,35 +97,6 @@ export const hoverPointer = () => call<[number, number] | null>("hover_pointer",
 
 /** Only for a field that needs the keyboard; pass false to hand focus back. */
 export const hoverFocus = (focus: boolean) => call<void>("hover_focus", { focus }, () => undefined);
-
-/* ── MCP ── */
-
-/** The loopback MCP server as Rust reports it; `mcp://status` carries the same shape. It holds no tokens:
-    `mcpToken` fetches one when the user reveals or copies it. */
-export interface McpStatus {
-  running: boolean;
-  port: number;
-  url: string;
-  analystUrl: string;
-  error: string | null;
-}
-
-const browserMcp: McpStatus = {
-  running: false,
-  port: 38547,
-  url: "http://127.0.0.1:38547/mcp",
-  analystUrl: "http://127.0.0.1:38547/mcp/analyst",
-  error: null,
-};
-
-/** The last status; Rust starts the server in the background, so the first answer may say not running yet. */
-export const mcpStatus = () => call<McpStatus>("mcp_status", undefined, () => ({ ...browserMcp }));
-
-/** Asks for one bearer token only when the user copies or reveals it. */
-export const mcpToken = (which: "agent" | "analyst") =>
-  call<string>("mcp_token", { which }, () => "");
-
-export const onMcpStatus = (handler: (status: McpStatus) => void) => onEvent("mcp://status", handler);
 
 export const openExternal = async (url: string) => {
   if (!inTauri) {
@@ -1049,7 +1017,6 @@ interface Events {
   /** A committed v2 write; the payload is the saved Note id. */
   "relay://v2-change": string;
   "relay://state": HoverFlags;
-  "mcp://status": McpStatus;
   "slack://status": SlackStatus;
   "github://status": GithubStatus;
   /** Secret-free provider status map from the v2 Settings boundary. */

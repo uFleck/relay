@@ -171,22 +171,6 @@ pub fn relay_snapshot(
     Ok(store.ui_snapshot(&version, sync)?)
 }
 
-/// A human ack from the task sheet. The rev guard keeps the optimistic UI honest.
-#[tauri::command]
-pub fn ack_change(
-    task_id: String,
-    change_id: String,
-    rev: i64,
-    store: State<'_, Arc<Store>>,
-) -> Result<(), CommandError> {
-    let task = store.get_task(&task_id)?;
-    if task.rev != rev {
-        return Err(CommandError::stale_rev(&task_id, rev, task.rev));
-    }
-    store.ack_change(None, &change_id)?;
-    Ok(())
-}
-
 /// A review-queue decision. `decision` is the UI union string.
 #[tauri::command]
 pub fn decide_proposal(
