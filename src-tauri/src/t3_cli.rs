@@ -146,9 +146,15 @@ pub fn bundled_entrypoint(launcher: &Path) -> Option<(PathBuf, PathBuf)> {
 /// doubled so a quoted `"%VAR%"` still ends in a literal backslash rather than escaping the quote.
 pub fn prepare_arg(value: &str) -> Result<String, CliError> {
     if value.contains(['"', '\r', '\n', '\0']) {
-        return Err(CliError::BadOutput("unsupported character in a CLI argument"));
+        return Err(CliError::BadOutput(
+            "unsupported character in a CLI argument",
+        ));
     }
-    let trailing = value.chars().rev().take_while(|character| *character == '\\').count();
+    let trailing = value
+        .chars()
+        .rev()
+        .take_while(|character| *character == '\\')
+        .count();
     let mut prepared = String::with_capacity(value.len() + trailing);
     prepared.push_str(value);
     for _ in 0..trailing {
@@ -161,7 +167,11 @@ struct Prepared {
     command: Command,
 }
 
-fn command_for(launcher: &Path, arguments: &[String], data_dir: &str) -> Result<Prepared, CliError> {
+fn command_for(
+    launcher: &Path,
+    arguments: &[String],
+    data_dir: &str,
+) -> Result<Prepared, CliError> {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -248,8 +258,14 @@ fn run_with(
     let mut child = command.spawn().map_err(|_| CliError::LauncherMissing)?;
 
     let stdin = child.stdin.take();
-    let stdout = child.stdout.take().ok_or(CliError::BadOutput("no stdout"))?;
-    let stderr = child.stderr.take().ok_or(CliError::BadOutput("no stderr"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or(CliError::BadOutput("no stdout"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or(CliError::BadOutput("no stderr"))?;
     let payload = brief.unwrap_or("").as_bytes().to_vec();
     let out_thread = std::thread::spawn(move || read_bounded(stdout));
     let err_thread = std::thread::spawn(move || read_bounded(stderr));
@@ -490,8 +506,8 @@ pub fn show(thread_id: &str, data_dir: &str) -> Result<ThreadIdentity, CliError>
         serde_json::from_slice(&output.stdout).map_err(|_| CliError::BadOutput("bad show JSON"))?;
     let payload = value.get("result").unwrap_or(&value);
     let thread = payload.get("thread").unwrap_or(payload);
-    let shown: ThreadJson =
-        serde_json::from_value(thread.clone()).map_err(|_| CliError::BadOutput("bad thread JSON"))?;
+    let shown: ThreadJson = serde_json::from_value(thread.clone())
+        .map_err(|_| CliError::BadOutput("bad thread JSON"))?;
     Ok(ThreadIdentity {
         thread_id: shown.thread_id,
         run_id: shown.latest_run_id.unwrap_or_default(),
@@ -501,7 +517,9 @@ pub fn show(thread_id: &str, data_dir: &str) -> Result<ThreadIdentity, CliError>
 }
 
 #[cfg(windows)]
-fn spawn_with_job(mut command: Command) -> Result<(std::process::Child, Option<JobObject>), CliError> {
+fn spawn_with_job(
+    mut command: Command,
+) -> Result<(std::process::Child, Option<JobObject>), CliError> {
     // Spawn normally, then attach the job immediately. The direct Electron entrypoint has no
     // grandchild, and the static cmd wrapper's grandchild starts only after cmd reads its script.
     // This avoids the fragile suspend/resume of the initial thread on newer Windows builds.
@@ -579,7 +597,10 @@ mod tests {
 
     #[test]
     fn arguments_reject_quotes_and_double_a_trailing_backslash() {
-        assert_eq!(prepare_arg(r"C:\My & Folder\%PATH%").unwrap(), r"C:\My & Folder\%PATH%");
+        assert_eq!(
+            prepare_arg(r"C:\My & Folder\%PATH%").unwrap(),
+            r"C:\My & Folder\%PATH%"
+        );
         assert_eq!(prepare_arg(r"C:\").unwrap(), r"C:\\");
         assert_eq!(prepare_arg("a|b<c>d(e)^f!g").unwrap(), "a|b<c>d(e)^f!g");
         assert!(prepare_arg("say \"hi\"").is_err());
@@ -589,11 +610,21 @@ mod tests {
     #[test]
     fn start_outcomes_distinguish_known_failures_from_uncertain_results() {
         assert_eq!(
-            classify_start(&output(false, "", "No running T3 Code server uses C:\\Users\\x", false)),
+            classify_start(&output(
+                false,
+                "",
+                "No running T3 Code server uses C:\\Users\\x",
+                false
+            )),
             LaunchClass::KnownFailure(SERVER_STOPPED)
         );
         assert_eq!(
-            classify_start(&output(false, "", "ThreadProjectNotFoundError: C:\\Secret", false)),
+            classify_start(&output(
+                false,
+                "",
+                "ThreadProjectNotFoundError: C:\\Secret",
+                false
+            )),
             LaunchClass::KnownFailure(PROJECT_NOT_FOUND)
         );
         assert_eq!(
@@ -672,7 +703,10 @@ mod tests {
         )
         .unwrap();
 
-        let tricky = dir.join("a path with & ^ ! and %PATH%").to_string_lossy().to_string();
+        let tricky = dir
+            .join("a path with & ^ ! and %PATH%")
+            .to_string_lossy()
+            .to_string();
         let args = vec![
             "thread".to_string(),
             "start".to_string(),
@@ -682,10 +716,12 @@ mod tests {
             "--title".to_string(),
             "Relay Task ünicode & %PATH%".to_string(),
         ];
-        let brief = "Goal: keep `%PATH%`, &, ^, ! and Unicode 日本語 intact.\nSecond line \"quoted\".";
+        let brief =
+            "Goal: keep `%PATH%`, &, ^, ! and Unicode 日本語 intact.\nSecond line \"quoted\".";
         let data_dir = dir.to_string_lossy().to_string();
         for shim in [&direct_shim, &wrapper_shim] {
-            let result = run_with(Some(shim), &args, Some(brief), &data_dir, QUERY_TIMEOUT).unwrap();
+            let result =
+                run_with(Some(shim), &args, Some(brief), &data_dir, QUERY_TIMEOUT).unwrap();
             assert!(
                 result.status_success,
                 "fixture {} failed: {}",

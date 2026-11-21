@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import { Icon } from "../components/Icon";
 import { BriefPanel } from "../components/BriefPanel";
 import { GrillPanel } from "../components/GrillPanel";
+import { DispatchPanel } from "../components/DispatchPanel";
 import { SIGIL } from "../workspace";
 import type { V2Note, V2Project, V2Task } from "../ipc";
 
@@ -93,6 +94,11 @@ export function TaskSheet({ task, project, note, projects, onClose }: Props) {
           ) : (
             <BriefPanel taskId={task.id} projects={projects} />
           )}
+        </section>
+
+        <section className="sec">
+          <h3>Dispatch</h3>
+          <DispatchPanel taskId={task.id} />
         </section>
 
         {task.pendingAction && (

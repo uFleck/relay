@@ -415,6 +415,42 @@ export const v2GrillingContinueLinkOnly = (taskId: string, revision: number, ide
     () => null,
   );
 
+/* ── T3 dispatch (#36) ── */
+
+export type V2DispatchState = "launching" | "launch_failed" | "reconcile_required" | "bound";
+
+/** The dispatch read for a Task sheet. Buttons come from the stored state, never from a CLI probe. */
+export interface V2DispatchView {
+  taskId: string;
+  state: V2DispatchState;
+  attemptId: string;
+  threadId: string | null;
+  threadUrl: string | null;
+  failureReason: string | null;
+  canRetry: boolean;
+  canCheckAgain: boolean;
+  canLinkExisting: boolean;
+}
+
+export const v2DispatchView = (taskId: string) =>
+  call<V2DispatchView | null>("v2_dispatch_view", { taskId }, () => null);
+
+/** Manual Retry after a known launch failure. An uncertain attempt is still fenced by core. */
+export const v2DispatchRetry = (taskId: string, baseRef: string | null = null) =>
+  call<void>("v2_dispatch_retry", { taskId, baseRef }, () => undefined);
+
+/** Read-only reconciliation: never starts a second thread. */
+export const v2DispatchCheck = (taskId: string) =>
+  call<void>("v2_dispatch_check", { taskId }, () => undefined);
+
+/** Links a thread the user compared with the frozen Brief in T3. */
+export const v2DispatchLink = (taskId: string, threadId: string, userConfirmed: boolean) =>
+  call<void>("v2_dispatch_link", { taskId, threadId, userConfirmed }, () => undefined);
+
+/** Stops the UI wait; a response already in flight still records its thread identity. */
+export const v2DispatchCancel = (taskId: string) =>
+  call<void>("v2_dispatch_cancel", { taskId }, () => undefined);
+
 export interface V2NotebookSnapshot {
   notes: V2Note[];
   projects: V2Project[];
@@ -934,6 +970,8 @@ interface Events {
   "relay://briefing": string;
   /** A Grilling question, answer, closing approval or cancellation changed. Payload is the Task id. */
   "relay://grilling": string;
+  /** A T3 dispatch claim, failure or reconciliation changed. Payload is the Task id. */
+  "relay://dispatch": string;
 }
 
 /** Subscribes to an app event. Returns an unsubscribe; a no-op in the browser. */

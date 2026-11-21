@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 use relay_core::t3_dispatch::{
-    DispatchClaim, DispatchState as AttemptState, DispatchStart, ListedThread, ThreadIdentity,
+    DispatchClaim, DispatchStart, DispatchState as AttemptState, ListedThread, ThreadIdentity,
     bind, bind_after_cancel, claim, identity_matches, link_existing, record_known_failure,
     record_uncertain, recover, save_thread_id, unique_candidate, view,
 };
@@ -358,7 +358,10 @@ pub fn v2_dispatch_link(
 
 /// Stops the UI wait. A response that is already in flight still records its thread identity.
 #[tauri::command(async)]
-pub fn v2_dispatch_cancel(task_id: String, gate: State<'_, DispatchGate>) -> Result<(), CommandError> {
+pub fn v2_dispatch_cancel(
+    task_id: String,
+    gate: State<'_, DispatchGate>,
+) -> Result<(), CommandError> {
     gate.end(&task_id);
     Ok(())
 }

@@ -52,7 +52,10 @@ impl DispatchState {
 
     /// True while a second start must be refused. A known failure is the only released state.
     pub fn is_open(self) -> bool {
-        matches!(self, Self::Launching | Self::ReconcileRequired | Self::Bound)
+        matches!(
+            self,
+            Self::Launching | Self::ReconcileRequired | Self::Bound
+        )
     }
 }
 
@@ -179,7 +182,10 @@ pub fn claim(store: &V2Store, start: &DispatchStart) -> Result<Option<DispatchCl
         t3_data_dir: start.data_dir.trim().to_string(),
         frozen_line: task_line(store, &start.task_id)?,
         brief_revision: readiness.brief_revision,
-        base_ref: start.base_ref.clone().filter(|value| !value.trim().is_empty()),
+        base_ref: start
+            .base_ref
+            .clone()
+            .filter(|value| !value.trim().is_empty()),
         title,
         state: DispatchState::Launching,
         thread_id: None,
@@ -252,7 +258,9 @@ pub fn save_thread_id(
 ) -> Result<Option<DispatchAttempt>, V2Error> {
     let thread_id = thread_id.trim();
     if thread_id.is_empty() {
-        return Err(V2Error::InvalidInput("the returned thread id is empty".into()));
+        return Err(V2Error::InvalidInput(
+            "the returned thread id is empty".into(),
+        ));
     }
     store.save_dispatch_thread_id(attempt_id, thread_id)
 }

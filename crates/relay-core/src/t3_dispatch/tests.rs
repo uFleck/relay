@@ -85,7 +85,10 @@ fn claim_requires_readiness_and_freezes_the_exact_brief_and_inputs() {
     assert_eq!(first.attempt.project_selector, "id:proj-42");
     assert_eq!(first.attempt.t3_data_dir, DATA_DIR);
     assert_eq!(first.attempt.base_ref.as_deref(), Some("main"));
-    assert_eq!(first.attempt.title, format!("Relay Task {}", first.attempt.attempt_id));
+    assert_eq!(
+        first.attempt.title,
+        format!("Relay Task {}", first.attempt.attempt_id)
+    );
     assert!(first.attempt.frozen_line.contains("%PATH%"));
     assert_eq!(first.attempt.brief_revision, 1);
     assert!(first.brief.contains("Ship it"));
@@ -132,7 +135,12 @@ fn known_failure_preserves_the_brief_and_approval_and_allows_one_retry() {
     let after = store.workspace_snapshot().unwrap();
     let saved = after.tasks.iter().find(|item| item.id == task.id).unwrap();
     assert_eq!(saved.status, crate::v2::TaskStatus::Failed);
-    assert!(saved.brief.as_deref().is_some_and(|brief| brief.contains("Ship it")));
+    assert!(
+        saved
+            .brief
+            .as_deref()
+            .is_some_and(|brief| brief.contains("Ship it"))
+    );
     let brief = store.brief(&task.id).unwrap().unwrap();
     assert_eq!(brief.status, crate::v2::BriefStatus::Approved);
     assert_eq!(brief.wait_approval_revision, Some(1));
@@ -198,7 +206,10 @@ fn reconciliation_adopts_only_one_exact_title_with_a_confirmed_identity() {
     let mut wrong_project = exact.clone();
     wrong_project.thread_id = "thread-other".into();
     wrong_project.project_id = Some("other".into());
-    assert_eq!(unique_candidate(&attempt, &[]).map(|c| c.thread_id.as_str()), None);
+    assert_eq!(
+        unique_candidate(&attempt, &[]).map(|c| c.thread_id.as_str()),
+        None
+    );
     assert_eq!(
         unique_candidate(&attempt, &[exact.clone(), renamed.clone()]).map(|c| c.thread_id.as_str()),
         Some("thread-exact")
@@ -217,7 +228,9 @@ fn reconciliation_adopts_only_one_exact_title_with_a_confirmed_identity() {
         project_id: "proj-42".into(),
     };
     assert!(identity_matches(&attempt, &confirmed));
-    let bound = bind(&store, &attempt.attempt_id, &confirmed).unwrap().unwrap();
+    let bound = bind(&store, &attempt.attempt_id, &confirmed)
+        .unwrap()
+        .unwrap();
     assert_eq!(bound.thread_id.as_deref(), Some("thread-exact"));
     let wrong_identity = ThreadIdentity {
         thread_id: wrong_project.thread_id,
@@ -236,24 +249,28 @@ fn manual_link_checks_profile_and_user_comparison() {
     let attempt = store.latest_dispatch_attempt(&task.id).unwrap().unwrap();
     let confirmed = identity(&attempt);
     assert!(link_existing(&store, &attempt, &confirmed, "id:proj-42", DATA_DIR, false).is_err());
-    assert!(link_existing(
-        &store,
-        &attempt,
-        &confirmed,
-        "id:other-project",
-        DATA_DIR,
-        true
-    )
-    .is_err());
-    assert!(link_existing(
-        &store,
-        &attempt,
-        &confirmed,
-        "id:proj-42",
-        r"C:\somewhere\else",
-        true
-    )
-    .is_err());
+    assert!(
+        link_existing(
+            &store,
+            &attempt,
+            &confirmed,
+            "id:other-project",
+            DATA_DIR,
+            true
+        )
+        .is_err()
+    );
+    assert!(
+        link_existing(
+            &store,
+            &attempt,
+            &confirmed,
+            "id:proj-42",
+            r"C:\somewhere\else",
+            true
+        )
+        .is_err()
+    );
     let linked = link_existing(&store, &attempt, &confirmed, "id:proj-42", DATA_DIR, true)
         .unwrap()
         .unwrap();
@@ -310,12 +327,17 @@ fn reopen_with_an_unresolved_attempt_reconciles_and_stale_results_cannot_reopen(
         let recovery = recover(&reopened).unwrap();
         assert_eq!(recovery.reconcile.len(), 1);
         assert!(recovery.start.is_empty());
-        assert_eq!(recovery.reconcile[0].state, DispatchState::ReconcileRequired);
+        assert_eq!(
+            recovery.reconcile[0].state,
+            DispatchState::ReconcileRequired
+        );
         assert_eq!(recovery.reconcile[0].attempt_id, old_attempt_id);
         // A stale result for the abandoned attempt cannot bind a fresh Task or start a new thread.
-        assert!(bind_after_cancel(&reopened, "stale-attempt", &confirmed)
-            .unwrap()
-            .is_none());
+        assert!(
+            bind_after_cancel(&reopened, "stale-attempt", &confirmed)
+                .unwrap()
+                .is_none()
+        );
         assert!(retry(&reopened, &start(&task_id, None)).unwrap().is_none());
         let view = view(&reopened, &task_id).unwrap().unwrap();
         assert!(view.can_check_again && view.can_link_existing && !view.can_retry);
@@ -349,5 +371,12 @@ fn concurrent_callers_produce_exactly_one_claim() {
             .collect::<Vec<_>>()
     });
     assert_eq!(winner.len(), 1);
-    assert_eq!(shared.latest_dispatch_attempt(&task_id).unwrap().unwrap().attempt_id, winner[0]);
+    assert_eq!(
+        shared
+            .latest_dispatch_attempt(&task_id)
+            .unwrap()
+            .unwrap()
+            .attempt_id,
+        winner[0]
+    );
 }

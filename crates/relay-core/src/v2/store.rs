@@ -14,9 +14,8 @@ use rusqlite::{
 };
 
 use super::briefing::{
-    BriefContent, BriefRecord, BriefReadiness, BriefStatus, TaskLineState, source_signature,
+    BriefContent, BriefReadiness, BriefRecord, BriefStatus, TaskLineState, source_signature,
 };
-use crate::t3_dispatch::{DispatchAttempt, DispatchState, ThreadIdentity as DispatchThreadIdentity};
 use super::grilling::{GrillEntry, GrillRecord, GrillStatus};
 use super::import::{ImportCandidate, ImportOutcome, ImportRefreshTarget, RefreshUpdate};
 use super::model::{
@@ -37,6 +36,9 @@ use super::slack_directory::{
 };
 use super::slack_thread::SlackThread;
 use crate::model::{from_unix_millis, new_id, now};
+use crate::t3_dispatch::{
+    DispatchAttempt, DispatchState, ThreadIdentity as DispatchThreadIdentity,
+};
 
 /// One v2 migration and the SQL predicate that is true once its change is on disk.
 /// `applied` is a marker, not a version number: #27 and #28 both shipped a `0002`
@@ -860,10 +862,17 @@ impl V2Store {
         let Some(mut attempt) = dispatch_attempt_by_id(&tx, attempt_id)? else {
             return Ok(None);
         };
-        if !matches!(attempt.state, DispatchState::Launching | DispatchState::ReconcileRequired) {
+        if !matches!(
+            attempt.state,
+            DispatchState::Launching | DispatchState::ReconcileRequired
+        ) {
             return Ok(None);
         }
-        if attempt.thread_id.as_deref().is_some_and(|saved| saved != thread_id) {
+        if attempt
+            .thread_id
+            .as_deref()
+            .is_some_and(|saved| saved != thread_id)
+        {
             return Ok(None);
         }
         let at = now();
@@ -876,7 +885,13 @@ impl V2Store {
         let result = tx.execute(
             "UPDATE dispatch_attempts SET state = ?2, thread_id = ?3, failure_reason = ?4,
                  updated_at = ?5 WHERE attempt_id = ?1",
-            params![attempt_id, attempt.state.as_str(), thread_id, attempt.failure_reason, at],
+            params![
+                attempt_id,
+                attempt.state.as_str(),
+                thread_id,
+                attempt.failure_reason,
+                at
+            ],
         );
         if let Err(rusqlite::Error::SqliteFailure(error, _)) = result
             && error.code == ErrorCode::ConstraintViolation
@@ -3109,16 +3124,17 @@ fn dispatch_attempt_by_id(
 ) -> Result<Option<DispatchAttempt>, V2Error> {
     Ok(conn
         .query_row(
-            &format!(
-                "SELECT {DISPATCH_COLUMNS} FROM dispatch_attempts WHERE attempt_id = ?1"
-            ),
+            &format!("SELECT {DISPATCH_COLUMNS} FROM dispatch_attempts WHERE attempt_id = ?1"),
             params![attempt_id],
             dispatch_attempt_from_row,
         )
         .optional()?)
 }
 
-fn insert_dispatch_attempt(tx: &Transaction<'_>, attempt: &DispatchAttempt) -> rusqlite::Result<()> {
+fn insert_dispatch_attempt(
+    tx: &Transaction<'_>,
+    attempt: &DispatchAttempt,
+) -> rusqlite::Result<()> {
     tx.execute(
         "INSERT INTO dispatch_attempts
              (attempt_id, task_id, project_id, project_selector, t3_data_dir, frozen_line,
@@ -3211,7 +3227,8 @@ fn dispatch_readiness_in(
             )
             .optional()?;
         let closed = exchange.as_ref().is_some_and(|grill| {
-            grill.status == GrillStatus::Approved && grill.source_signature == record.source_signature
+            grill.status == GrillStatus::Approved
+                && grill.source_signature == record.source_signature
         });
         if !closed {
             return Ok(None);
