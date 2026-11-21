@@ -12,6 +12,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::v2::TaskStatus;
 
+/// Decodes a stored lifecycle status for an adapter. The store's own parser stays crate-private.
+pub fn task_status(value: &str) -> Option<crate::v2::TaskStatus> {
+    crate::v2::TaskStatus::parse(value)
+}
+
 /// The failure stage shown when a T3 run, rather than a stage before dispatch, failed.
 pub const FAILURE_STAGE: &str = "t3-run";
 pub const RETRY_MESSAGE: &str = "Please retry the last request.";

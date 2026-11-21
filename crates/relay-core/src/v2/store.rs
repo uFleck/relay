@@ -1470,6 +1470,43 @@ impl V2Store {
         Ok(true)
     }
 
+    /// Reopens a retained draft for an explicit resend after the user checked T3. The old operation
+    /// keeps its id and verbatim message; only its state and revision move forward.
+    pub fn reopen_send(&self, operation_id: &str) -> Result<Option<SendOperation>, V2Error> {
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let Some(operation) = operation_by_id(&tx, operation_id)? else {
+            return Ok(None);
+        };
+        if !matches!(
+            operation.state,
+            SendState::NeedsConfirmation | SendState::Failed
+        ) {
+            return Ok(None);
+        }
+        let at = now();
+        tx.execute(
+            "UPDATE t3_operations SET state = 'reserved', failure_reason = NULL,
+                 run_id = NULL, delivery_state = NULL, revision = revision + 1,
+                 updated_at = ?2 WHERE operation_id = ?1",
+            params![operation_id, at],
+        )?;
+        tx.execute(
+            "UPDATE t3_progress SET revision = revision + 1, updated_at = ?2
+             WHERE attempt_id = ?1",
+            params![operation.attempt_id, at],
+        )?;
+        tx.commit()?;
+        Ok(Some(SendOperation {
+            state: SendState::Reserved,
+            run_id: None,
+            delivery_state: None,
+            failure_reason: None,
+            revision: operation.revision + 1,
+            ..operation
+        }))
+    }
+
     /// Confirms a queued send from `show` and reopens observation of the acknowledged run.
     pub fn confirm_send(&self, operation_id: &str, run_id: &str) -> Result<bool, V2Error> {
         let mut conn = self.conn();

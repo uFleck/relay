@@ -13,6 +13,7 @@ mod live;
 mod mcp;
 mod note_import;
 mod opencode;
+mod progress;
 mod recovery;
 mod secrets;
 mod settings;
@@ -276,6 +277,7 @@ pub fn run() {
         .manage(opencode::BriefingState::default())
         .manage(grilling::GrillingState::default())
         .manage(dispatch::DispatchGate::default())
+        .manage(progress::ProgressState::default())
         .invoke_handler(tauri::generate_handler![
             show_main_window,
             open_main,
@@ -314,6 +316,12 @@ pub fn run() {
             dispatch::v2_dispatch_check,
             dispatch::v2_dispatch_link,
             dispatch::v2_dispatch_cancel,
+            progress::v2_t3_progress,
+            progress::v2_t3_refresh,
+            progress::v2_t3_send,
+            progress::v2_t3_check_again,
+            progress::v2_t3_resend,
+            progress::v2_t3_close,
             settings::v2_provider_status,
             settings::v2_provider_refresh,
             settings::v2_github_set_token,
@@ -440,6 +448,8 @@ pub fn run() {
             grilling::init(app.handle());
             // #36: reconcile attempts left uncertain by a restart, then start ready Tasks.
             dispatch::init(app.handle());
+            // #37: observe bound threads from the store; never replay a dispatch or a pending send.
+            progress::init(app.handle());
             // One v2 service owns startup, scheduled and manual Import for both providers.
             note_import::start(app.handle().clone());
             // #33: a first setup or a directory older than seven days gets its metadata scan on a

@@ -18,7 +18,9 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use relay_core::t3_dispatch::{ListedThread, ThreadIdentity};
+use relay_core::t3_progress::{ObservedMessage, ObservedPullRequest, RunStatus, ThreadObservation};
 use serde::Deserialize;
+use serde_json::Value;
 
 const LAUNCHERS: &[&str] = &["t3.cmd", "t3.exe", "t3"];
 const START_TIMEOUT: Duration = Duration::from_secs(30);
@@ -516,6 +518,230 @@ pub fn show(thread_id: &str, data_dir: &str) -> Result<ThreadIdentity, CliError>
     })
 }
 
+/// Fixed reasons for a send rejected before a new run could exist. The draft is kept verbatim.
+pub const SEND_SERVER_STOPPED: &str = "T3 Code is not running. Start it, then Retry this message.";
+pub const SEND_THREAD_MISSING: &str =
+    "T3 no longer has this thread. Check it in T3 before sending again.";
+pub const SEND_UNSUPPORTED: &str = "The installed t3 CLI cannot send to a thread. Update T3 Code.";
+
+/// The acknowledged part of a `thread send` result. A missing run id is not a failure: the adapter
+/// then uses a read to confirm the exact message on exactly one new run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SendResponse {
+    pub thread_id: Option<String>,
+    pub run_id: Option<String>,
+    pub run_count: Option<u64>,
+    pub status: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SendOutcome {
+    Accepted(SendResponse),
+    KnownFailure(&'static str),
+    Uncertain(&'static str),
+}
+
+fn field_text(value: &Value, keys: &[&str]) -> Option<String> {
+    for key in keys {
+        match value.get(*key) {
+            Some(Value::String(text)) if !text.trim().is_empty() => return Some(text.clone()),
+            Some(Value::Number(number)) => return Some(number.to_string()),
+            Some(Value::Bool(flag)) => return Some(flag.to_string()),
+            _ => {}
+        }
+    }
+    None
+}
+
+fn field_u64(value: &Value, keys: &[&str]) -> Option<u64> {
+    for key in keys {
+        if let Some(number) = value.get(*key).and_then(Value::as_u64) {
+            return Some(number);
+        }
+    }
+    None
+}
+
+fn field_bool(value: &Value, keys: &[&str]) -> bool {
+    keys.iter()
+        .find_map(|key| value.get(*key).and_then(Value::as_bool))
+        .unwrap_or(false)
+}
+
+fn field_array<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a Vec<Value>> {
+    keys.iter()
+        .find_map(|key| value.get(*key).and_then(Value::as_array))
+}
+
+/// `t3 thread show <id> --json --messages <n>` decoded into relay-core's typed observation. Only
+/// the bounded recent messages are read; the thread object carries branch, worktree, run identity,
+/// pending request count and the reported pull requests.
+pub fn show_observation(thread_id: &str, data_dir: &str) -> Result<ThreadObservation, CliError> {
+    let arguments = vec![
+        "thread".to_string(),
+        "show".to_string(),
+        thread_id.to_string(),
+        "--json".to_string(),
+        "--messages".to_string(),
+        "20".to_string(),
+        "--base-dir".to_string(),
+        data_dir.to_string(),
+    ];
+    let output = run_with(None, &arguments, None, data_dir, QUERY_TIMEOUT)?;
+    if !output.status_success {
+        return Err(CliError::BadOutput("the thread could not be shown"));
+    }
+    parse_observation(thread_id, &output.stdout)
+        .ok_or(CliError::BadOutput("the thread observation shape changed"))
+}
+
+fn parse_observation(thread_id: &str, stdout: &[u8]) -> Option<ThreadObservation> {
+    let value: Value = serde_json::from_slice(stdout).ok()?;
+    let payload = value.get("result").unwrap_or(&value);
+    let thread = payload.get("thread").unwrap_or(payload);
+    // Never attribute a response for another thread to the Task being observed.
+    if let Some(shown_id) = field_text(thread, &["threadId", "id"])
+        && shown_id != thread_id
+    {
+        return None;
+    }
+    let error = payload
+        .get("error")
+        .and_then(|value| match value {
+            Value::String(text) => Some(text.clone()),
+            Value::Object(_) => field_text(value, &["message", "reason", "text"]),
+            _ => None,
+        })
+        .filter(|text| !text.trim().is_empty());
+    let mut messages = Vec::new();
+    if let Some(items) =
+        field_array(payload, &["messages"]).or_else(|| field_array(thread, &["messages"]))
+    {
+        for item in items {
+            let text =
+                field_text(item, &["text", "content", "body", "message"]).unwrap_or_default();
+            if text.is_empty() {
+                continue;
+            }
+            messages.push(ObservedMessage {
+                role: field_text(item, &["role", "authorRole"]).unwrap_or_default(),
+                run_id: field_text(item, &["runId"]).unwrap_or_default(),
+                text,
+            });
+        }
+    }
+    let mut pull_requests = Vec::new();
+    if let Some(items) = field_array(thread, &["pullRequests", "linkedPullRequests"]) {
+        for item in items {
+            let url = field_text(item, &["url", "link", "htmlUrl"]).unwrap_or_default();
+            if url.is_empty() {
+                continue;
+            }
+            pull_requests.push(ObservedPullRequest {
+                url,
+                source: field_text(item, &["source"]),
+                state: field_text(item, &["state", "status"]),
+                watching: field_bool(item, &["watching"]),
+            });
+        }
+    }
+    // `linkedPullRequest` may be a single object when the array is absent. Keep previously
+    // observed links elsewhere: this read only adds what it can identify.
+    if pull_requests.is_empty()
+        && let Some(linked) = payload
+            .get("thread")
+            .and_then(|thread| thread.get("linkedPullRequest"))
+            .or_else(|| payload.get("linkedPullRequest"))
+        && linked.is_object()
+        && let Some(url) = field_text(linked, &["url", "link", "htmlUrl"])
+    {
+        pull_requests.push(ObservedPullRequest {
+            url,
+            source: field_text(linked, &["source"]),
+            state: field_text(linked, &["state", "status"]),
+            watching: field_bool(linked, &["watching"]),
+        });
+    }
+    Some(ThreadObservation {
+        thread_id: thread_id.to_string(),
+        active_run_id: field_text(thread, &["activeRunId"]),
+        latest_run_id: field_text(thread, &["latestRunId", "runId"]),
+        status: RunStatus::parse(
+            &field_text(thread, &["status"]).unwrap_or_else(|| "idle".to_string()),
+        ),
+        pending_request_count: field_u64(thread, &["pendingRequestCount"])
+            .unwrap_or(0)
+            .min(u32::MAX as u64) as u32,
+        branch: field_text(thread, &["branch"]),
+        worktree_path: field_text(thread, &["worktreePath"]),
+        link: field_text(thread, &["link"]).or_else(|| field_text(payload, &["link"])),
+        project_id: field_text(thread, &["projectId"]),
+        run_count: field_u64(thread, &["runCount"]).unwrap_or(0),
+        messages,
+        pull_requests,
+        error,
+    })
+}
+
+/// `t3 thread send <id> - --json`: the message goes verbatim to UTF-8 stdin. No shell sees it, so
+/// newlines, quotes, Unicode and percent signs are preserved exactly as the user typed them.
+pub fn send(thread_id: &str, data_dir: &str, message: &str) -> Result<SendOutcome, CliError> {
+    let arguments = vec![
+        "thread".to_string(),
+        "send".to_string(),
+        thread_id.to_string(),
+        "-".to_string(),
+        "--json".to_string(),
+        "--base-dir".to_string(),
+        data_dir.to_string(),
+    ];
+    let output = run_with(None, &arguments, Some(message), data_dir, QUERY_TIMEOUT)?;
+    Ok(classify_send(&output))
+}
+
+/// Pure translation of a finished send. Only recognised pre-send diagnostics release the draft for
+/// an explicit retry; a timeout, lost or malformed result fences sends until `show` confirms it.
+fn classify_send(output: &Output) -> SendOutcome {
+    if output.timed_out {
+        return SendOutcome::Uncertain("The send timed out; T3 may still have queued the message.");
+    }
+    if output.status_success {
+        return parse_send(&output.stdout).map_or_else(
+            || SendOutcome::Uncertain("T3 returned an unreadable send result."),
+            SendOutcome::Accepted,
+        );
+    }
+    let text = String::from_utf8_lossy(&output.stderr).to_ascii_lowercase();
+    if text.contains("no running t3 code server") || text.contains("start t3 code") {
+        SendOutcome::KnownFailure(SEND_SERVER_STOPPED)
+    } else if text.contains("threadnotfound")
+        || text.contains("thread not found")
+        || text.contains("unknown thread")
+    {
+        SendOutcome::KnownFailure(SEND_THREAD_MISSING)
+    } else if text.contains("update the t3 cli")
+        || text.contains("unknown option")
+        || text.contains("unrecognized option")
+        || text.contains("unknown command")
+        || text.contains("usage: t3")
+    {
+        SendOutcome::KnownFailure(SEND_UNSUPPORTED)
+    } else {
+        SendOutcome::Uncertain("T3 rejected the send with an unrecognised error.")
+    }
+}
+
+fn parse_send(stdout: &[u8]) -> Option<SendResponse> {
+    let value: Value = serde_json::from_slice(stdout).ok()?;
+    let payload = value.get("result").unwrap_or(&value);
+    Some(SendResponse {
+        thread_id: field_text(payload, &["threadId"]),
+        run_id: field_text(payload, &["runId"]),
+        run_count: field_u64(payload, &["runCount"]),
+        status: field_text(payload, &["status"]),
+    })
+}
+
 #[cfg(windows)]
 fn spawn_with_job(
     mut command: Command,
@@ -647,6 +873,72 @@ mod tests {
         let listed = r#"{"threads":[{"threadId":"t-1","title":"Relay Task 1","projectId":"p-1"}]}"#;
         let threads = parse_threads(listed.as_bytes()).unwrap();
         assert_eq!(threads[0].thread_id, "t-1");
+    }
+
+    #[test]
+    fn show_decodes_run_state_question_branch_and_pull_requests() {
+        let raw = r#"{"thread":{
+          "threadId":"t-1","activeRunId":"r-2","latestRunId":"r-2","status":"waiting",
+          "pendingRequestCount":1,"branch":"smoke/branch","worktreePath":"C:\\wt\\smoke",
+          "link":"https://app.t3.codes/threads/e/t-1","projectId":"p-1","runCount":2,
+          "pullRequests":[{"url":"https://github.com/sample/app/pull/142","state":"open","source":"agent","watching":true}]
+        },"messages":[
+          {"role":"user","runId":"r-1","text":"brief"},
+          {"role":"assistant","runId":"r-2","text":"RELAY_RETURNED"}
+        ],"error":null}"#;
+        let observed = parse_observation("t-1", raw.as_bytes()).unwrap();
+        assert_eq!(observed.status, RunStatus::Waiting);
+        assert_eq!(observed.pending_request_count, 1);
+        assert_eq!(observed.observed_run_id(), Some("r-2"));
+        assert_eq!(observed.branch.as_deref(), Some("smoke/branch"));
+        assert_eq!(observed.worktree_path.as_deref(), Some(r"C:\wt\smoke"));
+        assert_eq!(observed.run_count, 2);
+        assert_eq!(observed.pull_requests.len(), 1);
+        assert_eq!(observed.pull_requests[0].state.as_deref(), Some("open"));
+        assert_eq!(
+            relay_core::t3_progress::assistant_reply(&observed.messages, Some("r-2")).as_deref(),
+            Some("RELAY_RETURNED")
+        );
+        // A response for a different thread is never attributed to this Task.
+        assert!(parse_observation("other", raw.as_bytes()).is_none());
+    }
+
+    #[test]
+    fn show_decodes_a_failed_run_reason_and_a_subset_of_links() {
+        let raw = r#"{"result":{"thread":{"threadId":"t-1","status":"failed",
+          "latestRunId":"r-1","runCount":1,"pullRequests":[]},
+          "messages":[],"error":"provider refused the request"}}"#;
+        let observed = parse_observation("t-1", raw.as_bytes()).unwrap();
+        assert_eq!(observed.status, RunStatus::Failed);
+        assert_eq!(
+            observed.error.as_deref(),
+            Some("provider refused the request")
+        );
+        assert!(observed.pull_requests.is_empty());
+    }
+
+    #[test]
+    fn send_decodes_a_run_id_and_classifies_rejections() {
+        let accepted = parse_send(br#"{"runId":"r-2","status":"queued","runCount":2}"#).unwrap();
+        assert_eq!(accepted.run_id.as_deref(), Some("r-2"));
+        assert_eq!(accepted.run_count, Some(2));
+        assert!(parse_send(b"not json").is_none());
+        assert_eq!(
+            classify_send(&output(false, "", "No running T3 Code server", false)),
+            SendOutcome::KnownFailure(SEND_SERVER_STOPPED)
+        );
+        assert_eq!(
+            classify_send(&output(false, "", "ThreadNotFoundError: secret", false)),
+            SendOutcome::KnownFailure(SEND_THREAD_MISSING)
+        );
+        assert!(matches!(
+            classify_send(&output(true, "not json", "", false)),
+            SendOutcome::Uncertain(_)
+        ));
+        assert!(matches!(
+            classify_send(&output(false, "", "secret token", false)),
+            SendOutcome::Uncertain(_)
+        ));
     }
 
     /// Real-process argv proof. A disposable `.cmd` with spaces, `&`, `^`, `!` and literal
