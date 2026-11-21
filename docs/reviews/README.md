@@ -82,6 +82,7 @@ Then state the commit reviewed and any follow-up package that should be opened.
 | 2026-11-17 | [Git/PR context and imports](2026-11-17-git-pr-imports.md) | `fff648c`…`9064ec9` | DeepSeek V4.1 | Changes needed (2 blocking) |
 | 2026-11-17 | [Final 1.0 UI details](2026-11-17-final-ui.md) | `4db653c` | Opus 5.5 | Self-reviewed; user review pending |
 | 2026-11-17 | [On-demand Slack sync](2026-11-17-sync-now.md) | `ed38883` | DeepSeek V4.1 | Awaiting Opus review |
+| 2026-11-21 | [v2 Settings, provider recovery and T3 mapping](2026-11-21-v2-settings.md) | TBD | T3 Code / hy4-flash-free | Local implementation complete; awaiting Opus review |
 
 The release audit is a section of the scaffold record because it audits the
 scaffold's release pipeline; it does not change the scaffold commit.

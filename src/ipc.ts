@@ -15,7 +15,7 @@ function isMissingCommand(error: unknown) {
   return /not found|unknown command/i.test(String(error));
 }
 
-async function call<T>(cmd: string, args: Record<string, unknown> | undefined, fallback: () => T): Promise<T> {
+export async function call<T>(cmd: string, args: Record<string, unknown> | undefined, fallback: () => T): Promise<T> {
   if (!inTauri) return fallback();
   try {
     return await invoke<T>(cmd, args);
@@ -646,6 +646,10 @@ interface Events {
   "mcp://status": McpStatus;
   "slack://status": SlackStatus;
   "github://status": GithubStatus;
+  /** Secret-free provider status map from the v2 Settings boundary. */
+  "relay://settings-status": import("./settings").ProviderStatusMap;
+  /** A v2 setting (Import scope, project mapping, OpenCode model) was saved. */
+  "relay://settings-change": null;
 }
 
 /** Subscribes to an app event. Returns an unsubscribe; a no-op in the browser. */

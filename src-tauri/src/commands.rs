@@ -26,7 +26,7 @@ pub struct CommandError {
 }
 
 impl CommandError {
-    fn new(kind: &str, message: impl Into<String>) -> Self {
+    pub(crate) fn new(kind: &str, message: impl Into<String>) -> Self {
         Self {
             kind: kind.to_string(),
             message: message.into(),

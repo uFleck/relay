@@ -118,6 +118,12 @@ pub async fn current_token() -> Option<String> {
     credentials(false).await.token
 }
 
+/// The login behind the user's `gh` session, when the CLI reports one. Settings uses
+/// this to label an external session; it never reads a stored v1 token or starts discovery.
+pub async fn session_login() -> Option<String> {
+    gh_session(false).await.and_then(|session| session.login)
+}
+
 async fn gh_session(refresh: bool) -> Option<GhSession> {
     if !refresh {
         let cached = GH_SESSION.lock().expect("gh session").clone();

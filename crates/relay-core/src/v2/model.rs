@@ -156,17 +156,126 @@ pub struct NewV2Project {
     pub t3_target: Option<String>,
 }
 
-/// Import settings. Both toggles start off and the scope starts unset.
+/// A Relay project's T3 destination. It is either a T3 project id or a path inside a
+/// registered T3 project. The kind is kept separately from the Git checkout path: a
+/// mapping may name a T3 project by id even when Relay has no local clone.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum T3Target {
+    Id(String),
+    Path(String),
+}
+
+impl T3Target {
+    /// The only two kinds a caller may select. `value` is trimmed; an id must be
+    /// non-empty and a path must be absolute (drive-letter or UNC, spaces allowed).
+    pub fn parse(kind: &str, value: &str) -> Result<Self, super::store::V2Error> {
+        let value = value.trim();
+        if value.is_empty() {
+            return Err(super::store::V2Error::InvalidInput(
+                "T3 target cannot be empty".into(),
+            ));
+        }
+        match kind {
+            "id" => {
+                if value.chars().any(char::is_whitespace) {
+                    return Err(super::store::V2Error::InvalidInput(
+                        "a T3 project id cannot contain whitespace".into(),
+                    ));
+                }
+                Ok(Self::Id(value.to_string()))
+            }
+            "path" => {
+                if !is_absolute_windows_path(value) {
+                    return Err(super::store::V2Error::InvalidInput(
+                        "a T3 target path must be absolute (for example C:\\Projects\\app)".into(),
+                    ));
+                }
+                Ok(Self::Path(value.to_string()))
+            }
+            other => Err(super::store::V2Error::InvalidInput(format!(
+                "T3 target kind must be `id` or `path`, got `{other}`"
+            ))),
+        }
+    }
+
+    /// Decodes the stored `kind:value` form. A legacy bare value is an id.
+    pub fn from_storage(raw: &str) -> Option<Self> {
+        let (kind, value) = raw.split_once(':').unwrap_or(("id", raw));
+        match kind {
+            "id" if !value.is_empty() => Some(Self::Id(value.to_string())),
+            "path" if is_absolute_windows_path(value) => Some(Self::Path(value.to_string())),
+            _ => None,
+        }
+    }
+
+    pub fn to_storage(&self) -> String {
+        match self {
+            Self::Id(id) => format!("id:{id}"),
+            Self::Path(path) => format!("path:{path}"),
+        }
+    }
+
+    pub fn value(&self) -> &str {
+        match self {
+            Self::Id(id) => id,
+            Self::Path(path) => path,
+        }
+    }
+
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Id(_) => "id",
+            Self::Path(_) => "path",
+        }
+    }
+}
+
+/// A drive-letter (`C:\…`) or UNC (`\\server\share\…`) path, as the pinned T3 CLI accepts.
+fn is_absolute_windows_path(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    let drive = bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && (bytes[2] == b'\\' || bytes[2] == b'/');
+    let unc = value.starts_with("\\\\") && value.len() > 4;
+    drive || unc
+}
+
+/// The Import source selection saved in v2 settings. Stored as JSON in `import_scope`
+/// so #31 gets a typed read without another schema column.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct V2ImportScope {
+    pub workspace_id: String,
+    pub space_id: Option<String>,
+    pub project_id: String,
+}
+
+impl V2ImportScope {
+    pub fn to_json(&self) -> String {
+        serde_json::to_string(self).expect("import scope is serializable")
+    }
+
+    pub fn from_json(raw: &str) -> Option<Self> {
+        serde_json::from_str(raw).ok()
+    }
+}
+
+/// Import settings. Both toggles start off and the scope starts unset. `opencode_model`
+/// is the `provider/model` string OpenCode uses in #34; it is never a secret.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct V2Settings {
     pub import_clickup_enabled: bool,
     pub import_github_enabled: bool,
     pub import_scope: Option<String>,
+    #[serde(default)]
+    pub opencode_model: Option<String>,
     pub updated_at: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct V2SettingsUpdate {
     pub import_clickup_enabled: bool,
     pub import_github_enabled: bool,

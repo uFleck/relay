@@ -9,7 +9,9 @@ mod hover;
 mod imports;
 mod mcp;
 mod secrets;
+mod settings;
 mod slack;
+mod t3;
 
 use hover::HoverState;
 use relay_core::model::NewProject;
@@ -276,6 +278,22 @@ pub fn run() {
             commands::v2_workspace_search,
             commands::v2_composer_save,
             commands::v2_task_assign_project,
+            settings::v2_provider_status,
+            settings::v2_provider_refresh,
+            settings::v2_github_set_token,
+            settings::v2_github_clear_token,
+            settings::v2_clickup_set_token,
+            settings::v2_clickup_clear_token,
+            settings::v2_clickup_workspaces,
+            settings::v2_clickup_spaces,
+            settings::v2_settings_update,
+            settings::v2_opencode_set_model,
+            settings::v2_opencode_set_key,
+            settings::v2_opencode_clear_key,
+            settings::v2_repos_scan,
+            settings::v2_repos_register,
+            settings::v2_t3_set_target,
+            settings::v2_t3_check_target,
             commands::ack_change,
             commands::decide_proposal,
             commands::notes_list,
@@ -373,6 +391,8 @@ pub fn run() {
             // never reopens or migrates the legacy database.
             let v2_store = Arc::new(V2Store::open(dir.join("relay-v2.db"))?);
             app.manage(v2_store);
+            // Offline status only: a provider probe never runs during startup.
+            settings::start(app.handle());
             mcp::start(app.handle().clone(), store.clone(), &dir);
             slack::start(app.handle().clone(), store.clone());
             github::start(app.handle().clone());

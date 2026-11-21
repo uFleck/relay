@@ -13,16 +13,21 @@ use rusqlite::{Connection, OptionalExtension, Row, Transaction, TransactionBehav
 
 use super::model::{
     AgentMode, ImportRecord, NewImportRecord, NewV2Project, NoteWrite, PreparedLine,
-    PreparedNoteWrite, PreparedReference, TaskStatus, V2Note, V2NoteLine, V2NotebookSnapshot,
-    V2Project, V2Reference, V2Settings, V2SettingsUpdate, V2Task, V2WorkspaceSnapshot,
-    WorkspaceSearchResult,
+    PreparedNoteWrite, PreparedReference, T3Target, TaskStatus, V2Note, V2NoteLine,
+    V2NotebookSnapshot, V2Project, V2Reference, V2Settings, V2SettingsUpdate, V2Task,
+    V2WorkspaceSnapshot, WorkspaceSearchResult,
 };
 use crate::model::{new_id, now};
 
-const MIGRATION: &str = include_str!("../../migrations/v2/0001_init.sql");
+/// v2 migrations run in order. `user_version` is the count of applied files, so an
+/// existing fresh-start database can pick up later additions without a v1 migration.
+const MIGRATIONS: &[&str] = &[
+    include_str!("../../migrations/v2/0001_init.sql"),
+    include_str!("../../migrations/v2/0002_provider_settings.sql"),
+];
 /// 'RELY' as an integer. A non-zero application id marks a file as ours.
 pub(super) const APPLICATION_ID: i64 = 0x5245_4C59;
-pub(super) const USER_VERSION: i64 = 1;
+pub(super) const USER_VERSION: i64 = MIGRATIONS.len() as i64;
 const BUSY_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Debug, thiserror::Error)]
@@ -234,6 +239,77 @@ impl V2Store {
         )?;
         tx.commit()?;
         Ok(project)
+    }
+
+    /// Saves the non-secret OpenCode `provider/model` selection. Passing `None`
+    /// clears it. The key itself lives only in the v2 keyring.
+    pub fn set_opencode_model(&self, model: Option<String>) -> Result<V2Settings, V2Error> {
+        let conn = self.conn();
+        let model = model.and_then(|value| {
+            let value = value.trim().to_string();
+            (!value.is_empty()).then_some(value)
+        });
+        conn.execute(
+            "UPDATE settings SET opencode_model = ?1, updated_at = ?2 WHERE id = 1",
+            params![model, now()],
+        )?;
+        settings_from_row(&conn)
+    }
+
+    /// Saves or clears a project's T3 mapping. The mapping is independent of the
+    /// checkout path and is valid while T3 is stopped, so no CLI call happens here.
+    pub fn set_t3_target(
+        &self,
+        project_id: &str,
+        target: Option<T3Target>,
+    ) -> Result<V2Project, V2Error> {
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let exists = tx
+            .query_row(
+                "SELECT 1 FROM projects WHERE id = ?1",
+                params![project_id],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        if !exists {
+            return Err(V2Error::NotFound(format!("project {project_id}")));
+        }
+        let stored = target.map(|target| target.to_storage());
+        tx.execute(
+            "UPDATE projects SET t3_target = ?1, updated_at = ?2 WHERE id = ?3",
+            params![stored, now(), project_id],
+        )?;
+        let project = tx.query_row(
+            "SELECT id, name, slug, repo_path, owner_repo, t3_target, created_at, updated_at
+             FROM projects WHERE id = ?1",
+            params![project_id],
+            project_from_row,
+        )?;
+        tx.commit()?;
+        Ok(project)
+    }
+
+    /// The typed mapping read #36 consumes. `None` means no mapping was saved.
+    pub fn t3_target(&self, project_id: &str) -> Result<Option<T3Target>, V2Error> {
+        let found: Option<(String, Option<String>)> = self
+            .conn()
+            .query_row(
+                "SELECT id, t3_target FROM projects WHERE id = ?1",
+                params![project_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let Some((_, raw)) = found else {
+            return Err(V2Error::NotFound(format!("project {project_id}")));
+        };
+        match raw {
+            Some(raw) => T3Target::from_storage(&raw).map(Some).ok_or_else(|| {
+                V2Error::InvalidInput(format!("project {project_id} has an invalid T3 target"))
+            }),
+            None => Ok(None),
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -727,19 +803,23 @@ fn migrate(conn: &Connection) -> Result<(), V2Error> {
     if version == USER_VERSION {
         return Ok(());
     }
-    if version != 0 {
+    if version < 0 || version > USER_VERSION {
         return Err(V2Error::UnexpectedDatabase(format!(
             "unsupported v2 user_version {version}"
         )));
     }
     let tx = conn.unchecked_transaction()?;
-    tx.execute_batch(MIGRATION)?;
-    tx.execute(
-        "INSERT INTO settings
-             (id, import_clickup_enabled, import_github_enabled, import_scope, updated_at)
-         VALUES (1, 0, 0, NULL, ?1)",
-        params![now()],
-    )?;
+    for migration in MIGRATIONS.iter().skip(version as usize) {
+        tx.execute_batch(migration)?;
+    }
+    if version == 0 {
+        tx.execute(
+            "INSERT INTO settings
+                 (id, import_clickup_enabled, import_github_enabled, import_scope, updated_at)
+             VALUES (1, 0, 0, NULL, ?1)",
+            params![now()],
+        )?;
+    }
     tx.pragma_update(None, "application_id", APPLICATION_ID)?;
     tx.pragma_update(None, "user_version", USER_VERSION)?;
     tx.commit()?;
@@ -875,7 +955,8 @@ fn ensure_project(tx: &Transaction<'_>, project_id: Option<&str>) -> Result<(), 
 
 fn settings_from_row(conn: &Connection) -> Result<V2Settings, V2Error> {
     conn.query_row(
-        "SELECT import_clickup_enabled, import_github_enabled, import_scope, updated_at
+        "SELECT import_clickup_enabled, import_github_enabled, import_scope,
+                opencode_model, updated_at
          FROM settings WHERE id = 1",
         [],
         |row| {
@@ -883,7 +964,8 @@ fn settings_from_row(conn: &Connection) -> Result<V2Settings, V2Error> {
                 import_clickup_enabled: row.get::<_, i64>(0)? != 0,
                 import_github_enabled: row.get::<_, i64>(1)? != 0,
                 import_scope: row.get(2)?,
-                updated_at: row.get(3)?,
+                opencode_model: row.get(3)?,
+                updated_at: row.get(4)?,
             })
         },
     )

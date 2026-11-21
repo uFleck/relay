@@ -604,3 +604,97 @@ fn qualified_filters_resolve_distinct_canonical_reference_identities() {
         .unwrap();
     assert!(search("+beta").task_ids.contains(&task_note.tasks[0].id));
 }
+
+#[test]
+fn t3_target_accepts_ids_and_absolute_paths_only() {
+    assert_eq!(
+        T3Target::parse("id", " 01JABCDEFGHJKLMNPQRSTVWXYZ ").unwrap(),
+        T3Target::Id("01JABCDEFGHJKLMNPQRSTVWXYZ".into())
+    );
+    assert_eq!(
+        T3Target::parse("path", r"  C:\Relay Smoke\sample-app  ").unwrap(),
+        T3Target::Path(r"C:\Relay Smoke\sample-app".into())
+    );
+    assert_eq!(
+        T3Target::parse("path", r"\\server\share\app").unwrap(),
+        T3Target::Path(r"\\server\share\app".into())
+    );
+    assert!(T3Target::parse("path", "relative\\app").is_err());
+    assert!(T3Target::parse("id", "has space").is_err());
+    assert!(T3Target::parse("branch", "main").is_err());
+    assert!(T3Target::parse("id", "  ").is_err());
+    for target in [
+        T3Target::Id("01JABCDEFGHJKLMNPQRSTVWXYZ".into()),
+        T3Target::Path(r"C:\Relay Smoke\sample-app".into()),
+    ] {
+        assert_eq!(T3Target::from_storage(&target.to_storage()), Some(target));
+    }
+}
+
+#[test]
+fn settings_and_t3_mapping_persist_across_reopen() {
+    let dir = TempDir::new("settings");
+    let path = dir.file("relay-v2.db");
+    let store = V2Store::open(&path).unwrap();
+    let defaults = store.settings().unwrap();
+    assert!(!defaults.import_clickup_enabled);
+    assert!(!defaults.import_github_enabled);
+    assert_eq!(defaults.import_scope, None);
+    assert_eq!(defaults.opencode_model, None);
+
+    let scope = V2ImportScope {
+        workspace_id: "ws-1".into(),
+        space_id: Some("space-2".into()),
+        project_id: "project-id".into(),
+    };
+    store
+        .update_settings(V2SettingsUpdate {
+            import_clickup_enabled: true,
+            import_github_enabled: false,
+            import_scope: Some(scope.to_json()),
+        })
+        .unwrap();
+    let saved = store
+        .set_opencode_model(Some(" opencode/gpt-5-nano ".into()))
+        .unwrap();
+    assert_eq!(saved.opencode_model.as_deref(), Some("opencode/gpt-5-nano"));
+    assert_eq!(
+        V2ImportScope::from_json(saved.import_scope.as_deref().unwrap()),
+        Some(scope)
+    );
+
+    let project = store
+        .register_project(NewV2Project {
+            name: "Sample App".into(),
+            slug: "sample-app".into(),
+            repo_path: Some(r"C:\Projects\sample-app".into()),
+            owner_repo: Some("sample/sample-app".into()),
+            t3_target: None,
+        })
+        .unwrap();
+    assert_eq!(store.t3_target(&project.id).unwrap(), None);
+
+    let target = T3Target::parse("path", r"C:\Relay Smoke\sample-app").unwrap();
+    let saved = store
+        .set_t3_target(&project.id, Some(target.clone()))
+        .unwrap();
+    assert_eq!(
+        saved.t3_target.as_deref(),
+        Some("path:C:\\Relay Smoke\\sample-app")
+    );
+    assert_ne!(saved.repo_path, saved.t3_target);
+    drop(store);
+
+    let reopened = V2Store::open(&path).unwrap();
+    assert_eq!(reopened.t3_target(&project.id).unwrap(), Some(target));
+    assert_eq!(
+        reopened.settings().unwrap().opencode_model.as_deref(),
+        Some("opencode/gpt-5-nano")
+    );
+    // Clearing is a persistable state, distinct from a checkout path.
+    reopened.set_t3_target(&project.id, None).unwrap();
+    drop(reopened);
+    let reopened = V2Store::open(&path).unwrap();
+    assert_eq!(reopened.t3_target(&project.id).unwrap(), None);
+    assert!(reopened.settings().unwrap().import_clickup_enabled);
+}

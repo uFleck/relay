@@ -28,6 +28,9 @@ use crate::hover::HoverState;
 
 mod claude;
 
+/// Settings reuses the same Claude detection as the Slack transport.
+pub(crate) use claude::find_claude;
+
 const USER_TOKEN_KEY: &str = "slack-user-token";
 const APP_TOKEN_KEY: &str = "slack-app-token";
 const JEV_KEY: &str = "jev-api-key";
