@@ -1,7 +1,6 @@
 //! Relay's Tauri shell: the main window, the hover window, tray, global hotkey, single instance, autostart and the
 //! local DB. The UI in both windows is owned by the frontend; this file only routes events to it.
 
-mod clickup_sync;
 mod commands;
 mod dispatch;
 mod github;
@@ -20,8 +19,6 @@ mod t3;
 mod t3_cli;
 
 use hover::{DockRuntime, HoverState};
-use relay_core::model::NewProject;
-use relay_core::store::Store;
 use relay_core::v2::V2Store;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -39,9 +36,6 @@ const MAIN: &str = "main";
 const TRAY: &str = "main";
 /// Summons the main window from anywhere. A taken hotkey must never stop Relay starting: the tray still works.
 const HOTKEY: &str = "ctrl+alt+r";
-/// Checks the Slack DMs now, without waiting for the socket. The tray has the same action.
-const SYNC_HOTKEY: &str = "ctrl+alt+s";
-
 /// Sent to the main window with a v2 route (`/notebook`, `/tasks?task=<id>`,
 /// `/settings?provider=<key>`) to navigate to. Retired v1 routes land on Notebook.
 const OPEN_EVENT: &str = "relay://open";
@@ -138,7 +132,6 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let toggle = MenuItem::with_id(app, "toggle", "Show / Hide", true, None::<&str>)?;
     let paused = CheckMenuItem::with_id(app, "pause", "Pause capture", true, false, None::<&str>)?;
     let dnd = CheckMenuItem::with_id(app, "dnd", "Do not disturb", true, false, None::<&str>)?;
-    let sync = MenuItem::with_id(app, "sync", "Sync Slack now", true, None::<&str>)?;
     let notebook = MenuItem::with_id(app, "notebook", "Notebook", true, None::<&str>)?;
     let tasks = MenuItem::with_id(app, "tasks", "Tasks", true, None::<&str>)?;
     let settings = MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
@@ -152,7 +145,6 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             &paused,
             &dnd,
             &PredefinedMenuItem::separator(app)?,
-            &sync,
             &notebook,
             &tasks,
             &settings,
@@ -178,7 +170,6 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
                 let dnd = app.state::<HoverState>().snapshot().dnd;
                 set_dnd_flag(app, !dnd);
             }
-            "sync" => slack::sync_in_background(app.clone()),
             "notebook" => open_route(app, "/notebook"),
             "tasks" => open_route(app, "/tasks"),
             "settings" => open_route(app, "/settings"),
@@ -207,8 +198,8 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-/// Registers the summon and Slack-check hotkeys. A taken key never stops Relay starting: the
-/// tray still works, and the tooltip names the summon key when that one failed.
+/// Registers the summon hotkey. A taken key never stops Relay starting: the tray still works,
+/// and the tooltip names the summon key when that one failed.
 fn register_hotkeys(app: &AppHandle) {
     let summon = app
         .global_shortcut()
@@ -226,16 +217,6 @@ fn register_hotkeys(app: &AppHandle) {
         }
     }
 
-    if let Err(err) = app
-        .global_shortcut()
-        .on_shortcut(SYNC_HOTKEY, |app, _shortcut, event| {
-            if event.state == ShortcutState::Pressed {
-                slack::sync_in_background(app.clone());
-            }
-        })
-    {
-        eprintln!("relay: could not register {SYNC_HOTKEY}: {err}");
-    }
 }
 
 /// Turns on start-on-login the first time a release build runs; the tray/OS owns it afterwards.
@@ -284,7 +265,7 @@ pub fn run() {
             set_paused,
             set_dnd,
             check_for_updates,
-            commands::relay_snapshot,
+            commands::app_version,
             commands::v2_notebook_snapshot,
             commands::v2_workspace_snapshot,
             commands::v2_workspace_search,
@@ -336,53 +317,10 @@ pub fn run() {
             settings::v2_opencode_clear_key,
             settings::v2_repos_scan,
             settings::v2_repos_register,
-            settings::repos_scan,
-            settings::repos_import,
             note_import::v2_import_now,
             settings::v2_t3_set_target,
             settings::v2_t3_check_target,
-            commands::decide_proposal,
-            commands::notes_list,
-            commands::note_create,
-            commands::note_update,
-            commands::note_set_pinned,
-            commands::note_delete,
-            commands::note_to_task,
             commands::open_t3,
-            slack::slack_status,
-            slack::slack_sync_now,
-            slack::slack_set_transport,
-            slack::slack_connect,
-            slack::slack_disconnect,
-            slack::slack_peers,
-            slack::slack_set_peer_excluded,
-            slack::slack_clear_capture,
-            slack::episodes_list,
-            slack::episode_get,
-            slack::episode_analyze,
-            slack::slack_reanalyze,
-            slack::slack_reanalyze_recent,
-            slack::jobs_list,
-            slack::jev_status,
-            slack::jev_set_key,
-            slack::jev_clear_key,
-            slack::slack_simulate_message,
-            slack::job_retry,
-            slack::job_resolve_review,
-            github::github_status,
-            github::github_set_token,
-            github::github_clear_token,
-            github::sync_prs_now,
-            github::project_git_state,
-            github::project_set_repo,
-            clickup_sync::clickup_status,
-            clickup_sync::clickup_set_token,
-            clickup_sync::clickup_clear_token,
-            clickup_sync::clickup_workspaces,
-            clickup_sync::clickup_spaces,
-            clickup_sync::clickup_scope,
-            clickup_sync::clickup_set_scope,
-            clickup_sync::clickup_sync_now,
             hover::dock_ready,
             hover::dock_resize,
             hover::dock_dismiss,
@@ -421,27 +359,15 @@ pub fn run() {
 
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
-            let store = Store::open(dir.join("relay.db"))?;
-            // The first project is the canonical workflow every other project's status
-            // names map onto (view.rs). Seed it so a fresh install has a real Today list.
-            if store.list_projects()?.is_empty() {
-                store.create_project_with_default_workflow(NewProject::new(
-                    "Inbox", "inbox", None,
-                ))?;
-            }
-            let store = Arc::new(store);
-            app.manage(store.clone());
-            // v2 owns its own file and version. It has no credential dependency and
-            // never reopens or migrates the legacy database.
+            // v2 owns its own file and version. No legacy database is opened, seeded or
+            // migrated, and no v1 credential is read.
             let v2_store = Arc::new(V2Store::open(dir.join("relay-v2.db"))?);
             app.manage(v2_store);
             // Offline status only: a provider probe never runs during startup.
             settings::start(app.handle());
-            // Background Reference recovery runs against the v2 database and never touches the
-            // legacy store. It reads due rows first and releases SQLite before any network await.
+            // Background Reference recovery reads due rows first and releases SQLite before
+            // any network await.
             recovery::start(app.handle().clone());
-            slack::start(app.handle().clone(), store.clone());
-            github::start(app.handle().clone());
             // #34: an OpenCode attempt abandoned by a previous run becomes a manual Retry.
             opencode::init(app.handle());
             // #35: an interrupted Grilling turn is retryable without losing its transcript.

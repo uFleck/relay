@@ -39,7 +39,7 @@ import {
 import type { RepoCandidate } from "../types";
 import type { UpdateState } from "../updater";
 import { Select, Switch } from "../ui/controls";
-import { UpdateActions } from "./Views";
+import { UpdateActions } from "./UpdateActions";
 
 /* The dedicated v2 Settings view. Each provider owns its state and its errors: a
    failing probe or write leaves the other sections and the updater usable. Values entered

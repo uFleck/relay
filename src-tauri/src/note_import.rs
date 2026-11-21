@@ -24,6 +24,7 @@ use crate::{github, live, secrets};
 const CLICKUP_KEY: &str = "clickup-token";
 const GITHUB_KEY: &str = "github-token";
 const CLICKUP_START: Duration = Duration::from_secs(30);
+const GITHUB_START: Duration = Duration::from_secs(20);
 const REFRESH_TICK: Duration = Duration::from_secs(5);
 /// The signal a committed Import write shares with the Notebook and picker.
 pub const IMPORT_EVENT: &str = "relay://v2-change";
@@ -224,6 +225,14 @@ async fn refresh_once(app: &AppHandle) {
     }
 }
 
+/// One GitHub Import pass outside the schedule, after a repo registration.
+pub fn run_github_in_background(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let store = app.state::<Arc<V2Store>>().inner().clone();
+        let _ = run_github(&app, &store).await;
+    });
+}
+
 /// Starts discovery at the provider cadences and the independent live-refresh worker.
 pub fn start(app: AppHandle) {
     let clickup_app = app.clone();
@@ -238,9 +247,20 @@ pub fn start(app: AppHandle) {
             .await;
         }
     });
-    // GitHub discovery is driven by github::start at its three-minute poll cadence (startup,
-    // token save, repo registration and manual refresh all reach this same service), so there
-    // is no second GitHub loop here.
+    // GitHub discovery is create-only Note Import behind its toggle. One loop owns it; setup,
+    // registration and the manual button share the same guarded service.
+    let github_app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(GITHUB_START).await;
+        loop {
+            let store = github_app.state::<Arc<V2Store>>().inner().clone();
+            let _ = run_github(&github_app, &store).await;
+            tokio::time::sleep(Duration::from_millis(
+                relay_core::v2::GITHUB_REFRESH_MS as u64,
+            ))
+            .await;
+        }
+    });
     tauri::async_runtime::spawn(async move {
         loop {
             tokio::time::sleep(REFRESH_TICK).await;

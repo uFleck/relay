@@ -1,7 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import { emit, listen } from "@tauri-apps/api/event";
-import { mockSnapshot } from "./data/mock";
-import { sortNotes } from "./notes";
+import { listen } from "@tauri-apps/api/event";
 import type { ProviderKey } from "./route";
 import { parseUrls } from "./references";
 import type {
@@ -10,7 +8,6 @@ import type {
   SlackSearchHit,
   V2PickerRow,
 } from "./references";
-import type { ProposalDecision, RepoCandidate, Snapshot } from "./types";
 
 /* Typed wrappers over the Rust commands. Outside Tauri (pnpm dev in a browser), or while a command
    is not registered yet, each call resolves to its fallback so the UI keeps working on mock data.
@@ -44,11 +41,6 @@ export function errorKind(error: unknown): string | null {
   return null;
 }
 
-export const getSnapshot = () => call<Snapshot>("relay_snapshot", undefined, () => structuredClone(mockSnapshot));
-
-export const decideProposal = (args: { proposalId: string; decision: ProposalDecision; rev: number }) =>
-  call<void>("decide_proposal", args, () => undefined);
-
 /** Shows and focuses the main window as it is. */
 export const showMainWindow = () =>
   call<void>("show_main_window", undefined, () => console.info("[relay] show_main_window"));
@@ -59,6 +51,9 @@ export const openMain = (route: string) =>
 
 /** Asks the main window, which owns the updater, to run a manual check. */
 export const requestUpdateCheck = () => call<void>("check_for_updates", undefined, () => undefined);
+
+/** App version from Cargo, shared by the rail, Settings and the Dock. */
+export const appVersion = () => call<string>("app_version", undefined, () => "0.0.0");
 
 /* ── hover window ── */
 
@@ -127,58 +122,6 @@ export const openExternal = async (url: string) => {
 };
 
 /* ── notes ── */
-
-/** A local note; Rust's `model::Note`. */
-export interface Note {
-  id: string;
-  title: string;
-  body: string;
-  pinned: boolean;
-  createdAt: string;
-  updatedAt: string;
-}
-
-/* In the browser, notes live in memory so the view can be exercised on mock data. */
-let browserNotes: Note[] = [];
-const browserNote = (id: string) => {
-  const note = browserNotes.find((n) => n.id === id);
-  if (!note) throw { kind: "not_found", message: `note ${id}` };
-  return note;
-};
-
-/** Pinned first, then most recently edited; a query filters by prefix over title and body. */
-export const listNotes = (query: string) =>
-  call<Note[]>("notes_list", { query: query.trim() || null }, () => {
-    const words = query.toLowerCase().split(/\s+/).filter(Boolean);
-    const hit = (n: Note) => {
-      const tokens = `${n.title} ${n.body}`.toLowerCase().split(/\W+/);
-      return words.every((w) => tokens.some((t) => t.startsWith(w)));
-    };
-    return sortNotes(browserNotes.filter(hit));
-  });
-
-export const createNote = (title = "", body = "") =>
-  call<Note>("note_create", { title, body }, () => {
-    const at = new Date().toISOString();
-    const note = { id: crypto.randomUUID(), title, body, pinned: false, createdAt: at, updatedAt: at };
-    browserNotes = [note, ...browserNotes];
-    return note;
-  });
-
-export const updateNote = (args: { id: string; title: string; body: string }) =>
-  call<Note>("note_update", args, () => ({ ...Object.assign(browserNote(args.id), { title: args.title, body: args.body, updatedAt: new Date().toISOString() }) }));
-
-export const setNotePinned = (id: string, pinned: boolean) =>
-  call<Note>("note_set_pinned", { id, pinned }, () => ({ ...Object.assign(browserNote(id), { pinned }) }));
-
-export const deleteNote = (id: string) =>
-  call<void>("note_delete", { id }, () => {
-    browserNotes = browserNotes.filter((n) => n.id !== id);
-  });
-
-/** Creates a Relay task from the note; agents pick it up over MCP. Returns the new task's id. */
-export const noteToTask = (id: string, projectId: string) =>
-  call<{ id: string; title: string }>("note_to_task", { id, projectId }, () => ({ id: crypto.randomUUID(), title: browserNote(id).title }));
 
 /** Brings T3 Code to the front (`t3code://`). It only opens the app; the prompt goes on the clipboard. */
 export const openT3 = () => call<void>("open_t3", undefined, () => console.info("[relay] open_t3"));
@@ -723,319 +666,14 @@ export async function v2TaskAssignProject(taskId: string, projectId: string): Pr
 
 /* ── events ── */
 
-/** What changed. Rust does not send it yet; the main window does after an ack or a decision. */
-export interface ChangeEvent {
-  taskId: string;
-  changeId?: string;
-  proposalId?: string;
-}
-
-/* -- Slack capture and JEV -- */
-
-export interface SlackStatus {
-  configured: boolean;
-  connected: boolean;
-  team: string | null;
-  user: string | null;
-  error: string | null;
-  lastEventAt: string | null;
-  capturePaused: boolean;
-  peers: number;
-  openEpisodes: number;
-  transport: "claude" | "token";
-  claude: ClaudeSlackStatus | null;
-}
-
-export interface ClaudeSlackStatus {
-  found: boolean;
-  path: string | null;
-  running: boolean;
-  lastRunAt: string | null;
-  lastMessages: number;
-  lastCostUsd: number;
-  costTodayUsd: number;
-  lastDurationMs: number;
-  lastError: string | null;
-}
-
-export interface SlackSyncReport {
-  conversations: number;
-  messages: number;
-  episodes: number;
-  analyzed: number;
-  error: string | null;
-}
-
-export interface ReanalyzeReport {
-  selected: number;
-  analyzed: number;
-  failed: number;
-  error: string | null;
-}
-
-export interface SlackPeer {
-  id: string;
-  userId: string;
-  name: string | null;
-  isBot: boolean;
-  excluded: boolean;
-  createdAt: string;
-}
-
-export interface SlackMessage {
-  id: string;
-  episodeId: string;
-  peerId: string;
-  channelId: string;
-  ts: string;
-  threadTs: string | null;
-  direction: "in" | "out";
-  userId: string | null;
-  text: string;
-  permalink: string | null;
-  editedAt: string | null;
-  deleted: boolean;
-  historical: boolean;
-  createdAt: string;
-}
-
-export interface SlackEpisode {
-  id: string;
-  channelId: string;
-  peerId: string;
-  state: "open" | "waiting" | "closed" | "analyzed" | "needs_review";
-  startedAt: string;
-  lastMessageAt: string;
-  closedAt: string | null;
-  summary: string | null;
-  jevJson: string | null;
-  createdAt: string;
-}
-
-export interface EpisodeSummary {
-  episode: SlackEpisode;
-  peerName: string | null;
-  peerUserId: string;
-  messageCount: number;
-  preview: string | null;
-}
-
-export interface EpisodeDetail {
-  episode: SlackEpisode;
-  peer: SlackPeer;
-  messages: SlackMessage[];
-}
-
-export type AnalysisJobState = "pending" | "running" | "pending_agent" | "done" | "failed" | "superseded" | "shadow";
-
-export interface AnalysisJob {
-  id: string;
-  conversationId: string;
-  projectId: string | null;
-  watermark: string;
-  kind: "screen" | "classify";
-  state: AnalysisJobState;
-  attempts: number;
-  route: "ignore" | "rescreen" | "review" | "change" | "new_task" | null;
-  jevJson: string | null;
-  candidates: string[];
-  summary: string | null;
-  error: string | null;
-  supersededBy: string | null;
-  agentSession: string | null;
-  createdAt: string;
-  updatedAt: string | null;
-  startedAt: string | null;
-  finishedAt: string | null;
-}
-
-export interface JevStatus {
-  configured: boolean;
-  model: string | null;
-  error: string | null;
-}
-
-export interface GithubStatus {
-  /** A token override is stored in Credential Manager. */
-  configured: boolean;
-  /** Where requests get credentials: the stored token, the gh CLI session, or nothing. */
-  source: "token" | "gh" | "none";
-  /** The GitHub login behind the gh session, when known. */
-  login: string | null;
-  error: string | null;
-}
-
-/** A project checkout's read-only git context. */
-export interface GitState {
-  branch: string | null;
-  head: string | null;
-  headSubject: string | null;
-  dirty: boolean;
-}
-
-const browserSlackStatus: SlackStatus = {
-  configured: false,
-  connected: false,
-  team: null,
-  user: null,
-  error: null,
-  lastEventAt: null,
-  capturePaused: false,
-  peers: 0,
-  openEpisodes: 0,
-  transport: "token",
-  claude: null,
-};
-
-export const slackSetTransport = (transport: "claude" | "token") =>
-  call<SlackStatus>("slack_set_transport", { transport }, () => browserSlackStatus);
-
-export const slackStatus = () => call<SlackStatus>("slack_status", undefined, () => browserSlackStatus);
-
-export const slackSyncNow = () =>
-  call<SlackSyncReport>("slack_sync_now", undefined, () => ({
-    conversations: 0,
-    messages: 0,
-    episodes: 0,
-    analyzed: 0,
-    error: "Slack checking runs in the desktop app.",
-  }));
-
-export const slackConnect = (args: { userToken: string; appToken: string }) =>
-  call<SlackStatus>("slack_connect", args, () => browserSlackStatus);
-
-export const slackDisconnect = () =>
-  call<SlackStatus>("slack_disconnect", undefined, () => browserSlackStatus);
-
-export const slackPeers = () => call<SlackPeer[]>("slack_peers", undefined, () => []);
-
-export const slackSetPeerExcluded = (args: { peerId: string; excluded: boolean }) =>
-  call<SlackPeer | null>("slack_set_peer_excluded", args, () => null);
-
-export const episodesList = (args: { stateFilter?: string; limit?: number } = {}) =>
-  call<EpisodeSummary[]>("episodes_list", args, () => []);
-
-export const episodeGet = (id: string) => call<EpisodeDetail | null>("episode_get", { id }, () => null);
-
-export const episodeAnalyze = (id: string) =>
-  call<AnalysisJob | null>("episode_analyze", { id }, () => null);
-
-export const slackReanalyze = (conversationId: string) =>
-  call<AnalysisJob | null>("slack_reanalyze", { conversationId }, () => null);
-
-export const slackReanalyzeRecent = () =>
-  call<ReanalyzeReport>("slack_reanalyze_recent", undefined, () => ({
-    selected: 0,
-    analyzed: 0,
-    failed: 0,
-    error: "Re-analysis runs in the desktop app.",
-  }));
-
-export const jobsList = (args: { stateFilter?: string; limit?: number } = {}) =>
-  call<AnalysisJob[]>("jobs_list", args, () => []);
-
-export const jobRetry = (id: string) => call<AnalysisJob | null>("job_retry", { id }, () => null);
-/** Settles a job waiting in Review: `send` starts the reviewer on it, otherwise it is dismissed. */
-export const jobResolveReview = (id: string, send: boolean) =>
-  call<AnalysisJob | null>("job_resolve_review", { id, send }, () => null);
-
-export const jevStatus = () => call<JevStatus>("jev_status", undefined, () => ({ configured: false, model: null, error: null }));
-
-export const jevSetKey = (key: string) =>
-  call<JevStatus>("jev_set_key", { key }, () => ({ configured: false, model: null, error: null }));
-
-export const jevClearKey = () => call<JevStatus>("jev_clear_key", undefined, () => ({ configured: false, model: null, error: null }));
-
-export const githubStatus = () =>
-  call<GithubStatus>("github_status", undefined, () => ({ configured: false, source: "none", login: null, error: null }));
-
-export const githubSetToken = (token: string) =>
-  call<GithubStatus>("github_set_token", { token }, () => ({ configured: false, source: "none", login: null, error: null }));
-
-export const githubClearToken = () =>
-  call<GithubStatus>("github_clear_token", undefined, () => ({ configured: false, source: "none", login: null, error: null }));
-
-export const syncPrsNow = () => call<number>("sync_prs_now", undefined, () => 0);
-
-export const projectGitState = (projectId: string) =>
-  call<GitState | null>("project_git_state", { projectId }, () => null);
-
-export const projectSetRepo = (projectId: string, repoPath: string | null) =>
-  call<boolean>("project_set_repo", { projectId, repoPath }, () => false);
-
-/** ClickUp and GitHub Issues import (one-shot, link-only). */
-export interface ConnectorStatus {
-  configured: boolean;
-}
-
-export interface ImportCount {
-  imported: number;
-  skipped: number;
-}
-
-const emptyImport: ImportCount = { imported: 0, skipped: 0 };
-
-export const clickupStatus = () => call<ConnectorStatus>("clickup_status", undefined, () => ({ configured: false }));
-
-export const clickupSetToken = (token: string) =>
-  call<ConnectorStatus>("clickup_set_token", { token }, () => ({ configured: false }));
-
-export const clickupClearToken = () =>
-  call<ConnectorStatus>("clickup_clear_token", undefined, () => ({ configured: false }));
-
-export interface ClickupNamed {
-  id: string;
-  name: string;
-}
-
-export interface ClickupScope {
-  workspaceId: string;
-  /** Null tracks the whole workspace; guests have no spaces to choose. */
-  spaceId: string | null;
-  projectId: string;
-}
-
-export interface ClickupSyncResult {
-  created: number;
-  updated: number;
-  archived: number;
-  truncated: boolean;
-}
-
-export interface ClickupScopeView {
-  scope: ClickupScope | null;
-  last: ClickupSyncResult | null;
-  error: string | null;
-}
-
-export const clickupWorkspaces = () => call<ClickupNamed[]>("clickup_workspaces", undefined, () => []);
-
-export const clickupSpaces = (workspaceId: string) =>
-  call<ClickupNamed[]>("clickup_spaces", { workspaceId }, () => []);
-
-export const clickupScope = () =>
-  call<ClickupScopeView>("clickup_scope", undefined, () => ({ scope: null, last: null, error: null }));
-
-export const clickupSetScope = (scope: ClickupScope) => call<void>("clickup_set_scope", { scope }, () => undefined);
-
-export const clickupSyncNow = () =>
-  call<ClickupSyncResult>("clickup_sync_now", undefined, () => ({ created: 0, updated: 0, archived: 0, truncated: false }));
-
-export const reposScan = (folders: string[]) => call<RepoCandidate[]>("repos_scan", { folders }, () => []);
-
-export const reposImport = (folders: string[]) => call<ImportCount>("repos_import", { folders }, () => emptyImport);
-
 interface Events {
   /** A route string for the main window. */
   "relay://open": string;
-  "relay://change": ChangeEvent;
   /** A committed v2 write; the payload is the saved Note id. */
   "relay://v2-change": string;
   "relay://state": HoverFlags;
   "relay://dock-focus": DockFocusEvent;
   "relay://dock-dpi": DockDpiEvent;
-  "slack://status": SlackStatus;
-  "github://status": GithubStatus;
   /** Secret-free provider status map from the v2 Settings boundary. */
   "relay://settings-status": import("./settings").ProviderStatusMap;
   /** A v2 setting (Import scope, project mapping, OpenCode model) was saved. */
@@ -1073,13 +711,3 @@ export function onEvent<K extends keyof Events>(name: K, handler: (payload: Even
 
 /** A committed v2 write in either window. Both v2 views refresh from this shared signal. */
 export const onV2Change = (handler: (noteId: string) => void) => onEvent("relay://v2-change", handler);
-
-/** Tells every window that a task or proposal changed, so the hover refreshes its counts. */
-export async function emitChange(payload: ChangeEvent) {
-  if (!inTauri) return;
-  try {
-    await emit("relay://change", payload);
-  } catch (error) {
-    console.warn("[relay] emit relay://change failed", error);
-  }
-}
