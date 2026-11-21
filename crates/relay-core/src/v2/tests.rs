@@ -1671,6 +1671,40 @@ fn import_is_transactional_racy_and_survives_edit_delete_restart() {
 }
 
 #[test]
+fn a_previously_picked_snapshot_is_not_evidence_of_a_prior_import() {
+    let store = V2Store::open_in_memory().unwrap();
+    // The target was picked in the picker, so it already has a read-only snapshot but no ledger row.
+    let key = ReferenceKey::Clickup {
+        id: "picked".to_string(),
+    };
+    let picked = ReferenceSnapshot::from_provider(
+        "Picked card",
+        "open",
+        vec!["list Sprint".into()],
+        "2026-11-21T00:00:00.000Z",
+    );
+    store.save_reference_snapshot(&key, &picked).unwrap();
+    assert!(!store.import_recorded("clickup", "CU-picked").unwrap());
+
+    assert!(matches!(
+        store
+            .import_note(&import_card("picked", "Picked card"))
+            .unwrap(),
+        ImportOutcome::Created { .. }
+    ));
+    let note = &store.workspace_snapshot().unwrap().notes[0];
+    let snapshot = ReferenceSnapshot::from_json(
+        note.lines[0].references[0]
+            .snapshot_json
+            .as_deref()
+            .unwrap(),
+    );
+    assert_eq!(snapshot.title.as_deref(), Some("Picked card"));
+    assert_eq!(snapshot.metadata, vec!["list Sprint"]);
+    assert!(store.import_recorded("clickup", "CU-picked").unwrap());
+}
+
+#[test]
 fn import_refresh_changes_only_the_reference_snapshot() {
     let store = V2Store::open_in_memory().unwrap();
     store.import_note(&import_card("rr", "Refresh me")).unwrap();
