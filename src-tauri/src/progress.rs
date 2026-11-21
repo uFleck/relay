@@ -232,23 +232,21 @@ fn commit_captured(
     store.commit_observation(&guard, &effect, observation)
 }
 
-/// A fresh, user-initiated refresh (one read when an open sheet mounts) uses current revisions.
-fn refresh_now(store: &Arc<V2Store>, task_id: &str) -> Result<bool, CommandError> {
+/// Commits an observation already read at another boundary, using current revisions.
+fn commit_observed(
+    store: &Arc<V2Store>,
+    task_id: &str,
+    observation: &ThreadObservation,
+) -> Result<bool, CommandError> {
     let view = store
         .progress_view(task_id)?
         .ok_or_else(|| CommandError::new("invalid_input", "this Task has no T3 thread"))?;
-    if !view.can_close || view.can_follow_up {
-        // Only an open Returned or Failed sheet refreshes metadata once.
-        return Ok(false);
-    }
-    let observation = t3_cli::show_observation(&view.thread_id, &data_dir_for(store, task_id)?)
-        .map_err(|error| CommandError::new("invalid_input", error.to_string()))?;
     let status = task_status(&view.task_status).unwrap_or(TaskStatus::Dispatched);
     let context = ObservationContext {
         current_status: status,
         expected_run_id: view.run_id.as_deref(),
         send: view.active_send.as_ref(),
-        observation: &observation,
+        observation,
     };
     let Some(effect) = decide(&context) else {
         return Ok(false);
@@ -260,7 +258,17 @@ fn refresh_now(store: &Arc<V2Store>, task_id: &str) -> Result<bool, CommandError
         revision: view.revision,
         operation_revision: view.active_send.as_ref().map(|send| send.revision),
     };
-    Ok(store.commit_observation(&guard, &effect, &observation)?)
+    Ok(store.commit_observation(&guard, &effect, observation)?)
+}
+
+/// A fresh, user-initiated refresh (one read when an open sheet mounts).
+fn refresh_now(store: &Arc<V2Store>, task_id: &str) -> Result<bool, CommandError> {
+    let view = store
+        .progress_view(task_id)?
+        .ok_or_else(|| CommandError::new("invalid_input", "this Task has no T3 thread"))?;
+    let observation = t3_cli::show_observation(&view.thread_id, &data_dir_for(store, task_id)?)
+        .map_err(|error| CommandError::new("invalid_input", error.to_string()))?;
+    commit_observed(store, task_id, &observation)
 }
 
 fn data_dir_for(store: &Arc<V2Store>, task_id: &str) -> Result<String, CommandError> {
@@ -289,6 +297,16 @@ pub fn v2_t3_refresh(
         return Ok(());
     }
     let store = app.state::<Arc<V2Store>>().inner().clone();
+    let status = store
+        .progress_view(&task_id)?
+        .and_then(|view| task_status(&view.task_status));
+    if !matches!(
+        status,
+        Some(TaskStatus::Returned) | Some(TaskStatus::Failed)
+    ) {
+        state.end(&task_id);
+        return Ok(());
+    }
     let changed = refresh_now(&store, &task_id)?;
     if changed {
         publish(&app, &task_id);
@@ -367,7 +385,7 @@ fn send_message(
         )
     })?;
     if observed.status.is_active() || observed.pending_request_count > 0 {
-        let _ = refresh_now(store, task_id);
+        let _ = commit_observed(store, task_id, &observed);
         return Ok(SendResult::of(
             "draft_unsent",
             "T3 is still working. Relay is observing that run; the draft was not sent.",

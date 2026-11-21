@@ -451,6 +451,100 @@ export const v2DispatchLink = (taskId: string, threadId: string, userConfirmed: 
 export const v2DispatchCancel = (taskId: string) =>
   call<void>("v2_dispatch_cancel", { taskId }, () => undefined);
 
+/* ── T3 progress and continuation (#37) ── */
+
+export interface V2ObservedPullRequest {
+  url: string;
+  source: string | null;
+  state: string | null;
+  watching: boolean;
+}
+
+export type V2SendState = "reserved" | "acknowledged" | "needs_confirmation" | "failed" | "stale";
+
+export interface V2SendOperation {
+  operationId: string;
+  attemptId: string;
+  taskId: string;
+  threadId: string;
+  kind: "followup" | "retry" | "resend";
+  state: V2SendState;
+  /** The user's exact multiline message, frozen before the CLI ran. */
+  message: string;
+  baselineRunId: string | null;
+  baselineRunCount: number;
+  runId: string | null;
+  deliveryState: string | null;
+  failureReason: string | null;
+  revision: number;
+}
+
+export interface V2T3Progress {
+  taskId: string;
+  attemptId: string;
+  threadId: string;
+  threadUrl: string | null;
+  runId: string | null;
+  runCount: number;
+  /** Last observed T3 run status; kept even when the Task status is unchanged. */
+  status: string;
+  taskStatus: V2TaskStatus;
+  pendingRequestCount: number;
+  branch: string | null;
+  worktreePath: string | null;
+  reply: string | null;
+  error: string | null;
+  staleReason: string | null;
+  revision: number;
+  pullRequests: V2ObservedPullRequest[];
+  activeSend: V2SendOperation | null;
+  canFollowUp: boolean;
+  canRetryRun: boolean;
+  canClose: boolean;
+  canOpenT3: boolean;
+  canCheckAgain: boolean;
+  canResend: boolean;
+}
+
+export interface V2T3SendResult {
+  outcome: "sent" | "draft_unsent" | "draft_kept" | "needs_confirmation" | "fenced" | "busy";
+  message: string;
+  runId: string | null;
+}
+
+export interface V2T3CheckResult {
+  confirmed: boolean;
+}
+
+export const v2T3Progress = (taskId: string) =>
+  call<V2T3Progress | null>("v2_t3_progress", { taskId }, () => null);
+
+/** One metadata refresh when an open Returned or Failed sheet mounts. */
+export const v2T3Refresh = (taskId: string) =>
+  call<void>("v2_t3_refresh", { taskId }, () => undefined);
+
+/** Follow-up or Retry on the same thread. The server pins the exact Retry sentence. */
+export const v2T3Send = (taskId: string, message: string, kind: "followup" | "retry") =>
+  call<V2T3SendResult>("v2_t3_send", { taskId, message, kind }, () => ({
+    outcome: "busy" as const,
+    message: "T3 progress is unavailable in this preview.",
+    runId: null,
+  }));
+
+export const v2T3CheckAgain = (taskId: string) =>
+  call<V2T3CheckResult>("v2_t3_check_again", { taskId }, () => ({ confirmed: false }));
+
+export const v2T3Resend = (taskId: string, userConfirmed: boolean) =>
+  call<V2T3SendResult>("v2_t3_resend", { taskId, userConfirmed }, () => ({
+    outcome: "busy" as const,
+    message: "T3 progress is unavailable in this preview.",
+    runId: null,
+  }));
+
+/** Explicit local closure only. A PR merge or T3 settlement never calls this. */
+export const v2T3Close = (taskId: string, status: "done" | "cancelled") =>
+  call<void>("v2_t3_close", { taskId, status }, () => undefined);
+
 export interface V2NotebookSnapshot {
   notes: V2Note[];
   projects: V2Project[];
@@ -972,6 +1066,8 @@ interface Events {
   "relay://grilling": string;
   /** A T3 dispatch claim, failure or reconciliation changed. Payload is the Task id. */
   "relay://dispatch": string;
+  /** An observed run, pending question, continuation or local closure changed. */
+  "relay://t3-progress": string;
 }
 
 /** Subscribes to an app event. Returns an unsubscribe; a no-op in the browser. */
