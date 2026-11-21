@@ -110,6 +110,8 @@ export interface Chip {
   kind: string;
   canonicalUrl: string;
   originalUrl: string;
+  /** A picked target that is linked but currently unreadable paints as an unresolved Reference. */
+  unavailable?: boolean;
 }
 
 export interface EditorState {

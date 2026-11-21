@@ -5,6 +5,7 @@ import {
   needsAttention,
   needsYouCount,
   NEEDS_YOU_STATUSES,
+  statusTone,
   taskGroup,
   waitingTasks,
   type WorkspaceFilter,
@@ -63,6 +64,16 @@ describe("task groups", () => {
     done: "closed",
     cancelled: "closed",
   };
+
+  it("maps every status to one visual tone with coral for needs-you", () => {
+    const statuses = Object.keys(expectedGroups) as V2TaskStatus[];
+    for (const status of statuses) {
+      const group = expectedGroups[status];
+      expect(statusTone(status)).toBe(
+        group === "needsYou" ? "needs" : group === "inFlight" ? "flight" : "closed",
+      );
+    }
+  });
 
   it("places every stored status in exactly one group", () => {
     const statuses = Object.keys(expectedGroups) as V2TaskStatus[];

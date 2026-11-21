@@ -204,6 +204,16 @@ export function taskGroup(status: V2TaskStatus): TaskGroupId {
   return TASK_GROUP[status];
 }
 
+/** Visual tone of a status chip: coral needs-you, teal in flight, quiet when closed. */
+export type StatusTone = "needs" | "flight" | "closed";
+
+export function statusTone(status: V2TaskStatus): StatusTone {
+  const group = TASK_GROUP[status];
+  if (group === "needsYou") return "needs";
+  if (group === "inFlight") return "flight";
+  return "closed";
+}
+
 /** Latest stored change first; the immutable ULID breaks equal-timestamp ties. */
 export function byLatestChange(a: V2Task, b: V2Task) {
   return Date.parse(b.updatedAt) - Date.parse(a.updatedAt) || a.id.localeCompare(b.id);

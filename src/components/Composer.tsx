@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { draftLabel, draftSummary, type DraftSummary } from "../directives";
+import { useDock } from "../hover/dock";
 import {
   errorKind,
   errorText,
@@ -29,6 +31,8 @@ export interface ComposerProps {
   onReload?: () => void;
   compact?: boolean;
   autoFocus?: boolean;
+  /** Reports the draft's first mode and counts to the host's wordmark and footer. */
+  onDraftChange?: (draft: DraftSummary) => void;
 }
 
 const newKey = () =>
@@ -44,7 +48,9 @@ export function Composer({
   onReload,
   compact,
   autoFocus,
+  onDraftChange,
 }: ComposerProps) {
+  const dock = useDock();
   const [text, setText] = useState("");
   const [lines, setLines] = useState<DraftLine[]>(() =>
     (note?.lines ?? []).map((line) => ({ key: line.id, lineId: line.id, text: line.text })),
@@ -56,9 +62,25 @@ export function Composer({
   const busyRef = useRef(false);
   const submissionKey = useRef<string | null>(null);
 
+  const draftText = note ? lines.map((line) => line.text).join("\n") : text;
+  const draft = useMemo(() => draftSummary(draftText), [draftText]);
+
   useEffect(() => {
     onActiveChange?.(focused || busy);
   }, [focused, busy, onActiveChange]);
+
+  useEffect(() => {
+    onDraftChange?.(draft);
+    dock?.reportDraft(draft);
+  }, [draft, onDraftChange, dock?.reportDraft]);
+
+  const reportPicker = useMemo(
+    () => (open: boolean, lensVisible: boolean) => {
+      // Only the create-mode Composer drives the Dock's native size.
+      if (!note) dock?.reportPicker(open, lensVisible);
+    },
+    [note, dock?.reportPicker],
+  );
 
   const changeLine = (key: string, value: string) =>
     setLines((current) => current.map((line) => (line.key === key ? { ...line, text: value } : line)));
@@ -98,6 +120,7 @@ export function Composer({
         submissionKey.current = null;
       }
       onSaved?.(saved);
+      dock?.onSaved(saved);
     } catch (cause) {
       const message = errorText(cause);
       setError(message);
@@ -110,7 +133,11 @@ export function Composer({
   };
 
   return (
-    <div className={`composer${compact ? " compact" : ""}`}>
+    <div
+      className={`composer${compact ? " compact" : ""}`}
+      data-first-mode={draft.mode ?? undefined}
+      data-counts={`${draft.counts.act}-${draft.counts.wait}-${draft.counts.grill}`}
+    >
       {note ? (
         <div className="composer-lines">
           {lines.map((line) => (
@@ -150,6 +177,10 @@ export function Composer({
           onChange={setText}
           onSubmit={() => void submit()}
           onActiveChange={setFocused}
+          inputRef={dock?.inputRef}
+          onPickerChange={reportPicker}
+          onPickerTransitionEnd={dock?.onPickerTransitionEnd}
+          onEscConsumed={dock?.reportEsc}
         />
       )}
       {error && (
@@ -163,7 +194,10 @@ export function Composer({
         </button>
       )}
       <div className="composer-actions">
-        <span className="meta">@ reference · + project · ctrl ↵ send</span>
+        <span className="meta composer-hint">@ reference · + project · ctrl ↵ send</span>
+        <span className="meta composer-count" aria-live="polite">
+          {draftLabel(draft)}
+        </span>
         <button type="button" className="btn pri" disabled={busy} onClick={() => void submit()}>
           {busy ? "Saving…" : note ? "Save changes" : "Capture"}
         </button>

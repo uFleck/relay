@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { EMPTY_DRAFT, type DraftSummary } from "../directives";
 import { Composer } from "../components/Composer";
-import { Icon, Mark } from "../components/Icon";
+import { Icon } from "../components/Icon";
 import {
   getSnapshot,
   hoverDrag,
@@ -23,6 +24,14 @@ import {
 import { claimState, clock, elapsed, liveClaims, nextDue, todayScope, until, useNow } from "../model";
 import { taskRoute } from "../route";
 import type { ClaimHolder, HoverEdge, HoverMode, Snapshot } from "../types";
+import type { V2AgentMode } from "../ipc";
+import {
+  DockContext,
+  dockLayoutState,
+  SUMMON_CHORD,
+  type DockBridge,
+  type DockLayoutState,
+} from "./dock";
 import { followUpdates, requestInstall, useUpdater, type UpdateState } from "../updater";
 import { needsYouCount, waitingTasks } from "../workspace";
 import { initialPlacement, placeIn, placementAfterDrag, type Anchor, type Screen } from "./place";
@@ -50,15 +59,23 @@ export function HoverApp() {
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [v2, setV2] = useState<V2WorkspaceSnapshot | null>(null);
   const [failed, setFailed] = useState(false);
-  const [mode, setMode] = useState<HoverMode>("tab");
+  // In the browser there is no hotkey or host window, so /hover.html opens on the Dock with
+  // its Composer ready. The native app still starts collapsed until the registered chord.
+  const [mode, setMode] = useState<HoverMode>(!inTauri && !calm ? "open" : "tab");
   const [flags, setFlags] = useState<HoverFlags>({ pinned: false, dnd: false, paused: false, ready: false, visible: false });
   const [placement, setPlacement] = useState<{ screen: Screen; anchor: Anchor } | null>(null);
   const [pulsing, setPulsing] = useState(false);
-  const [composing, setComposing] = useState(false);
+  const [composing, setComposing] = useState(!inTauri && !calm);
   const [showWaiting, setShowWaiting] = useState(false);
+  const [dockLayout, setDockLayout] = useState<DockLayoutState>("compact");
+  const [draft, setDraft] = useState<DraftSummary>(EMPTY_DRAFT);
   const composerActive = useRef(false);
   const update = useUpdater();
   const shell = useRef<HTMLDivElement>(null);
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const escConsumed = useRef(false);
   const waitingIds = useRef<Set<string> | null>(null);
   const collapseTimer = useRef<number | undefined>(undefined);
   const dragging = useRef(false);
@@ -104,6 +121,36 @@ export function HoverApp() {
     }
   }, [pulse]);
 
+  /* Everything #39 needs to size and focus the native box: the measured content root, the
+     three layout states, the picker's settled event, the live input and the save/escape signals. */
+  const dock = useMemo<DockBridge>(
+    () => ({
+      viewportRef,
+      contentRef,
+      inputRef,
+      layout: dockLayout,
+      reportPicker: (open, lensVisible) => {
+        const next = dockLayoutState(open, lensVisible);
+        setDockLayout((current) => (current === next ? current : next));
+      },
+      escConsumed,
+      reportEsc: () => {
+        escConsumed.current = true;
+      },
+      takeEsc: () => {
+        const taken = escConsumed.current;
+        escConsumed.current = false;
+        return taken;
+      },
+      onPickerTransitionEnd: () => {
+        window.dispatchEvent(new CustomEvent("relay://dock-transition-end", { detail: { layout: dockLayout } }));
+      },
+      onSaved: () => void refreshV2(),
+      reportDraft: setDraft,
+    }),
+    [dockLayout, refreshV2],
+  );
+
   useEffect(() => {
     followUpdates();
     void refresh();
@@ -144,7 +191,7 @@ export function HoverApp() {
     void hoverPlace(rect)
       .then(() => (flags.ready ? undefined : hoverReady().then(setFlags)))
       .catch((e) => console.warn("[relay] hover_place failed", e));
-  }, [mode, placement, update.kind, snap === null, failed, flags.ready]);
+  }, [mode, placement, update.kind, snap === null, failed, flags.ready, dockLayout]);
 
   const expand = useCallback(() => {
     window.clearTimeout(collapseTimer.current);
@@ -292,12 +339,15 @@ export function HoverApp() {
       ) : (
         <div
           ref={shell}
-          className={`hov${fit ? " fit" : ""}`}
+          className={`hov dock${fit ? " fit" : ""}`}
           data-compose={composing ? "on" : undefined}
+          data-dock-state={dockLayout}
           onMouseEnter={inTauri ? undefined : expand}
           onMouseLeave={inTauri ? undefined : scheduleCollapse}
         >
           <Panel
+            dock={dock}
+            draftMode={draft.mode}
             snap={snap}
             v2={v2}
             showWaiting={showWaiting}
@@ -355,6 +405,8 @@ interface PanelProps {
   onCompose: () => void;
   onCloseComposer: () => void;
   onComposerActive: (active: boolean) => void;
+  dock: DockBridge;
+  draftMode: V2AgentMode | null;
 }
 
 function Panel({
@@ -372,6 +424,8 @@ function Panel({
   onCompose,
   onCloseComposer,
   onComposerActive,
+  dock,
+  draftMode,
 }: PanelProps) {
   const now = useNow();
   const scope = todayScope(snap);
@@ -454,10 +508,14 @@ function Panel({
   );
 
   return (
-    <>
-      <div className="hh" onPointerDown={startDrag}>
-        <Mark size={20} />
-        <b>Relay</b>
+    <DockContext.Provider value={dock}>
+      <div className="dock-viewport" ref={dock.viewportRef}>
+        <div className="dock-scroll">
+          <div className="dock-content" ref={dock.contentRef} data-layout={dock.layout}>
+            <div className="hh" onPointerDown={startDrag}>
+              <span className="wordmark" data-mode={draftMode ?? undefined}>
+                relay<span className="dot" key={draftMode ?? "none"}>.</span>
+              </span>
         {flags.paused && <span className="meta">capture paused</span>}
         <span className="push" />
         <button type="button" className={`rb${composing ? " on" : ""}`} title="Capture a note" aria-pressed={composing} onClick={onCompose}>
@@ -535,14 +593,17 @@ function Panel({
                 </span>
               ))}
           </span>
-          <kbd title="Summon">Ctrl Alt R</kbd>
+          <kbd title="Summon">{SUMMON_CHORD}</kbd>
           <button type="button" className="btn ghost open" onClick={() => void showMainWindow()}>
             <Icon name="ext" />
             Open Relay
           </button>
         </div>
+          </div>
+        </div>
       </div>
-    </>
+      </div>
+    </DockContext.Provider>
   );
 }
 

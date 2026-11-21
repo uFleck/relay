@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { lineDirective } from "../directives";
 import {
   convertUrls,
   copyText,
@@ -12,6 +13,7 @@ import {
   type ProviderProgress,
   type V2PickerRow,
 } from "../references";
+import { useEntering } from "../ui/motion";
 import {
   onReferenceChange,
   v2ReferenceExact,
@@ -34,6 +36,12 @@ export interface ReferenceEditorProps {
   multiline?: boolean;
   onSubmit?: () => void;
   onActiveChange?: (active: boolean) => void;
+  /** Forwarded by Composer so the Dock can hand its input to the native host. */
+  inputRef?: RefObject<HTMLTextAreaElement | null>;
+  /** Reports compact / picker / picker-with-Lens changes to the Dock. */
+  onPickerChange?: (open: boolean, lensVisible: boolean) => void;
+  onPickerTransitionEnd?: () => void;
+  onEscConsumed?: () => void;
 }
 
 /* A textarea with a decoration overlay. The textarea keeps plain chip tokens so caret,
@@ -49,6 +57,10 @@ export function ReferenceEditor({
   multiline = true,
   onSubmit,
   onActiveChange,
+  inputRef: forwardedRef,
+  onPickerChange,
+  onPickerTransitionEnd,
+  onEscConsumed,
 }: ReferenceEditorProps) {
   const [state, setState] = useState<EditorState>({ text: value, chips: [] });
   const [rows, setRows] = useState<V2PickerRow[]>([]);
@@ -58,6 +70,7 @@ export function ReferenceEditor({
   const [highlight, setHighlight] = useState(0);
   const [errorToken, setErrorToken] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const decorationRef = useRef<HTMLDivElement>(null);
   const undo = useRef<EditorState[]>([]);
   const lastConversion = useRef<{ chip: Chip; delimiter: string; at: number } | null>(null);
   const lastPaste = useRef<{ at: number; previous: EditorState } | null>(null);
@@ -76,9 +89,39 @@ export function ReferenceEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
 
+  // The Dock's input grows with its decoration so Rust can measure one stable content root.
+  // Other hosts keep their own textarea sizing rules.
+  useLayoutEffect(() => {
+    const input = inputRef.current;
+    const decoration = decorationRef.current;
+    if (!input || !decoration) return;
+    if (!input.closest(".dock")) {
+      input.style.height = "";
+      return;
+    }
+    const size = () => {
+      input.style.height = `${decoration.offsetHeight}px`;
+    };
+    size();
+    const observer = new ResizeObserver(size);
+    observer.observe(decoration);
+    return () => observer.disconnect();
+  }, [state.text]);
+
   useEffect(() => onReferenceChange(() => {
     if (pickerOpen && queryRef.current) void runLocal(queryRef.current);
   }), [pickerOpen]);
+
+  // The Dock owns the three native sizes; it only needs to know which one is on screen.
+  useEffect(() => {
+    onPickerChange?.(pickerOpen, pickerOpen && rows.length > 0);
+  }, [pickerOpen, rows.length, onPickerChange]);
+
+  // Entering identities drive the one-shot bead and chip animations. Plain keystrokes keep
+  // both keys unchanged, so nothing replays while the user types.
+  const lineKeys = state.text.split("\n").map((line, at) => `L${at}:${lineDirective(line) ?? "note"}`);
+  const enteringLines = useEntering(lineKeys);
+  const enteringChips = useEntering(state.chips.map((chip) => chip.key));
 
   const commit = (next: EditorState, caret?: number) => {
     setState(next);
@@ -210,6 +253,7 @@ export function ReferenceEditor({
       kind: row.kind,
       canonicalUrl: row.canonicalLink,
       originalUrl: row.displayId,
+      unavailable: row.availability === "unavailable",
     };
     const before = state.text.slice(0, range.start);
     const after = state.text.slice(range.end);
@@ -320,6 +364,7 @@ export function ReferenceEditor({
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
+        onEscConsumed?.();
         closePicker();
         return;
       }
@@ -390,33 +435,62 @@ export function ReferenceEditor({
     event.clipboardData.setData("text/plain", rendered);
   };
 
+  /** One block per draft line. The bead hangs off the block, so it stays on the first
+      visual row even when a long line wraps; the textarea's own text is never touched. */
   const decorate = () => {
-    const nodes: React.ReactNode[] = [];
-    let cursor = 0;
-    for (const mark of findMarks(state, errorToken)) {
-      nodes.push(state.text.slice(cursor, mark.at));
-      nodes.push(
-        <span
-          className={mark.kind === "chip" ? "ref-chip" : "ref-token-error"}
-          key={`${mark.key}-${mark.at}`}
-        >
-          {mark.text}
-        </span>,
-      );
-      cursor = mark.at + mark.text.length;
+    const lines = state.text.split("\n");
+    const starts: number[] = [];
+    let from = 0;
+    for (const line of lines) {
+      starts.push(from);
+      from += line.length + 1;
     }
-    nodes.push(state.text.slice(cursor));
-    return nodes;
+    const marks = findMarks(state, errorToken);
+    return lines.map((line, at) => {
+      const mode = lineDirective(line);
+      const base = starts[at];
+      const end = base + line.length;
+      const nodes: React.ReactNode[] = [];
+      let cursor = base;
+      for (const mark of marks) {
+        if (mark.at < base || mark.at >= end) continue;
+        nodes.push(state.text.slice(cursor, mark.at));
+        const chip = mark.kind === "chip" ? state.chips.find((item) => item.key === mark.key) : null;
+        const pop = enteringChips.has(mark.key) ? " pop" : "";
+        nodes.push(
+          <span
+            className={`${mark.kind === "chip" ? "ref-chip" : "ref-token-error"}${pop}`}
+            data-unresolved={chip?.unavailable ? "true" : undefined}
+            key={`${mark.key}-${mark.at}`}
+          >
+            {mark.text}
+          </span>,
+        );
+        cursor = mark.at + mark.text.length;
+      }
+      nodes.push(state.text.slice(cursor, end));
+      const bead = mode && enteringLines.has(lineKeys[at]) ? " pop" : "";
+      return (
+        <span className={`de-line${bead}`} data-mode={mode ?? undefined} key={lineKeys[at]}>
+          {nodes.length > 0 ? nodes : "\u200b"}
+        </span>
+      );
+    });
   };
 
   return (
     <div className="ref-editor">
       <div className="ref-editor-surface">
-        <div className="ref-editor-decoration" aria-hidden="true">
+        <div className="ref-editor-decoration" aria-hidden="true" ref={decorationRef}>
           {decorate()}
         </div>
         <textarea
-          ref={inputRef}
+          ref={(node) => {
+            (inputRef as { current: HTMLTextAreaElement | null }).current = node;
+            if (forwardedRef) {
+              (forwardedRef as { current: HTMLTextAreaElement | null }).current = node;
+            }
+          }}
           className={`ref-editor-input${multiline ? "" : " single"}`}
           value={state.text}
           placeholder={placeholder}
@@ -430,17 +504,17 @@ export function ReferenceEditor({
           onBlur={() => onActiveChange?.(false)}
         />
       </div>
-      {pickerOpen && (
-        <ReferencePicker
-          rows={rows}
-          highlight={highlight}
-          onHighlight={moveHighlight}
-          onPick={insertChip}
-          onClose={closePicker}
-          progress={progress}
-          slow={slow}
-        />
-      )}
+      <ReferencePicker
+        rows={rows}
+        highlight={highlight}
+        onHighlight={moveHighlight}
+        onPick={insertChip}
+        onClose={closePicker}
+        progress={progress}
+        slow={slow}
+        open={pickerOpen}
+        onTransitionEnd={onPickerTransitionEnd}
+      />
     </div>
   );
 }
