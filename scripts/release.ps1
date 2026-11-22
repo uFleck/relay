@@ -37,6 +37,21 @@ function Format-Elapsed([TimeSpan]$Span) {
     return $Span.ToString("mm\:ss")
 }
 
+function Invoke-NativeCapture {
+    param([string[]]$Arguments)
+    # gh writes status and "not found" messages to stderr. With ErrorActionPreference
+    # set to Stop, redirecting that stream would otherwise throw before the exit code
+    # can be inspected.
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $output = (& gh @Arguments 2>&1 | Out-String).Trim()
+        [PSCustomObject]@{ Output = $output; ExitCode = $LASTEXITCODE }
+    } finally {
+        $ErrorActionPreference = $previous
+    }
+}
+
 function Step {
     param(
         [string]$Name,
@@ -193,11 +208,12 @@ if (-not $gh) {
             throw "Cannot resolve the GitHub repository: no 'origin' remote and GH_REPO is not set. Add origin (git remote add origin <url>) or set GH_REPO=owner/repo, then retry."
         }
     } else {
-        gh auth status 2>&1 | Out-Null
-        $authExit = $LASTEXITCODE
+        $authProbe = Invoke-NativeCapture -Arguments @("auth", "status")
+        $authExit = $authProbe.ExitCode
         # Read-only probe. gh prints "release not found" when the tag has no release.
-        $releaseOutput = (gh release view $tag --repo $repo 2>&1 | Out-String).Trim()
-        $releaseExit = $LASTEXITCODE
+        $releaseProbe = Invoke-NativeCapture -Arguments @("release", "view", $tag, "--repo", $repo)
+        $releaseOutput = $releaseProbe.Output
+        $releaseExit = $releaseProbe.ExitCode
 
         if ($releaseExit -eq 0) {
             Fail "Release $tag already exists on $repo. Refusing to clobber it: delete that release or release a new version."
