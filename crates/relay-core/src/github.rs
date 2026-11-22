@@ -698,7 +698,7 @@ mod tests {
             "/repos/acme/relay/pulls/7/reviews",
             get(|| async {
                 axum::Json(json!([
-                    {"user": {"login": "ana"}, "state": "APPROVED", "submitted_at": "2026-11-17T10:00:00Z"},
+                    {"user": {"login": "reviewer"}, "state": "APPROVED", "submitted_at": "2026-11-17T10:00:00Z"},
                     {"user": {"login": "bo"}, "state": "CHANGES_REQUESTED", "submitted_at": "2026-11-17T11:00:00Z"}
                 ]))
             }),
@@ -836,8 +836,8 @@ mod tests {
     #[test]
     fn the_newest_review_per_author_wins() {
         let reviews = json!([
-            {"user": {"login": "ana"}, "state": "CHANGES_REQUESTED", "submitted_at": "2026-11-17T09:00:00Z"},
-            {"user": {"login": "ana"}, "state": "APPROVED", "submitted_at": "2026-11-17T10:00:00Z"}
+            {"user": {"login": "reviewer"}, "state": "CHANGES_REQUESTED", "submitted_at": "2026-11-17T09:00:00Z"},
+            {"user": {"login": "reviewer"}, "state": "APPROVED", "submitted_at": "2026-11-17T10:00:00Z"}
         ]);
         assert_eq!(review_from(&reviews), Review::Approved);
         assert_eq!(review_from(&json!([])), Review::None);

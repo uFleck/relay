@@ -1,8 +1,16 @@
 # Relay
 
-A local-first Windows desktop app that keeps one task graph for work spread across Slack DMs, ClickUp/GitHub, git/PRs and AI sessions. Local SQLite is the source of truth; integrations are optional projections. The plan is in [docs/PLAN.md](docs/PLAN.md).
+Relay is a local, single-user Windows notebook that turns explicit requests into agent work. The hotkey Composer saves Notes and creates Tasks from `!` (Act), `?` (Wait) and `??` (Grill) directive lines. OpenCode writes Briefs, T3 Code does the work, and the local v2 SQLite store is the source of truth. ClickUp, GitHub and Slack References are read-only; provider writes belong to the implementing agent. The [decision map](https://github.com/uFleck/relay/issues/6) records the product decisions.
 
-Status: scaffold. It has the Tauri main window, tray, single instance, autostart, the `relay-core` model/SQLite store, and the updater/release pipeline. The hover window and the real UI are not implemented yet; the static design mockups live in `design/`.
+The main window has Notebook, Tasks and Settings; the Dock is the hotkey Composer with a read-only Lens. First launch opens an empty v2 store with no v1 data migration. [docs/PLAN.md](docs/PLAN.md) is v1 history with Decision 4 reversed.
+
+## Using Relay v2
+
+Set up providers in **Settings**: sign in to the Slack connector used by headless Claude Haiku, add GitHub/ClickUp credentials, choose an OpenCode model, and map each Relay project to a T3 Code project. Secrets stay in Windows Credential Manager; the UI shows status and a masked last four characters only.
+
+Open the Composer with the global shortcut (`Ctrl+Alt+R`) in the Dock, or use the one embedded in Notebook. Plain lines form a Note; a line starting with `!`, `?` or `??` also creates a Task. Add `@` References and an explicit `+project` where useful. A submission saves the Note locally even if a provider is unavailable.
+
+Wait shows an editable Brief with **Go**; Grill asks questions inline and closes with one **Go** on the Brief; Act dispatches as soon as its Brief and project are ready. Progress and pending questions appear on the Task and link to the T3 thread. When a run returns, close the Task as done or cancelled, or send a Follow-up on the same thread. Import creates Notes only, never Tasks.
 
 ## Stack
 
@@ -31,7 +39,7 @@ Tauri needs `dist/` for `cargo check`/`cargo build` because `generate_context!` 
 crates/relay-core/      model + SQLite store, no Tauri
   migrations/           versioned SQL, applied through PRAGMA user_version
 src-tauri/              Tauri shell: main window, tray, plugins, DB setup
-src/                    React scaffold (tokens.css copied from Hopper)
+src/                    React UI: Notebook, Tasks, Settings, Composer, Dock and Lens
 scripts/                version, release and signing-key helpers
 .github/actions/release composite release steps
 .github/workflows/      ci.yml + release.yml
@@ -39,11 +47,11 @@ scripts/                version, release and signing-key helpers
 
 ## Database
 
-The app opens `%APPDATA%\dev.relay.app\relay.db` at startup, enables WAL and foreign keys, and applies `crates/relay-core/migrations/0001_init.sql`. Tests use an in-memory database. The schema mirrors [docs/PLAN.md](docs/PLAN.md) section 2, including FTS5 over `tasks(title, notes)`.
+The app opens `%APPDATA%\dev.relay.app\relay-v2.db` at startup, enables WAL and foreign keys, and applies the migrations in `crates/relay-core/migrations/v2/` through `PRAGMA user_version`. Tests use temporary or in-memory databases. The v2 store has its own schema and application id; no v1 database or credential is opened or migrated. Note and Task search uses FTS5.
 
 ## Releases
 
-The updater plugin and endpoint (`https://github.com/uFleck/relay/releases/latest/download/latest.json`) are configured. A local key pair was generated on 2026-11-17 and its public key is already in `plugins.updater.pubkey`; the in-app update state/UI is still being built.
+The updater plugin and endpoint (`https://github.com/uFleck/relay/releases/latest/download/latest.json`) are configured with the committed public key in `plugins.updater.pubkey`. The packaged v2 first-launch and update path is the last v2 cutover item (#43). The private key and password stay outside the repo.
 
 ```powershell
 # 1. Bump every version field: package.json, src-tauri/tauri.conf.json, both

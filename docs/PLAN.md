@@ -28,6 +28,8 @@ This is not a ClickUp replacement and not a ClickUp mirror. The local task is th
 7. **Windows first**, single user, local-only, no web/mobile, no native dialogs except the folder picker.
 8. **Updater and fast releases are top-tier.** Every release must be installable by the app itself, and the tag → signed installer + `latest.json` path targets **under 5 minutes**.
 
+> **Superseded by Relay v2.** This document is v1 history. The v2 decisions are in the [decision map](https://github.com/uFleck/relay/issues/6) and the implementation issues #24–#43. In particular Decision 4 is reversed: Relay now dispatches work to T3 Code and tracks the thread it returns.
+
 ## 0. Product shape
 
 ### Main window
