@@ -1,4 +1,4 @@
-/* Hover companion, Capsule direction (design/redesign/overlay-b-capsule.html). The window is transparent:
+/* Hover companion, Dock + Lens. The window is transparent:
    only .tab or .hov paints. Rust sizes the window to the measured element; the DOM never animates its own size,
    and nothing may paint outside the element (no outer shadows). */
 

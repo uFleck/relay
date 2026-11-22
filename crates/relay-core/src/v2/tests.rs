@@ -175,12 +175,12 @@ fn round_trip_persists_lines_tasks_references_settings_project_and_ledger() {
             name: "Sample App".to_string(),
             slug: "SAMPLE-App".to_string(),
             repo_path: Some("C:/sample".to_string()),
-            owner_repo: Some("uFleck/Sample-App".to_string()),
+            owner_repo: Some("example/sample-app".to_string()),
             t3_target: Some("sample".to_string()),
         })
         .unwrap();
     assert_eq!(project.slug, "sample-app");
-    assert_eq!(project.owner_repo.as_deref(), Some("ufleck/sample-app"));
+    assert_eq!(project.owner_repo.as_deref(), Some("example/sample-app"));
 
     let saved = store
         .save_note(create(
@@ -216,7 +216,7 @@ fn round_trip_persists_lines_tasks_references_settings_project_and_ledger() {
         .update_settings(V2SettingsUpdate {
             import_clickup_enabled: true,
             import_github_enabled: true,
-            import_scope: Some("[\"uFleck/sample-app\"]".to_string()),
+            import_scope: Some("[\"example/sample-app\"]".to_string()),
         })
         .unwrap();
     store
@@ -236,7 +236,7 @@ fn round_trip_persists_lines_tasks_references_settings_project_and_ledger() {
     assert!(snapshot.settings.import_github_enabled);
     assert_eq!(
         snapshot.settings.import_scope.as_deref(),
-        Some("[\"uFleck/sample-app\"]")
+        Some("[\"example/sample-app\"]")
     );
     assert!(
         reopened
@@ -480,7 +480,7 @@ fn workspace_snapshot_and_search_keep_punctuation_and_removed_task_lines() {
             name: "Sample".to_string(),
             slug: "sample".to_string(),
             repo_path: None,
-            owner_repo: Some("uFleck/Sample".to_string()),
+            owner_repo: Some("example/sample".to_string()),
             t3_target: None,
         })
         .unwrap();

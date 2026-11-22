@@ -15,7 +15,7 @@ pub const LABEL: &str = "hover";
 /// Sent to every window with a [`Snapshot`] whenever one of its fields changes.
 pub const STATE_EVENT: &str = "relay://state";
 
-/// The edge tab's size in logical pixels before the page measures it (design/redesign/overlay-b-capsule.html).
+/// The edge tab's size in logical pixels before the page measures it.
 const TAB_W: f64 = 34.0;
 const TAB_H: f64 = 112.0;
 

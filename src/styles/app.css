@@ -1,4 +1,4 @@
-/* Main window, from design/main.html. Sizes and category colours come from layout-tokens.css. */
+/* Main window. Sizes and category colours come from layout-tokens.css. */
 
 .win {
   height: 100%;
@@ -758,7 +758,7 @@ h3.sub {
   color: var(--text-tertiary);
 }
 
-/* Projects, Workspace direction (design/redesign/projects-b-workspace.html): project list, one project in focus. */
+/* Projects: project list, one project in focus. */
 .main.ws {
   grid-template-columns: 220px minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
