@@ -100,6 +100,7 @@ Then state the commit reviewed and any follow-up package that should be opened.
 | 2026-11-21 | [v2 public docs and examples (#42)](2026-11-21-v2-docs-cleanup.md) | final local HEAD | OpenCode / hy4-flash-free | Local implementation complete; awaiting Opus review |
 | 2026-11-21 | [v2 packaged Windows cutover (#43)](2026-11-21-v2-release-cutover.md) | `440eb3d`, `d6f4bc2` | OpenCode / hy4-flash-free | v0.9.0 published; live install/T3/provider cases deferred; awaiting Opus review |
 | 2026-11-23 | [v2 UI parity and broken-behaviour pass](2026-11-23-v2-ui-parity.md) | final local HEAD | OpenCode / hy4-flash-free | Local implementation complete; native summon/provider cases deferred; awaiting review |
+| 2026-11-23 | [Startup panic after the UI parity release](2026-11-23-startup-state-panic.md) | final local HEAD | OpenCode / hy4-flash-free | Root cause found and fixed; smoke check red then green; pending v0.10.1 release |
 
 The release audit is a section of the scaffold record because it audits the
 scaffold's release pipeline; it does not change the scaffold commit.

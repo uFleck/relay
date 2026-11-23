@@ -234,7 +234,9 @@ pub fn run() {
         .manage(opencode::BriefingState::default())
         .manage(grilling::GrillingState::default())
         .manage(dispatch::DispatchGate::default())
-        .manage(progress::ProgressState::default())
+        // progress::init and its commands all take Arc<ProgressState>; manage that type
+        // so a fresh process can read it during setup.
+        .manage(Arc::new(progress::ProgressState::default()))
         .manage(DockRuntime::default())
         .invoke_handler(tauri::generate_handler![
             show_main_window,
