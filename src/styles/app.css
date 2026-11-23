@@ -98,7 +98,7 @@
 .rail {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
   padding: 10px 8px;
   border-right: 1px solid var(--border-default);
   background: var(--bg-page);
@@ -108,7 +108,7 @@
   display: flex;
   align-items: center;
   gap: 9px;
-  padding: 4px 8px 14px;
+  padding: 4px 10px 18px;
   font: 700 15px var(--font-ui);
   letter-spacing: -0.01em;
 }
@@ -120,7 +120,7 @@
   align-items: center;
   gap: 10px;
   height: 32px;
-  padding: 0 8px;
+  padding: 0 10px;
   border: 0;
   border-radius: var(--r);
   background: transparent;
@@ -1052,15 +1052,112 @@ h3.sub {
 .unote {
   display: grid;
   gap: 6px;
-  margin: 0 10px 8px;
+  margin: 0 4px 8px;
   padding: 8px 10px;
   border: 1px solid var(--border-default);
   border-radius: var(--r);
   background: var(--bg-elevated);
-  font-size: 12px;
+  font-size: 11px;
+}
+.unote .tx {
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
 }
 .unote .btn {
-  justify-self: start;
+  width: 100%;
+  justify-content: center;
+  min-height: 26px;
+  padding: 0 8px;
+  font-size: 11px;
+}
+
+/* Search results: a modal over the unfiltered views. */
+.search-shade {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: start center;
+  padding-top: 12vh;
+  background: color-mix(in srgb, var(--bg-page) 72%, transparent);
+  backdrop-filter: blur(2px);
+}
+.search-modal {
+  width: min(760px, calc(100vw - 80px));
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-lg);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop);
+  overflow: hidden;
+}
+.sm-head,
+.sm-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  font-family: var(--font-mono);
+}
+.sm-head {
+  border-bottom: 1px solid var(--border-default);
+}
+.sm-query {
+  color: var(--accent-text);
+  overflow-wrap: anywhere;
+}
+.sm-foot {
+  border-top: 1px solid var(--border-default);
+  gap: 16px;
+  font-size: 11px;
+}
+.sm-foot kbd,
+.rail .hint kbd {
+  border: 1px solid var(--border-default);
+  border-radius: 4px;
+  padding: 0 4px;
+  color: var(--text-secondary);
+  font: 500 11px var(--font-mono);
+}
+.sm-list {
+  overflow: auto;
+  padding: 6px;
+}
+.sm-hit {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 12px;
+  border: 0;
+  border-radius: var(--r);
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+.sm-hit:hover,
+.sm-hit.on {
+  background: var(--sel-bg);
+}
+.sm-kind {
+  font: 600 11px var(--font-mono);
+  color: var(--chip-ink);
+}
+.sm-kind.task {
+  color: var(--act);
+}
+.sm-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sm-meta {
+  white-space: nowrap;
 }
 
 .toast {

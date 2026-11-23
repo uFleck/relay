@@ -184,6 +184,12 @@ impl std::fmt::Debug for Invocation {
     }
 }
 
+/// Whether a trusted OpenCode executable is installed on this machine. Used by Settings to
+/// show a discovered provider without reading or returning any credential.
+pub fn is_installed() -> bool {
+    resolve_executable().is_ok()
+}
+
 /// Resolves a trusted executable. A debug-only absolute override lets a smoke test point at a
 /// synthetic binary without weakening the release path.
 fn resolve_executable() -> Result<PathBuf, String> {

@@ -78,17 +78,8 @@
 
 /* ── Composer draft decoration: one bead per directive line ────────── */
 
-.ref-editor-decoration {
-  overflow: visible;
-  --bead-left: -18px;
-  --bead-top: 8px;
-}
-.de-line {
-  display: block;
-  position: relative;
-  min-height: 1.45em;
-  min-height: 1lh;
-}
+/* Base gutter, bead geometry and line box live in references.css so the main window
+   Composer and the Dock render the same highlight. Only the directive colours are here. */
 .de-line[data-mode] {
   --k: var(--act);
 }
@@ -134,10 +125,6 @@
   border-top: 1px solid var(--border-default);
   padding-top: 8px;
   font-family: var(--font-mono);
-}
-.composer-hint {
-  flex: 1;
-  letter-spacing: 0.02em;
 }
 .composer-count {
   color: var(--chip-ink);
@@ -347,10 +334,6 @@
 }
 .hov.dock .ref-editor-input:focus {
   box-shadow: none;
-}
-.hov.dock .ref-editor-decoration {
-  --bead-left: -26px;
-  --bead-top: 14px;
 }
 .hov.dock .ref-picker {
   left: 0;

@@ -8,6 +8,7 @@ import {
   type V2Project,
   type V2Settings,
 } from "../ipc";
+import { setKeybinds, useKeybinds } from "../keybinds";
 import type { ProviderKey } from "../route";
 import {
   checkT3Mapping,
@@ -84,6 +85,8 @@ export function SettingsView({ provider, version, update }: Props) {
   const [projects, setProjects] = useState<V2Project[]>([]);
   const [settings, setSettings] = useState<V2Settings | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const { summon } = useKeybinds();
+  const [chordDraft, setChordDraft] = useState(summon);
   const sections = useRef<Partial<Record<ProviderKey, HTMLElement | null>>>({});
 
   const load = useCallback(async () => {
@@ -112,6 +115,14 @@ export function SettingsView({ provider, version, update }: Props) {
       window.removeEventListener("focus", onFocus);
     };
   }, [load]);
+
+  // Discover providers from the running machine as soon as Settings opens. The Rust side
+  // bounds each probe and publishes through the status event; this call just asks for it.
+  useEffect(() => {
+    void refreshProviders().then(setStatuses).catch(() => {});
+  }, []);
+
+  useEffect(() => setChordDraft(summon), [summon]);
 
   // A recovery route from a Task or Reference both scrolls to and focuses the section.
   useEffect(() => {
@@ -152,6 +163,15 @@ export function SettingsView({ provider, version, update }: Props) {
     }
   };
 
+  const saveChord = async () => {
+    try {
+      await setKeybinds({ summon: chordDraft });
+      setNotice("Summon shortcut saved.");
+    } catch (error) {
+      setNotice(`Could not save the shortcut: ${errorText(error)}`);
+    }
+  };
+
   return (
     <section className="main settings" aria-label="Settings">
       <header className="head">
@@ -173,6 +193,25 @@ export function SettingsView({ provider, version, update }: Props) {
           <span className="push" />
           <UpdateActions update={update} />
         </div>
+
+        <h2 className="sub">Keybinds</h2>
+        <div className="setrow">
+          <label htmlFor="summon-chord">Summon</label>
+          <input
+            id="summon-chord"
+            value={chordDraft}
+            onChange={(event) => setChordDraft(event.target.value)}
+            spellCheck={false}
+            aria-label="Summon shortcut"
+          />
+          <button type="button" className="btn" onClick={() => void saveChord()}>
+            Save
+          </button>
+        </div>
+        <p className="meta psec-intro">
+          Stored in keybinds.json and applied without a restart. Use a shortcut that is not
+          taken by Windows or another app, for example alt+space or ctrl+alt+r.
+        </p>
 
         <h2 className="sub">Providers</h2>
         <p className="meta psec-intro">

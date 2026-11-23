@@ -678,6 +678,8 @@ interface Events {
   "relay://settings-status": import("./settings").ProviderStatusMap;
   /** A v2 setting (Import scope, project mapping, OpenCode model) was saved. */
   "relay://settings-change": null;
+  /** The configurable keyboard shortcuts changed. */
+  "relay://keybinds-change": import("./keybinds").Keybinds;
   /** A picked or recovered Reference snapshot changed; the payload is its canonical key. */
   "relay://reference-change": string;
   /** Directory scan progress, shared by the Dock and Notebook pickers. */

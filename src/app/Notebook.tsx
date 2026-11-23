@@ -19,6 +19,8 @@ import {
 interface Props {
   workspace: V2WorkspaceSnapshot | null;
   filter: WorkspaceFilter;
+  /** A Note opened from search: scroll to it and show its detail editor. */
+  focusNoteId?: string | null;
   selectedTaskId: string | null;
   onOpenTask: (id: string) => void;
   onNotice: (message: string) => void;
@@ -26,7 +28,7 @@ interface Props {
   onDraftChange?: (draft: DraftSummary) => void;
 }
 
-export function Notebook({ workspace, filter, selectedTaskId, onOpenTask, onNotice, onSaved, onDraftChange }: Props) {
+export function Notebook({ workspace, filter, focusNoteId, selectedTaskId, onOpenTask, onNotice, onSaved, onDraftChange }: Props) {
   const [editing, setEditing] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const followNewest = useRef(true);
@@ -80,6 +82,20 @@ export function Notebook({ workspace, filter, selectedTaskId, onOpenTask, onNoti
     editScroll.current = scrollRef.current?.scrollTop ?? null;
     setEditing(note.id);
   };
+
+  // A search result addresses a Note by id. Bring it into view and open its editor once.
+  useEffect(() => {
+    if (!focusNoteId || !workspace) return;
+    const note = workspace.notes.find((candidate) => candidate.id === focusNoteId);
+    if (!note) return;
+    requestAnimationFrame(() => {
+      scrollRef.current
+        ?.querySelector<HTMLElement>(`[data-note-id="${focusNoteId}"]`)
+        ?.scrollIntoView({ block: "center" });
+      editScroll.current = scrollRef.current?.scrollTop ?? null;
+      setEditing(focusNoteId);
+    });
+  }, [focusNoteId, workspace]);
 
   const closeEditor = () => {
     setEditing(null);

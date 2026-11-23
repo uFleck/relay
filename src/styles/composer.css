@@ -96,8 +96,9 @@
   gap: 10px;
   padding: 14px 18px;
   border-bottom: 1px solid var(--border-default);
-  max-height: 55%;
-  overflow: auto;
+  /* The Reference picker opens above the input; clipping here would hide it. The enclosing
+     view owns scrolling. */
+  overflow: visible;
   box-sizing: border-box;
 }
 

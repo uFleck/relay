@@ -144,8 +144,9 @@ impl ProviderCache {
     }
 }
 
-/// Installs the cache and fills it without any network call. Live probes happen on
-/// explicit refresh or after a credential write, never during startup.
+/// Installs the cache with offline statuses so the UI paints immediately, then discovers
+/// the running system in the background. The probes are bounded by `guarded` and publish
+/// through the existing status event, so no provider can block startup or the UI.
 pub fn start(app: &AppHandle) {
     app.manage(ProviderCache::default());
     let store = app.state::<Arc<V2Store>>().inner().clone();
@@ -156,6 +157,12 @@ pub fn start(app: &AppHandle) {
     statuses.insert("opencode".into(), opencode_status(&store));
     statuses.insert("t3".into(), offline_t3(&store));
     app.state::<ProviderCache>().replace(statuses);
+
+    let discovering = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let store = discovering.state::<Arc<V2Store>>().inner().clone();
+        let _ = refresh_all(&discovering, &store).await;
+    });
 }
 
 async fn guarded<F: Future<Output = ProviderStatus>>(
@@ -354,6 +361,7 @@ async fn slack_status() -> ProviderStatus {
 }
 
 fn opencode_status(store: &V2Store) -> ProviderStatus {
+    let installed = crate::opencode::is_installed();
     let settings = match store.settings() {
         Ok(settings) => settings,
         Err(_) => return unavailable("OpenCode settings could not be read."),
@@ -361,9 +369,20 @@ fn opencode_status(store: &V2Store) -> ProviderStatus {
     let key = secrets::v2::read(OPENCODE_KEY);
     match settings.opencode_model {
         None => ProviderStatus {
-            source: ProviderSource::None,
+            source: if installed {
+                ProviderSource::Cli
+            } else {
+                ProviderSource::None
+            },
             status: ProviderState::MissingSetup,
-            reason: Some("Set an OpenCode provider/model before briefing Tasks.".into()),
+            reason: Some(
+                if installed {
+                    "OpenCode found on this machine. Set a provider/model before briefing Tasks."
+                } else {
+                    "Set an OpenCode provider/model before briefing Tasks."
+                }
+                .into(),
+            ),
             last_four: key.as_deref().and_then(last_four),
         },
         Some(model) => ProviderStatus {

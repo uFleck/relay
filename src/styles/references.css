@@ -20,10 +20,12 @@
   margin: 0;
   border: 1px solid var(--border-default);
   border-radius: var(--r);
-  padding: 8px 10px;
+  /* Variant J geometry, shared by the main window and the Dock: a 40px gutter for the
+     per-directive lights and a 30px line box. The Dock overrides only the font size. */
+  padding: 8px 20px 8px var(--dock-gut);
   font: inherit;
   font-size: inherit;
-  line-height: 1.45;
+  line-height: 30px;
   letter-spacing: inherit;
   white-space: pre-wrap;
   overflow-wrap: break-word;
@@ -33,7 +35,7 @@
 
 .ref-editor-input {
   display: block;
-  min-height: 64px;
+  min-height: var(--dock-lh);
   max-height: 160px;
   resize: vertical;
   overflow: auto;
@@ -66,8 +68,18 @@
   pointer-events: none;
   border-color: transparent;
   color: transparent;
-  overflow: hidden;
+  /* The directive beads sit in the gutter outside the text box. */
+  overflow: visible;
+  --bead-left: -26px;
+  --bead-top: 10px;
   z-index: 0;
+}
+
+.de-line {
+  display: block;
+  position: relative;
+  min-height: 30px;
+  min-height: 1lh;
 }
 
 .ref-chip {

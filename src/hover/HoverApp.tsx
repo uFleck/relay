@@ -29,11 +29,11 @@ import {
   DockContext,
   dockCssHeight,
   dockLayoutState,
-  SUMMON_CHORD,
   type DockBridge,
   type DockLayoutState,
 } from "./dock";
 import { prefersReducedMotion } from "../ui/motion";
+import { useKeybinds } from "../keybinds";
 import { followUpdates, requestInstall, useUpdater, type UpdateState } from "../updater";
 import { needsYouCount, waitingTasks } from "../workspace";
 
@@ -235,11 +235,21 @@ export function HoverApp() {
         inputRef.current?.blur();
         return;
       }
-      if (event.focused) requestAnimationFrame(() => inputRef.current?.focus());
+      // Focus the composer on every summon. Native activation can be Pending or Refused, and
+      // in both cases the user still expects the caret to be in the input as soon as it appears.
+      requestAnimationFrame(() => inputRef.current?.focus());
       // Re-measure for this session: the draft may have grown while the Dock was hidden.
       void applyHeight(true);
     });
   }, [applyHeight]);
+
+  // The textarea only exists while composing. Focus again if the Dock becomes visible after
+  // that mount, so a summon that races the first v2 read still leaves a usable caret.
+  useEffect(() => {
+    if (!dockVisible || !composing) return;
+    const frame = requestAnimationFrame(() => inputRef.current?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [dockVisible, composing]);
 
   useEffect(() => {
     if (!inTauri) return;
@@ -434,6 +444,7 @@ function Panel({
   onCloseComposer,
   onComposerActive,
 }: PanelProps) {
+  const { summon } = useKeybinds();
   const waiting = waitingTasks(v2.tasks);
   const needs = waiting.length > 0;
   const openTask = (task: string) => void openMain(taskRoute(task));
@@ -520,7 +531,7 @@ function Panel({
                 <div className="slot warn-fg">Could not read Relay's data · retrying</div>
               ) : null}
               <div className="hf">
-                <kbd title="Summon">{SUMMON_CHORD}</kbd>
+                <kbd title="Summon">{summon}</kbd>
                 <button type="button" className="btn ghost open" onClick={() => void showMainWindow()}>
                   <Icon name="ext" />
                   Open Relay
