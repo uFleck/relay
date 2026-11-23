@@ -1,6 +1,6 @@
 import type { V2AgentMode } from "../ipc";
-import { SUMMON_CHORD } from "../hover/dock";
 import { Icon, type IconName } from "../components/Icon";
+import { useKeybinds } from "../keybinds";
 import type { View } from "../route";
 
 /* The v2 rail: Notebook, Tasks and Settings. The single Needs-you count is owned by #27;
@@ -18,6 +18,7 @@ interface Props {
 }
 
 export function Rail({ view, onView, version, needsYou, notice, wordmarkMode }: Props) {
+  const { summon } = useKeybinds();
   const item = (v: View, icon: IconName, label: string, trail?: React.ReactNode) => (
     <button
       type="button"
@@ -55,7 +56,7 @@ export function Rail({ view, onView, version, needsYou, notice, wordmarkMode }: 
       {item("settings", "gear", "Settings")}
       <div className="hint meta">
         <div>
-          <kbd>{SUMMON_CHORD}</kbd> summon
+          <kbd>{summon}</kbd> summon
         </div>
         <div>
           <kbd>Ctrl</kbd>+<kbd>↵</kbd> send

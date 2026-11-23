@@ -7,6 +7,7 @@ mod github;
 mod grilling;
 mod grilling_mcp;
 mod hover;
+mod keybinds;
 mod live;
 mod note_import;
 mod opencode;
@@ -26,7 +27,6 @@ use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, RunEvent, WindowEvent, Wry};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
-use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 /// Passed by the login entry so Relay starts hidden in the tray.
 const AUTOSTART_ARG: &str = "--autostart";
@@ -34,8 +34,6 @@ const AUTOSTART_ARG: &str = "--autostart";
 const AUTOSTART_MARKER: &str = "autostart-initialized";
 const MAIN: &str = "main";
 const TRAY: &str = "main";
-/// Summons the main window from anywhere. A taken hotkey must never stop Relay starting: the tray still works.
-const HOTKEY: &str = "ctrl+alt+r";
 /// Sent to the main window with a v2 route (`/notebook`, `/tasks?task=<id>`,
 /// `/settings?provider=<key>`) to navigate to. Retired v1 routes land on Notebook.
 const OPEN_EVENT: &str = "relay://open";
@@ -198,26 +196,6 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-/// Registers the summon hotkey. A taken key never stops Relay starting: the tray still works,
-/// and the tooltip names the summon key when that one failed.
-fn register_hotkeys(app: &AppHandle) {
-    let summon = app
-        .global_shortcut()
-        .on_shortcut(HOTKEY, |app, _shortcut, event| {
-            if event.state == ShortcutState::Pressed {
-                // global-hotkey dispatches `Pressed` synchronously from WM_HOTKEY on the main
-                // thread, so the Dock can capture the foreground window and take focus here.
-                hover::summon(app);
-            }
-        });
-    if let Err(err) = summon {
-        eprintln!("relay: could not register {HOTKEY}: {err}");
-        if let Some(tray) = app.tray_by_id(TRAY) {
-            let _ = tray.set_tooltip(Some("Relay (Ctrl+Alt+R is taken; use the tray)"));
-        }
-    }
-}
-
 /// Turns on start-on-login the first time a release build runs; the tray/OS owns it afterwards.
 fn enable_autostart_once(app: &AppHandle) {
     if cfg!(debug_assertions) {
@@ -302,6 +280,8 @@ pub fn run() {
             progress::v2_t3_check_again,
             progress::v2_t3_resend,
             progress::v2_t3_close,
+            keybinds::v2_keybinds_get,
+            keybinds::v2_keybinds_set,
             settings::v2_provider_status,
             settings::v2_provider_refresh,
             settings::v2_github_set_token,
@@ -382,7 +362,7 @@ pub fn run() {
             slack::directory::scan_if_due(app.handle());
 
             build_tray(app.handle())?;
-            register_hotkeys(app.handle());
+            keybinds::start(app.handle());
             enable_autostart_once(app.handle());
 
             // A hover that fails to build must not stop Relay; the main window and tray still work.

@@ -6,6 +6,8 @@ import { Notebook } from "./app/Notebook";
 import { MissingTask, Tasks } from "./app/Tasks";
 import { TaskSheet } from "./app/TaskSheet";
 import { SettingsView } from "./app/Settings";
+import { SearchModal } from "./app/SearchModal";
+import { UpdateActions } from "./app/UpdateActions";
 import { appVersion, onEvent } from "./ipc";
 import { parseRoute, readLocation, writeLocation, type Route, type View } from "./route";
 import { startUpdateChecks, useUpdater } from "./updater";
@@ -25,6 +27,8 @@ export default function App() {
   const searchRef = useRef<HTMLInputElement>(null);
   const { workspace, version: workspaceVersion, error: workspaceError, refresh } = useWorkspace();
   const filter = useWorkspaceFilter(query, workspaceVersion);
+  /** Search owns the query. The views keep showing the full workspace behind the modal. */
+  const viewFilter = useWorkspaceFilter("", workspaceVersion);
 
   const navigate = useCallback((next: Route) => {
     writeLocation(next);
@@ -40,17 +44,23 @@ export default function App() {
 
   /** A Task sheet is always the `/tasks?task=<id>` route, even when opened from Notebook. */
   const openTask = useCallback(
-    (task: string) => navigate({ view: "tasks", task, provider: null }),
+    (task: string) => navigate({ view: "tasks", task, note: null, provider: null }),
+    [navigate],
+  );
+
+  /** A search hit opens the Note in the Notebook with its detail editor. */
+  const openNote = useCallback(
+    (note: string) => navigate({ view: "notebook", task: null, note, provider: null }),
     [navigate],
   );
 
   const closeSheet = useCallback(() => {
-    navigate({ view: "tasks", task: null, provider: null });
+    navigate({ view: "tasks", task: null, note: null, provider: null });
     // Tasks puts focus back on the row that opened the sheet or on its heading.
   }, [navigate]);
 
   const setView = useCallback(
-    (view: View) => navigate({ view, task: null, provider: null }),
+    (view: View) => navigate({ view, task: null, note: null, provider: null }),
     [navigate],
   );
 
@@ -109,14 +119,15 @@ export default function App() {
           onView={setView}
           version={version}
           needsYou={needsYou}
-          notice={<UpdateNotice update={update} />}
+          notice={<RailUpdate update={update} version={version} />}
           wordmarkMode={draft.mode}
         />
 
         {route.view === "notebook" && (
           <Notebook
             workspace={workspace}
-            filter={filter}
+            filter={viewFilter}
+            focusNoteId={route.note}
             selectedTaskId={route.task}
             onOpenTask={openTask}
             onNotice={setNotice}
@@ -125,7 +136,7 @@ export default function App() {
           />
         )}
         {route.view === "tasks" && (
-          <Tasks workspace={workspace} filter={filter} selectedTaskId={route.task} onSelect={openTask} />
+          <Tasks workspace={workspace} filter={viewFilter} selectedTaskId={route.task} onSelect={openTask} />
         )}
         {route.view === "settings" && (
           <SettingsView provider={route.provider} version={version} update={update} />
@@ -143,6 +154,16 @@ export default function App() {
         )}
         {route.task && !selectedTask && <MissingTask id={route.task} onClose={closeSheet} />}
       </div>
+      {query.trim() && (
+        <SearchModal
+          query={query}
+          filter={filter}
+          workspace={workspace}
+          onOpenNote={openNote}
+          onOpenTask={openTask}
+          onClose={() => setQuery("")}
+        />
+      )}
       {notice && (
         <div className="toast" role="alert">
           <span>{notice}</span>
@@ -155,19 +176,24 @@ export default function App() {
   );
 }
 
-/** Kept local so the rail's notice and the Settings view share one updater instance. */
-function UpdateNotice({ update }: { update: ReturnType<typeof useUpdater> }) {
-  if (update.kind !== "available" && update.kind !== "downloading" && update.kind !== "ready") return null;
+/** Updater lives in the rail: one line of state and the action that fits it. */
+function RailUpdate({ update, version }: { update: ReturnType<typeof useUpdater>; version: string }) {
+  const label =
+    update.kind === "available"
+      ? `${update.version} available`
+      : update.kind === "downloading"
+        ? `Downloading${update.progress === null ? "…" : ` ${update.progress}%`}`
+        : update.kind === "ready"
+          ? `${update.version} ready`
+          : update.kind === "checking"
+            ? "Checking…"
+            : update.kind === "error"
+              ? "Update failed"
+              : `Relay ${version} is up to date`;
   return (
     <div className="unote" role="status">
-      <span>
-        <b>{update.version}</b>{" "}
-        {update.kind === "ready"
-          ? "ready"
-          : update.kind === "available"
-            ? "available"
-            : `downloading${update.progress === null ? "…" : ` ${update.progress}%`}`}
-      </span>
+      <span className="tx">{label}</span>
+      <UpdateActions update={update} />
     </div>
   );
 }

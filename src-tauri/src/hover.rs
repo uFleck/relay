@@ -952,6 +952,9 @@ pub fn summon(app: &AppHandle) {
             defer_alt_tap(app.clone(), id);
         }
         Activation::Refused => {
+            // Windows may refuse foreground activation but still honour a webview focus call.
+            // Give the composer the best chance of receiving the first keystroke.
+            let _ = window.set_focus();
             flash(&window);
             emit_focus(app, id, false, Some("click-to-focus"));
         }

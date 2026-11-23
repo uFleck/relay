@@ -16,6 +16,8 @@ export interface Route {
   view: View;
   /** A selected Task, always addressed from the unfiltered workspace. */
   task: string | null;
+  /** A Note to scroll to and open in the Notebook. */
+  note: string | null;
   /** A provider to bring into view when Settings opens. */
   provider: ProviderKey | null;
 }
@@ -31,6 +33,7 @@ export function parseRoute(route: string): Route {
   return {
     view,
     task: q.get("task") || null,
+    note: view === "notebook" ? q.get("note") || null : null,
     provider:
       view === "settings" && provider && PROVIDER_KEYS.includes(provider as ProviderKey)
         ? (provider as ProviderKey)
@@ -41,6 +44,7 @@ export function parseRoute(route: string): Route {
 function query(r: Route) {
   const q = new URLSearchParams();
   if (r.task) q.set("task", r.task);
+  if (r.note) q.set("note", r.note);
   if (r.provider) q.set("provider", r.provider);
   return q;
 }
@@ -50,13 +54,16 @@ export function formatRoute(r: Route) {
   return `/${r.view}${q ? `?${q}` : ""}`;
 }
 
-export const notebookRoute = () => formatRoute({ view: "notebook", task: null, provider: null });
+export const notebookRoute = () => formatRoute({ view: "notebook", task: null, note: null, provider: null });
 
 export const taskRoute = (task: string) =>
-  formatRoute({ view: "tasks", task, provider: null });
+  formatRoute({ view: "tasks", task, note: null, provider: null });
+
+export const noteRoute = (note: string) =>
+  formatRoute({ view: "notebook", task: null, note, provider: null });
 
 export const settingsRoute = (provider?: ProviderKey) =>
-  formatRoute({ view: "settings", task: null, provider: provider ?? null });
+  formatRoute({ view: "settings", task: null, note: null, provider: provider ?? null });
 
 /* The main window keeps its route in its own query string (`?view=tasks&task=…`). */
 
