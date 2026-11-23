@@ -1,6 +1,6 @@
 # Startup panic after the UI parity release
 
-Status: fix implemented, v0.10.1 pending publish.
+Status: fix implemented and v0.10.1 published; operator still needs to install it.
 
 - **Agent / model** - OpenCode session on `opencode-go/hy4-flash-free`, the only model used in this run. Worktree `C:\Users\Pichau\.t3\worktrees\relay\relay-v2-startup-fix` on `relay-v2/startup-fix`, branched from `master` (`7d41c1e`). No subagent was used for the fix. The stale main checkout was not touched.
 
@@ -17,5 +17,7 @@ Status: fix implemented, v0.10.1 pending publish.
 - **Known risks / exact gaps** - The smoke check needs a GUI session and was run on this Windows desktop; it is not a headless CI test. If another Relay instance is already running, the single-instance plugin may hand off and make the new process exit, so the script is for a manual check with no other instance running. No test covers the Tauri state registry directly; a Rust unit test cannot exercise `app.state()` without building the app. The installer itself was not run as part of the smoke check.
 
 - **Review checklist** - (1) Same state type is managed and read. (2) Red/green demonstrated on real exes. (3) Signed build succeeds. (4) Smoke script committed so the check can be repeated.
+
+- **Publish verification** - PR #51 merged as `f235d6d`. Tag `v0.10.1` points at that merge commit and is pushed. `release.ps1 0.10.1` with the warm shared target passed the budget gate at 117.3 s and finished in 122.3 s including upload. The release is stable with `latest.json` (845 B), the installer (5,681,974 B) and its signature (436 B); the `/releases/latest` feed serves 0.10.1 and points at the exact-version installer. The smoke check passed again against the published build. The installer was not run on the operator's machine as part of this work.
 
 - **Opus verdict** - (left empty; only hy4-flash-free was used in this run)
