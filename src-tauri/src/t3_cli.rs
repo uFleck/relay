@@ -12,23 +12,21 @@
 //! Nothing here decides Task state. stderr is translated into fixed reasons and never returned or
 //! logged: it may contain user paths or provider text.
 
-use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::process::Command;
+use std::time::Duration;
 
 use relay_core::t3_dispatch::{ListedThread, ThreadIdentity};
 use relay_core::t3_progress::{ObservedMessage, ObservedPullRequest, RunStatus, ThreadObservation};
 use serde::Deserialize;
 use serde_json::Value;
 
+use crate::process::{self, ProcessError};
+
 const LAUNCHERS: &[&str] = &["t3.cmd", "t3.exe", "t3"];
 const START_TIMEOUT: Duration = Duration::from_secs(30);
 const QUERY_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_OUTPUT: usize = 64 * 1024;
-const POLL: Duration = Duration::from_millis(20);
-#[cfg(windows)]
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// Fixed reasons used when the CLI is rejected before any thread can exist.
 pub const SERVER_STOPPED: &str = "T3 Code is not running. Start it, then Retry dispatch.";
@@ -184,7 +182,6 @@ fn command_for(
             command.env("ELECTRON_RUN_AS_NODE", "1");
             command.env("T3CODE_DESKTOP_CLI_LAUNCHER", "1");
             command.env("T3CODE_HOME", data_dir);
-            command.creation_flags(CREATE_NO_WINDOW);
             return Ok(Prepared { command });
         }
 
@@ -214,7 +211,6 @@ fn command_for(
             command
         };
         command.env("T3CODE_HOME", data_dir);
-        command.creation_flags(CREATE_NO_WINDOW);
         Ok(Prepared { command })
     }
     #[cfg(not(windows))]
@@ -244,98 +240,28 @@ fn run_with(
         Some(path) => path.to_path_buf(),
         None => resolve_launcher().ok_or(CliError::LauncherMissing)?,
     };
-    let Prepared { mut command } = command_for(&launcher, arguments, data_dir)?;
-    command
-        .stdin(if brief.is_some() {
-            Stdio::piped()
-        } else {
-            Stdio::null()
-        })
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-
-    #[cfg(windows)]
-    let (mut child, mut job) = spawn_with_job(command)?;
-    #[cfg(not(windows))]
-    let mut child = command.spawn().map_err(|_| CliError::LauncherMissing)?;
-
-    let stdin = child.stdin.take();
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or(CliError::BadOutput("no stdout"))?;
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or(CliError::BadOutput("no stderr"))?;
-    let payload = brief.unwrap_or("").as_bytes().to_vec();
-    let out_thread = std::thread::spawn(move || read_bounded(stdout));
-    let err_thread = std::thread::spawn(move || read_bounded(stderr));
-    let in_thread = std::thread::spawn(move || {
-        if let Some(mut stdin) = stdin {
-            stdin.write_all(&payload)?;
-            stdin.flush()?;
-        }
-        Ok::<(), std::io::Error>(())
-    });
-
-    let started = Instant::now();
-    let mut timed_out = false;
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break Some(status),
-            Ok(None) => {}
-            Err(_) => break None,
-        }
-        if started.elapsed() >= timeout {
-            timed_out = true;
-            let _ = child.kill();
-            #[cfg(windows)]
-            if let Some(job) = job.take() {
-                job.terminate();
-            }
-            let _ = child.wait();
-            break None;
-        }
-        std::thread::sleep(POLL);
-    };
-    // The wrapper has exited. Close its Job before joining the pipe readers: a leftover grandchild
-    // in the same Job must not keep the pipes open and let a read outlive the deadline.
-    #[cfg(windows)]
-    if let Some(job) = job.take() {
-        job.terminate();
-    }
-    let stdout = out_thread.join().unwrap_or_default();
-    let stderr = err_thread.join().unwrap_or_default();
-    let _ = in_thread.join();
-    let status_success = status.is_some_and(|status| status.success());
-    if timed_out || status.is_none() {
-        return Err(CliError::Timeout);
-    }
+    let Prepared { command } = command_for(&launcher, arguments, data_dir)?;
+    let output = process::run(
+        command,
+        brief.map(str::as_bytes),
+        timeout,
+        MAX_OUTPUT,
+        MAX_OUTPUT,
+        "t3",
+    )
+    .map_err(|error| match error {
+        ProcessError::Timeout(_) => CliError::Timeout,
+        ProcessError::Start(_) => CliError::LauncherMissing,
+        ProcessError::Cleanup(_) => CliError::BadOutput("the t3 process did not clean up"),
+    })?;
+    // T3 historically ignored a broken stdin pipe when the CLI exited with a classified error.
+    let _ = &output.stdin_error;
     Ok(Output {
-        status_success,
-        stdout,
-        stderr,
-        timed_out,
+        status_success: output.success,
+        stdout: output.stdout,
+        stderr: output.stderr,
+        timed_out: false,
     })
-}
-
-fn read_bounded<R: std::io::Read>(mut reader: R) -> Vec<u8> {
-    let mut buffer = Vec::new();
-    let mut chunk = [0u8; 4096];
-    loop {
-        match reader.read(&mut chunk) {
-            Ok(0) | Err(_) => break,
-            Ok(count) => {
-                if buffer.len() + count > MAX_OUTPUT {
-                    buffer.truncate(MAX_OUTPUT);
-                    break;
-                }
-                buffer.extend_from_slice(&chunk[..count]);
-            }
-        }
-    }
-    buffer
 }
 
 /// Only an exact, verified pre-launch diagnostic is a known failure. A timeout or malformed result
@@ -740,72 +666,6 @@ fn parse_send(stdout: &[u8]) -> Option<SendResponse> {
         run_count: field_u64(payload, &["runCount"]),
         status: field_text(payload, &["status"]),
     })
-}
-
-#[cfg(windows)]
-fn spawn_with_job(
-    mut command: Command,
-) -> Result<(std::process::Child, Option<JobObject>), CliError> {
-    // Spawn normally, then attach the job immediately. The direct Electron entrypoint has no
-    // grandchild, and the static cmd wrapper's grandchild starts only after cmd reads its script.
-    // This avoids the fragile suspend/resume of the initial thread on newer Windows builds.
-    let mut child = command.spawn().map_err(|_| CliError::LauncherMissing)?;
-    let Some(job) = attach_job_object(&child) else {
-        let _ = child.kill();
-        return Err(CliError::LauncherMissing);
-    };
-    Ok((child, Some(job)))
-}
-
-#[cfg(windows)]
-struct JobObject(windows_sys::Win32::Foundation::HANDLE);
-
-#[cfg(windows)]
-impl JobObject {
-    fn terminate(&self) {
-        unsafe {
-            windows_sys::Win32::System::JobObjects::TerminateJobObject(self.0, 1);
-        }
-    }
-}
-
-#[cfg(windows)]
-impl Drop for JobObject {
-    fn drop(&mut self) {
-        unsafe {
-            windows_sys::Win32::Foundation::CloseHandle(self.0);
-        }
-    }
-}
-
-#[cfg(windows)]
-fn attach_job_object(child: &std::process::Child) -> Option<JobObject> {
-    use std::os::windows::io::AsRawHandle;
-    use windows_sys::Win32::System::JobObjects::{
-        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
-        SetInformationJobObject,
-    };
-    unsafe {
-        let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
-        if job.is_null() {
-            return None;
-        }
-        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
-        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-        if SetInformationJobObject(
-            job,
-            JobObjectExtendedLimitInformation,
-            &info as *const _ as *const _,
-            std::mem::size_of_val(&info) as u32,
-        ) == 0
-            || AssignProcessToJobObject(job, child.as_raw_handle() as _) == 0
-        {
-            windows_sys::Win32::Foundation::CloseHandle(job);
-            return None;
-        }
-        Some(JobObject(job))
-    }
 }
 
 #[cfg(test)]

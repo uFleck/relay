@@ -13,6 +13,7 @@ pub(crate) struct Output {
     pub success: bool,
     pub stdout: Vec<u8>,
     pub stderr: Vec<u8>,
+    pub stdin_error: Option<String>,
 }
 
 #[derive(Debug)]
@@ -119,13 +120,13 @@ pub(crate) fn run(
         .map_err(|error| ProcessError::Cleanup(format!("{label} {error}")))?;
     let write = join_bounded(write_thread, "stdin")
         .map_err(|error| ProcessError::Cleanup(format!("{label} {error}")))?;
-    write.map_err(|error| ProcessError::Cleanup(format!("{label} stdin failed: {error}")))?;
     let status =
         status.ok_or_else(|| ProcessError::Start(format!("{label} has no exit status")))?;
     Ok(Output {
         success: status.success(),
         stdout,
         stderr,
+        stdin_error: write.err(),
     })
 }
 
