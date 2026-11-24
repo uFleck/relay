@@ -56,7 +56,10 @@ pub fn start(
     });
     match outcome {
         Ok(StartOutcome::Responded(mut identity)) => {
-            complete_identity(store, transport, &attempt, &mut identity)
+            match complete_identity(store, transport, &attempt, &mut identity) {
+                Ok(attempt) => Ok(attempt),
+                Err(error) => record_uncertain(store, &attempt.attempt_id, &error.to_string()),
+            }
         }
         Ok(StartOutcome::KnownFailure(reason)) => {
             record_known_failure(store, &attempt.attempt_id, &reason)
