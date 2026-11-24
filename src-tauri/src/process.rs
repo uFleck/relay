@@ -279,6 +279,25 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    fn stdin_failure_does_not_hide_the_exit_status() {
+        let mut command = Command::new("cmd.exe");
+        command.args(["/D", "/V:OFF", "/S", "/C", "exit 0"]);
+        let input = vec![b'x'; 1024 * 1024];
+        let output = run(
+            command,
+            Some(&input),
+            Duration::from_secs(2),
+            1024,
+            1024,
+            "stdin fixture",
+        )
+        .expect("stdin fixture");
+        assert!(output.success);
+        assert!(output.stdin_error.is_some());
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn grandchild_cannot_hold_pipes_after_parent_exit() {
         let path = std::env::temp_dir().join(format!(
             "relay-process-{}-{}.cmd",
