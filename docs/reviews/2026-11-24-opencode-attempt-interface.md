@@ -3,7 +3,7 @@
 Status: local implementation complete; CI pending.
 
 - **Agent / model** — HungerG Free.
-- **Commit(s)** — `daadef3` for the implementation. This ledger follows in a second commit.
+- **Commit(s)** — `daadef3` for the implementation. This ledger follows in a second commit. `6432d1b` merges the freshly squashed process migration from `master`.
 - **Files** — `src-tauri/src/opencode/attempt.rs`, `src-tauri/src/opencode.rs`, `src-tauri/src/grilling.rs`, this ledger.
 - **What changed** — Added one isolated-attempt interface that resolves Settings, creates the private scratch tree, proves the CLI boundary and runs the child. Briefing and Grilling now supply typed input and interpret their own validated result.
 
