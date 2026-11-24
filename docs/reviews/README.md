@@ -108,6 +108,7 @@ Then state the commit reviewed and any follow-up package that should be opened.
 | 2026-11-24 | [OpenCode shared process migration](2026-11-24-opencode-process-migration.md) | `a4561b1` | HungerG Free | Local implementation complete; CI pending |
 | 2026-11-24 | [Isolated OpenCode attempt interface](2026-11-24-opencode-attempt-interface.md) | `daadef3` | HungerG Free | Local implementation complete; CI pending |
 | 2026-11-24 | [Task lifecycle projection](2026-11-24-task-lifecycle-projection.md) | `8f58ac0` | HungerG Free | Local implementation complete; CI pending |
+| 2026-11-24 | [Task stage routing](2026-11-24-task-stage-routing.md) | `d93eb42` | HungerG Free | Local implementation complete; CI pending |
 
 The release audit is a section of the scaffold record because it audits the
 scaffold's release pipeline; it does not change the scaffold commit.

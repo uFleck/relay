@@ -1,9 +1,11 @@
 //! One projection for the public Task lifecycle. Stage modules supply committed facts. The
 //! store mirrors this projection, and adapters execute the next stage without re-deciding it.
 
-use crate::v2::briefing::{BriefStatus, FAILURE_STAGE as BRIEF_FAILURE_STAGE};
+use crate::v2::briefing::{
+    BriefStatus, FAILURE_STAGE as BRIEF_FAILURE_STAGE, dispatch_readiness, source_signature,
+};
 use crate::v2::grilling::{FAILURE_STAGE as GRILL_FAILURE_STAGE, GrillStatus};
-use crate::v2::{AgentMode, GrillTurn, TaskStatus};
+use crate::v2::{AgentMode, GrillTurn, TaskStatus, V2Error, V2Store};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskProjection {
@@ -130,6 +132,97 @@ pub fn grill_projection(
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NextStage {
+    Briefing,
+    Grilling,
+    Dispatch,
+}
+
+pub fn next_stage(store: &V2Store, task_id: &str) -> Result<Option<NextStage>, V2Error> {
+    let state = store.task_line_state(task_id)?;
+    let signature = source_signature(&state.line_text, &state.references);
+    let brief = store.brief(task_id)?;
+    let grill = store.grill(task_id)?;
+    let dispatch_ready = dispatch_readiness(store, task_id)?.is_some();
+    Ok(stage_from_facts(
+        state.task.agent_mode,
+        state.task.status,
+        brief
+            .as_ref()
+            .map(|record| record.source_signature == signature),
+        brief.as_ref().map(|record| record.status),
+        grill
+            .as_ref()
+            .map(|record| record.source_signature == signature),
+        grill.as_ref().map(|record| record.status),
+        dispatch_ready,
+    ))
+}
+
+pub fn refresh_task_projection(store: &V2Store, task_id: &str) -> Result<(), V2Error> {
+    let state = store.task_line_state(task_id)?;
+    if !matches!(
+        state.task.status,
+        TaskStatus::Briefing
+            | TaskStatus::Grilling
+            | TaskStatus::NeedsProject
+            | TaskStatus::AwaitingApproval
+    ) {
+        return Ok(());
+    }
+    if state.task.agent_mode == AgentMode::Grill {
+        if let Some(record) = store.grill(task_id)? {
+            store.write_grill(&record, None)?;
+        }
+    } else if let Some(record) = store.brief(task_id)? {
+        store.write_brief(&record)?;
+    }
+    Ok(())
+}
+
+fn stage_from_facts(
+    mode: AgentMode,
+    status: TaskStatus,
+    brief_matches: Option<bool>,
+    brief: Option<BriefStatus>,
+    grill_matches: Option<bool>,
+    grill: Option<GrillStatus>,
+    dispatch_ready: bool,
+) -> Option<NextStage> {
+    if matches!(
+        status,
+        TaskStatus::Done
+            | TaskStatus::Cancelled
+            | TaskStatus::Dispatched
+            | TaskStatus::NeedsAnswer
+            | TaskStatus::Returned
+    ) {
+        return None;
+    }
+    if !brief_matches.unwrap_or(false) && mode != AgentMode::Grill {
+        return Some(NextStage::Briefing);
+    }
+    if !grill_matches.unwrap_or(false) && mode == AgentMode::Grill {
+        return Some(NextStage::Grilling);
+    }
+    if status == TaskStatus::Failed {
+        return None;
+    }
+    match mode {
+        AgentMode::Act | AgentMode::Wait => match brief {
+            Some(BriefStatus::Ready | BriefStatus::Approved) if dispatch_ready => {
+                Some(NextStage::Dispatch)
+            }
+            _ => None,
+        },
+        AgentMode::Grill => match grill {
+            Some(GrillStatus::Approved) if dispatch_ready => Some(NextStage::Dispatch),
+            _ => None,
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -196,5 +289,147 @@ mod tests {
         );
         assert_eq!(grill.status, TaskStatus::Failed);
         assert_eq!(grill.failure_reason.as_deref(), Some("turn failed"));
+    }
+
+    #[test]
+    fn next_stage_starts_missing_or_stale_work_once() {
+        assert_eq!(
+            stage_from_facts(
+                AgentMode::Act,
+                TaskStatus::Briefing,
+                None,
+                None,
+                None,
+                None,
+                false,
+            ),
+            Some(NextStage::Briefing)
+        );
+        assert_eq!(
+            stage_from_facts(
+                AgentMode::Act,
+                TaskStatus::Failed,
+                Some(false),
+                Some(BriefStatus::Failed),
+                None,
+                None,
+                false,
+            ),
+            Some(NextStage::Briefing)
+        );
+        assert_eq!(
+            stage_from_facts(
+                AgentMode::Act,
+                TaskStatus::Briefing,
+                Some(true),
+                Some(BriefStatus::Pending),
+                None,
+                None,
+                false,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn project_assignment_refreshes_a_wait_projection() {
+        use crate::v2::{
+            BriefRecord, NewV2Project, NoteWrite, PreparedLine, PreparedNoteWrite,
+            PreparedTaskIntent,
+        };
+        let store = V2Store::open_in_memory().expect("store");
+        let project = store
+            .register_project(NewV2Project {
+                name: "Sample".into(),
+                slug: "sample".into(),
+                repo_path: None,
+                owner_repo: None,
+                t3_target: None,
+            })
+            .expect("project");
+        let note = store
+            .save_note(PreparedNoteWrite {
+                write: NoteWrite::Create {
+                    submission_key: "lifecycle-project".into(),
+                },
+                source: "test".into(),
+                lines: vec![PreparedLine {
+                    line_id: None,
+                    text: "? Wait for the Brief".into(),
+                    references: Vec::new(),
+                    task_intent: Some(PreparedTaskIntent {
+                        agent_mode: AgentMode::Wait,
+                        project_id: None,
+                    }),
+                }],
+            })
+            .expect("note");
+        let task_id = note.tasks[0].id.clone();
+        store
+            .write_brief(&BriefRecord {
+                task_id: task_id.clone(),
+                revision: 1,
+                source_signature: "signature".into(),
+                status: BriefStatus::Ready,
+                content: None,
+                rendered: Some("Brief".into()),
+                link_only_refs: Vec::new(),
+                wait_approval_revision: None,
+                attempt_id: None,
+                rewrite_instruction: None,
+                failure_stage: None,
+                failure_reason: None,
+                created_at: "2026-01-01T00:00:00Z".into(),
+                updated_at: "2026-01-01T00:00:00Z".into(),
+            })
+            .expect("brief");
+        store
+            .assign_task_project(&task_id, &project.id)
+            .expect("assign");
+        refresh_task_projection(&store, &task_id).expect("refresh");
+        assert_eq!(
+            store.task_line_state(&task_id).expect("task").task.status,
+            TaskStatus::AwaitingApproval
+        );
+    }
+
+    #[test]
+    fn next_stage_dispatches_only_after_the_final_gate() {
+        assert_eq!(
+            stage_from_facts(
+                AgentMode::Wait,
+                TaskStatus::AwaitingApproval,
+                Some(true),
+                Some(BriefStatus::Ready),
+                None,
+                None,
+                false,
+            ),
+            None
+        );
+        assert_eq!(
+            stage_from_facts(
+                AgentMode::Wait,
+                TaskStatus::Briefing,
+                Some(true),
+                Some(BriefStatus::Approved),
+                None,
+                None,
+                true,
+            ),
+            Some(NextStage::Dispatch)
+        );
+        assert_eq!(
+            stage_from_facts(
+                AgentMode::Grill,
+                TaskStatus::Grilling,
+                Some(true),
+                Some(BriefStatus::Ready),
+                Some(true),
+                Some(GrillStatus::Approved),
+                true,
+            ),
+            Some(NextStage::Dispatch)
+        );
     }
 }

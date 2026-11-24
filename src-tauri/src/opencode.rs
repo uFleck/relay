@@ -1082,31 +1082,17 @@ fn publish(app: &AppHandle, task_id: &str) {
     let _ = app.emit("relay://v2-change", task_id.to_string());
 }
 
-/// Starts Briefing for the Act and Wait Tasks a committed submission just created. The core
-/// single-flight rules make a second trigger from either surface collapse onto the same attempt.
-pub fn start_for_tasks(app: &AppHandle, note: &relay_core::v2::V2Note) {
-    let store = app.state::<Arc<V2Store>>();
+/// Starts one Briefing attempt after the core lifecycle selects that stage. The core
+/// single-flight rules collapse a second trigger from either surface.
+pub fn start_task(app: &AppHandle, task_id: &str) {
     let state = app.state::<BriefingState>();
-    for task in &note.tasks {
-        if !matches!(
-            task.agent_mode,
-            relay_core::v2::AgentMode::Act | relay_core::v2::AgentMode::Wait
-        ) {
-            continue;
-        }
-        // A fresh Task starts immediately; an edited Task line invalidates its saved Brief.
-        let stale = v2::brief_is_stale(store.inner(), &task.id).unwrap_or(false);
-        if task.status != relay_core::v2::TaskStatus::Briefing && !stale {
-            continue;
-        }
-        if state.begin(&task.id).is_some() {
-            spawn_work(
-                app.clone(),
-                task.id.clone(),
-                Work::Generate,
-                state.boundary.clone(),
-            );
-        }
+    if state.begin(task_id).is_some() {
+        spawn_work(
+            app.clone(),
+            task_id.to_string(),
+            Work::Generate,
+            state.boundary.clone(),
+        );
     }
 }
 
@@ -1162,8 +1148,7 @@ pub fn v2_briefing_approve(
     store: State<'_, Arc<V2Store>>,
 ) -> Result<BriefView, CommandError> {
     approve(store.inner(), &task_id, revision, edited)?;
-    // #36: a Wait Task becomes ready only on Go; start it now when a project is set.
-    crate::dispatch::start_ready_task(&app, &task_id);
+    crate::lifecycle::advance(&app, &task_id);
     publish(&app, &task_id);
     Ok(build_view(store.inner(), &task_id)?)
 }

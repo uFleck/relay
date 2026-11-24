@@ -5,11 +5,11 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use relay_core::v2::{
-    self, AgentMode, GrillEntry, GrillModelResult, GrillStatus, V2Error, V2Store, answer,
-    approve_brief, assistant_text, begin_grill_attempt, build_reference_plan, cancel_grill,
-    complete_brief, dispatch_readiness, fail_grill_turn, grill_continue_link_only,
-    grill_go_enabled, parse_grill_result, record_question, recover_interrupted_grills,
-    refresh_task_state, retry_grill, sanitize_stage_error, terminal_outcome,
+    self, GrillEntry, GrillModelResult, GrillStatus, V2Error, V2Store, answer, approve_brief,
+    assistant_text, begin_grill_attempt, build_reference_plan, cancel_grill, complete_brief,
+    dispatch_readiness, fail_grill_turn, grill_continue_link_only, grill_go_enabled,
+    parse_grill_result, record_question, recover_interrupted_grills, retry_grill,
+    sanitize_stage_error, terminal_outcome,
 };
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -162,21 +162,16 @@ impl GrillingState {
     }
 }
 
-/// Starts Grilling for the `??` Tasks a committed submission just created.
-pub fn start_for_tasks(app: &AppHandle, note: &relay_core::v2::V2Note) {
+/// Starts one Grilling exchange after the core lifecycle selects that stage.
+pub fn start_task(app: &AppHandle, task_id: &str) {
     let state = app.state::<GrillingState>();
-    for task in &note.tasks {
-        if task.agent_mode != AgentMode::Grill || task.status != v2::TaskStatus::Grilling {
-            continue;
-        }
-        if state.begin(&task.id).is_some() {
-            spawn_work(
-                app.clone(),
-                task.id.clone(),
-                Work::Start,
-                state.boundary.clone(),
-            );
-        }
+    if state.begin(task_id).is_some() {
+        spawn_work(
+            app.clone(),
+            task_id.to_string(),
+            Work::Start,
+            state.boundary.clone(),
+        );
     }
 }
 
@@ -279,8 +274,7 @@ pub fn v2_grilling_go(
     store: State<'_, Arc<V2Store>>,
 ) -> Result<GrillView, CommandError> {
     approve_brief(store.inner(), &task_id, revision, edited)?;
-    // #36: the closing approval is the last gate; dispatch if the project is also set.
-    crate::dispatch::start_ready_task(&app, &task_id);
+    crate::lifecycle::advance(&app, &task_id);
     publish(&app, &task_id);
     Ok(build_view(store.inner(), &task_id)?)
 }
@@ -296,15 +290,6 @@ pub fn v2_grilling_continue_link_only(
     grill_continue_link_only(store.inner(), &task_id, revision, &identity)?;
     publish(&app, &task_id);
     Ok(build_view(store.inner(), &task_id)?)
-}
-
-/// Re-mirrors the Task after a project assignment: a finished exchange waiting for a project
-/// becomes the closing-approval turn.
-pub fn project_assigned(store: &V2Store, task_id: &str) -> Result<(), V2Error> {
-    if store.grill(task_id)?.is_some() {
-        refresh_task_state(store, task_id)?;
-    }
-    Ok(())
 }
 
 enum Work {
