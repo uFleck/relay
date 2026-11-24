@@ -7,7 +7,7 @@ export type V2PickerGroup = "cards" | "prs" | "issues" | "conversations" | "note
 
 export const GROUP_LABEL: Record<V2PickerGroup, string> = {
   cards: "Cards",
-  prs: "PRs",
+  prs: "PR",
   issues: "Issues",
   conversations: "Conversations",
   notesTasks: "Notes / Tasks",
@@ -401,7 +401,17 @@ export function findMarks(state: EditorState, errorToken: string | null): TextMa
     marks.push(next);
     cursor = next.at + next.text.length;
   }
-  return marks;
+
+  return markUnresolvedTokens(state, marks);
+}
+
+function markUnresolvedTokens(state: EditorState, marks: TextMark[]) {
+  for (const match of state.text.matchAll(/@[\w#/.-]+/g)) {
+    const at = match.index ?? 0;
+    if (marks.some((mark) => at >= mark.at && at < mark.at + mark.text.length)) continue;
+    marks.push({ at, text: match[0], kind: "error", key: `unresolved:${at}` });
+  }
+  return marks.sort((a, b) => a.at - b.at);
 }
 
 /** Group picker rows in the fixed order, omitting empty groups. */

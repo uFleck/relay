@@ -90,7 +90,7 @@ export function ReferencePicker({
                 >
                   <span className="ref-picker-id">{row.displayId}</span>
                   <span className="ref-picker-title">{row.title}</span>
-                  {row.state && <span className="ref-picker-state">{row.state}</span>}
+                  <span className="ref-picker-kind">{row.kind}</span>
                 </button>
               );
             })}
@@ -127,6 +127,7 @@ export function ReferencePicker({
                   {lens.snapshot?.content && <div>{lens.snapshot.content}</div>}
                 </div>
                 <div className="ref-lens-meta">{cacheAge(lens.snapshot?.cachedAt ?? null)}</div>
+                <div className="ref-lens-readonly">read-only · the agent does any writes</div>
               </>
             )}
             <div className="ref-lens-link" title={lens.canonicalLink}>

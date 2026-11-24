@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Composer } from "../components/Composer";
 import type { DraftSummary } from "../directives";
-import type { V2Note, V2Project, V2Task, V2WorkspaceSnapshot } from "../ipc";
+import type { V2Note, V2Project, V2Reference, V2Task, V2WorkspaceSnapshot } from "../ipc";
 import { useEntering } from "../ui/motion";
 import {
   groupByDay,
@@ -15,6 +15,13 @@ import {
 
 /* The v2 Notebook is one chronological timeline. Oldest entries sit at the top and the
    Composer sits beside the newest end, so the reader opens on today at the bottom. */
+
+const dayDate = (key: string) =>
+  new Date(`${key}T12:00:00`).toLocaleDateString("en-GB", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+  });
 
 interface Props {
   workspace: V2WorkspaceSnapshot | null;
@@ -108,21 +115,9 @@ export function Notebook({ workspace, filter, focusNoteId, selectedTaskId, onOpe
 
   return (
     <section className="main notebook" aria-label="Notebook">
-      <header className="head nb-head">
-        <div>
-          <h1>Notebook</h1>
-          <div className="date meta">
-            {filter.filtering
-              ? filter.ready
-                ? `${notes.length} matching ${notes.length === 1 ? "note" : "notes"}`
-                : "Filtering…"
-              : `${notes.length} ${notes.length === 1 ? "note" : "notes"}`}
-          </div>
-        </div>
-      </header>
-
       <div
         className="scroll nb-scroll"
+        data-parity="timeline"
         ref={scrollRef}
         onScroll={(event) => {
           followNewest.current = nearBottom(event.currentTarget);
@@ -138,8 +133,8 @@ export function Notebook({ workspace, filter, focusNoteId, selectedTaskId, onOpe
         {groups.map((group) => (
           <section className="nb-day" key={group.key} data-day={group.key}>
             <h2 className="nb-day-h">
-              <span>{group.label}</span>
-              <span className="meta">{group.notes.length || "no notes"}</span>
+              <span>{group.label}</span>{" "}
+              <span className="meta">{dayDate(group.key)}</span>
             </h2>
             {group.notes.map((note) => (
               <NoteCard
@@ -162,10 +157,9 @@ export function Notebook({ workspace, filter, focusNoteId, selectedTaskId, onOpe
             ))}
           </section>
         ))}
-        <div className="nb-composer">
-          <div className="nb-composer-label meta">New note · newest at the bottom</div>
-          <Composer onSaved={() => onSaved()} onNotice={onNotice} onDraftChange={onDraftChange} />
-        </div>
+      </div>
+      <div className="nb-dock" data-parity="composer-dock">
+        <Composer onSaved={() => onSaved()} onNotice={onNotice} onDraftChange={onDraftChange} />
       </div>
     </section>
   );
@@ -210,23 +204,14 @@ function NoteCard({
       data-revision={note.revision}
       data-mode={note.tasks[0]?.agentMode ?? undefined}
     >
+      <span className="nb-dot" aria-hidden="true" />
       <div className="nb-note-head">
-        <span className="nb-dot" aria-hidden="true" />
-        {note.source === "import" && note.lines[0]?.references[0] && (
-          <span
-            className="nb-kind"
-            title={
-              note.lines[0].references[0].kind === "github"
-                ? "Imported GitHub pull request"
-                : "Imported ClickUp card"
-            }
-            aria-label="Imported source kind"
-          >
-            {note.lines[0].references[0].kind === "github" ? "⌗" : "◇"}
-          </span>
-        )}
-        <span className="meta">{new Date(note.createdAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}</span>
-        <span className="meta">{note.tasks.length ? `${note.tasks.length} task${note.tasks.length === 1 ? "" : "s"}` : "note"}</span>
+        <span className="meta">
+          {new Date(note.createdAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+          {note.source === "import" && note.lines[0]?.references[0]
+            ? ` · imported ${note.lines[0].references[0].kind === "github" ? "PR" : "Card"}`
+            : ""}
+        </span>
         <span className="push" />
         {editing ? (
           <button type="button" className="btn ghost" onClick={onCloseEdit}>
@@ -249,47 +234,69 @@ function NoteCard({
         />
       ) : (
         <div className="nb-lines">
-          {note.lines.map((line) => (
-            <div className="nb-line" key={line.id}>
-              <div className="nb-line-text">{line.text || <span className="meta">empty line</span>}</div>
-              {line.references.length > 0 && (
-                <div className="nb-refs">
-                  {line.references.map((reference) => (
-                    <span className="nb-ref" key={reference.id} title={reference.canonicalUrl}>
-                      @{reference.targetId}
-                    </span>
-                  ))}
-                </div>
-              )}
-              {note.tasks
-                .filter((task) => task.sourceLineId === line.id)
-                .map((task) => (
-                  <TaskBranch
-                    key={task.id}
-                    task={task}
-                    project={projects.find((candidate) => candidate.id === task.projectId)}
-                    selected={task.id === selectedTaskId}
-                    fresh={freshTasks.has(task.id)}
-                    onOpen={() => onOpenTask(task.id)}
-                  />
-                ))}
+          {note.lines.map((line) => {
+            const lineTasks = note.tasks.filter((task) => task.sourceLineId === line.id);
+            return (
+              <div className="nb-line" key={line.id}>
+                <div className="nb-line-text"><InlineLine text={line.text} references={line.references} /></div>
+                {lineTasks.length > 0 && (
+                  <div className="nb-branches">
+                    {lineTasks.map((task) => (
+                      <TaskBranch
+                        key={task.id}
+                        task={task}
+                        project={projects.find((candidate) => candidate.id === task.projectId)}
+                        selected={task.id === selectedTaskId}
+                        fresh={freshTasks.has(task.id)}
+                        onOpen={() => onOpenTask(task.id)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          {detached.length > 0 && (
+            <div className="nb-branches">
+              {detached.map((task) => (
+                <TaskBranch
+                  key={task.id}
+                  task={task}
+                  project={projects.find((candidate) => candidate.id === task.projectId)}
+                  selected={task.id === selectedTaskId}
+                  fresh={freshTasks.has(task.id)}
+                  onOpen={() => onOpenTask(task.id)}
+                  detached
+                />
+              ))}
             </div>
-          ))}
-          {detached.map((task) => (
-            <TaskBranch
-              key={task.id}
-              task={task}
-              project={projects.find((candidate) => candidate.id === task.projectId)}
-              selected={task.id === selectedTaskId}
-              fresh={freshTasks.has(task.id)}
-              onOpen={() => onOpenTask(task.id)}
-              detached
-            />
-          ))}
+          )}
         </div>
       )}
     </article>
   );
+}
+
+function InlineLine({ text, references }: { text: string; references: V2Reference[] }) {
+  if (references.length === 0) return <>{text || <span className="meta">empty line</span>}</>;
+  const matches = references
+    .map((reference) => ({ reference, at: text.indexOf(`@${reference.targetId}`) }))
+    .filter((match) => match.at >= 0)
+    .sort((a, b) => a.at - b.at);
+  const out: React.ReactNode[] = [];
+  let cursor = 0;
+  for (const { reference, at } of matches) {
+    if (at < cursor) continue;
+    out.push(text.slice(cursor, at));
+    out.push(
+      <span className="nb-ref" key={reference.id} title={reference.canonicalUrl}>
+        @{reference.targetId}
+      </span>,
+    );
+    cursor = at + reference.targetId.length + 1;
+  }
+  out.push(text.slice(cursor));
+  return <>{out}</>;
 }
 
 function TaskBranch({
@@ -308,18 +315,25 @@ function TaskBranch({
   detached?: boolean;
 }) {
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       className={`nb-branch mode-${task.agentMode}${selected ? " on" : ""}${detached ? " detached" : ""}${fresh ? " fresh" : ""}`}
       data-task-id={task.id}
       data-tone={statusTone(task.status)}
       onClick={onOpen}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onOpen();
+        }
+      }}
       title={detached ? "Source line removed; showing the saved Task line" : "Open Task"}
     >
       <span className="nb-sigil">{SIGIL[task.agentMode]}</span>
-      <span className="nb-branch-line">{task.originalLine}</span>
+      {task.originalLine}
       <span className="nb-status">{task.status.replace(/_/g, " ")}</span>
       {project && <span className="nb-project">+{project.name}</span>}
-    </button>
+    </div>
   );
 }

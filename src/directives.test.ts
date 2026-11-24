@@ -17,12 +17,12 @@ describe("draft directives", () => {
     );
     expect(summary.mode).toBe("act");
     expect(summary.counts).toEqual({ act: 1, wait: 1, grill: 1 });
-    expect(draftLabel(summary)).toBe("3 tasks · 1 act · 1 wait · 1 grill");
+    expect(draftLabel(summary)).toBe("3 tasks: act, wait, grill");
   });
 
   it("uses the first directive even when it is not on the first line", () => {
     expect(draftSummary("a plain line\n?? grill first").mode).toBe("grill");
-    expect(draftLabel(draftSummary("\n\n! only one"))).toBe("1 task · 1 act");
+    expect(draftLabel(draftSummary("\n\n! only one"))).toBe("1 task: act");
     expect(draftLabel(draftSummary(""))).toBe("note");
   });
 });

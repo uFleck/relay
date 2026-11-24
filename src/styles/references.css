@@ -29,24 +29,27 @@
   letter-spacing: inherit;
   white-space: pre-wrap;
   overflow-wrap: break-word;
-  word-break: break-word;
   tab-size: inherit;
 }
 
 .ref-editor-input {
+  position: absolute;
+  inset: 0;
   display: block;
-  min-height: var(--dock-lh);
-  max-height: 160px;
-  resize: vertical;
-  overflow: auto;
+  min-height: 0;
+  max-height: none;
+  height: 100%;
+  resize: none;
+  overflow: hidden;
   background: transparent;
-  color: var(--text-primary);
+  color: transparent;
+  caret-color: var(--text-primary);
   outline: none;
 }
 
 .ref-editor-input.single {
   min-height: 34px;
-  height: 34px;
+  height: 100%;
   resize: none;
   overflow: hidden;
 }
@@ -61,18 +64,20 @@
   box-shadow: var(--ring);
 }
 
-/* The overlay paints chip backgrounds and error underlines behind the real text. */
 .ref-editor-decoration {
-  position: absolute;
-  inset: 0;
+  position: static;
+  min-height: 30px;
   pointer-events: none;
   border-color: transparent;
-  color: transparent;
+  color: var(--text-primary);
   /* The directive beads sit in the gutter outside the text box. */
   overflow: visible;
   --bead-left: -26px;
   --bead-top: 10px;
-  z-index: 0;
+}
+
+.ref-editor-surface[data-multiline="false"] .ref-editor-decoration {
+  min-height: 34px;
 }
 
 .de-line {
@@ -86,13 +91,7 @@
   border-radius: 5px;
   background: var(--accent-soft);
   box-shadow: inset 0 0 0 1px rgba(125, 152, 255, 0.45);
-  color: transparent;
-}
-
-.ref-token-error {
-  text-decoration: underline wavy var(--err);
-  text-underline-offset: 3px;
-  color: transparent;
+  color: var(--accent-text);
 }
 
 .ref-picker {
@@ -211,11 +210,12 @@
   min-width: 0;
 }
 
-.ref-picker-state {
+.ref-picker-kind {
   color: var(--text-tertiary);
   font-family: var(--font-mono);
   font-size: 0.8em;
   flex: none;
+  text-align: right;
 }
 
 .ref-lens {
@@ -299,6 +299,12 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.ref-lens-readonly {
+  margin-top: 10px;
+  color: var(--text-tertiary);
+  font: 400 10.5px var(--font-mono);
 }
 
 .ref-lens-empty {

@@ -11,6 +11,7 @@ import "./styles/references.css";
 import "./styles/briefing.css";
 import "./styles/progress.css";
 import "./styles/dock.css";
+import "./styles/main-dock.css";
 import App from "./App";
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(

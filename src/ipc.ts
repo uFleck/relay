@@ -2,6 +2,7 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { ProviderKey } from "./route";
 import { parseUrls } from "./references";
+import { visualFixturePickerRows, visualFixtureWorkspace } from "./visual-fixture";
 import type {
   LiveQueryResult,
   ReferenceParseResult,
@@ -500,6 +501,10 @@ export type V2ComposerSaveRequest =
   | { kind: "create"; submissionKey: string; text: string }
   | { kind: "edit"; noteId: string; expectedRevision: number; lines: V2LineInput[] };
 
+export const isVisualFixture = () =>
+  typeof location !== "undefined" &&
+  new URLSearchParams(location.search).get("visual-fixture") === "J";
+
 const emptyV2Snapshot = (): V2NotebookSnapshot => ({
   notes: [],
   projects: [],
@@ -515,10 +520,14 @@ export const v2NotebookSnapshot = () =>
   call<V2NotebookSnapshot>("v2_notebook_snapshot", undefined, emptyV2Snapshot);
 
 export const v2WorkspaceSnapshot = () =>
-  call<V2WorkspaceSnapshot>("v2_workspace_snapshot", undefined, () => ({
-    ...emptyV2Snapshot(),
-    tasks: [],
-  }));
+  call<V2WorkspaceSnapshot>("v2_workspace_snapshot", undefined, () =>
+    isVisualFixture()
+      ? visualFixtureWorkspace()
+      : {
+          ...emptyV2Snapshot(),
+          tasks: [],
+        },
+  );
 
 export const v2WorkspaceSearch = (query: string) =>
   call<WorkspaceSearchResult>("v2_workspace_search", { query }, () => ({
@@ -562,7 +571,7 @@ export type {
 /* These two are registered through Tauri and never fall back to a mock while running in
    the app: a missing command must fail loudly instead of looking like an empty picker. */
 export async function v2ReferencePicker(query: string): Promise<V2PickerRow[]> {
-  if (!inTauri) return [];
+  if (!inTauri) return isVisualFixture() ? visualFixturePickerRows(query) : [];
   return await invoke<V2PickerRow[]>("v2_reference_picker", { query });
 }
 

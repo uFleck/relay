@@ -50,36 +50,11 @@
   background: var(--bg-surface);
 }
 
-/* The timeline spine: a dot for each Note, filled when it has Tasks. */
-.nb-note::before {
-  content: "";
-  position: absolute;
-  left: -23px;
-  top: 16px;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  border: 2px solid var(--accent);
-  background: var(--bg-page);
-}
-
-.nb-note:has(.nb-branch)::before {
-  background: var(--i3);
-}
-
 .nb-note-head {
   display: flex;
   align-items: center;
   gap: 10px;
   min-height: 24px;
-}
-
-/* The source-kind glyph on an imported Note's import day. */
-.nb-kind {
-  color: var(--i3);
-  font-family: var(--mono);
-  font-size: 14px;
-  line-height: 1;
 }
 
 .nb-lines {
@@ -136,15 +111,10 @@
 .nb-branch:hover,
 .nb-branch.on { background: var(--sel-bg); }
 .nb-branch.detached { border-style: dashed; }
+.nb-branch:focus-visible { outline: none; box-shadow: var(--ring); }
 
 .nb-sigil {
   font: 700 0.9em var(--font-mono);
-}
-
-.nb-branch-line {
-  flex: 1;
-  min-width: 0;
-  overflow-wrap: anywhere;
 }
 
 .nb-status,
@@ -152,18 +122,6 @@
   font: 0.8em var(--font-mono);
   color: var(--text-secondary);
   white-space: nowrap;
-}
-
-.nb-composer {
-  margin: 18px 0 0 18px;
-  padding: 10px 12px;
-  border: 1px solid var(--border-default);
-  border-radius: var(--r);
-  background: var(--bg-surface);
-}
-
-.nb-composer-label {
-  margin-bottom: 6px;
 }
 
 /* ── Tasks ── */
