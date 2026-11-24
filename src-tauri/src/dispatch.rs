@@ -10,7 +10,7 @@ use relay_core::t3_dispatch::{
     bind, bind_after_cancel, claim, identity_matches, link_existing, record_known_failure,
     record_uncertain, recover, save_thread_id, unique_candidate, view,
 };
-use relay_core::v2::{T3Target, V2Note, V2Store, dispatch_readiness};
+use relay_core::v2::{T3Target, V2Store, dispatch_readiness};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::commands::{CommandError, V2_CHANGE_EVENT};
@@ -232,14 +232,6 @@ fn reconcile_attempt(app: AppHandle, attempt: relay_core::t3_dispatch::DispatchA
         track_bound(&store, &attempt_id);
         publish(&app, &task_id);
     });
-}
-
-/// Starts Tasks that became ready on a committed write. Act is ready as soon as its Brief and
-/// project exist; a Wait or Grill Task reaches readiness only through its own Go command.
-pub fn start_for_tasks(app: &AppHandle, note: &V2Note) {
-    for task in &note.tasks {
-        start_ready_task(app, &task.id);
-    }
 }
 
 /// The single trigger used after a project is named or an approval is recorded. It re-reads

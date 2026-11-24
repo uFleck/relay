@@ -8,6 +8,7 @@ mod grilling;
 mod grilling_mcp;
 mod hover;
 mod keybinds;
+mod lifecycle;
 mod live;
 mod note_import;
 mod opencode;

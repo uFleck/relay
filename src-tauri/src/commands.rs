@@ -89,13 +89,7 @@ pub fn v2_composer_save(
     store: State<'_, Arc<V2Store>>,
 ) -> Result<V2Note, CommandError> {
     let saved = composer::save_submission(&store, request)?;
-    // #34: every new Act or Wait Task starts its own Brief attempt right after the commit,
-    // independent of a project and of which window submitted it.
-    crate::opencode::start_for_tasks(&app, &saved);
-    // #35: a ?? Task starts its Grilling exchange on the same committed write.
-    crate::grilling::start_for_tasks(&app, &saved);
-    // #36: an Act Task that is already ready dispatches on the same committed write.
-    crate::dispatch::start_for_tasks(&app, &saved);
+    crate::lifecycle::advance_note(&app, &saved);
     let _ = app.emit(V2_CHANGE_EVENT, saved.id.clone());
     Ok(saved)
 }
@@ -126,10 +120,7 @@ pub fn v2_task_assign_project(
     store: State<'_, Arc<V2Store>>,
 ) -> Result<V2Task, CommandError> {
     let task = store.assign_task_project(&task_id, &project_id)?;
-    // A finished Grilling exchange waiting for a project becomes the closing-approval turn.
-    crate::grilling::project_assigned(store.inner(), &task_id)?;
-    // Naming a project can close the last dispatch gate for Act, Wait or Grill.
-    crate::dispatch::start_ready_task(&app, &task_id);
+    crate::lifecycle::advance_after_project_assignment(&app, store.inner(), &task_id)?;
     let _ = app.emit(V2_CHANGE_EVENT, task.note_id.clone());
     Ok(task)
 }
