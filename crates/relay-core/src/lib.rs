@@ -15,5 +15,6 @@ pub mod provider;
 pub mod repos;
 pub mod t3_dispatch;
 pub mod t3_progress;
+pub mod t3_session;
 pub mod task_lifecycle;
 pub mod v2;
