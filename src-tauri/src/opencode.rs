@@ -1,18 +1,16 @@
 //! Isolated headless OpenCode runner and thin Briefing commands (#34).
 //!
 //! One generation per attempt, driven entirely by `relay_core::v2::briefing`. The runner is
-//! the only place that knows about processes. It resolves a trusted `opencode.exe`, starts it
-//! suspended, assigns a kill-on-close Job Object, and only then lets it run. Every path the CLI
-//! could reach for user or machine configuration is redirected into a per-attempt scratch
-//! directory, and a canary in an ancestor `AGENTS.md` is checked in the output.
+//! the only place that knows about OpenCode processes. It resolves a trusted `opencode.exe`,
+//! starts it hidden with a kill-on-close Job Object, and redirects every configuration path into
+//! a per-attempt scratch directory. A canary in an ancestor `AGENTS.md` is checked in the output.
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::Command;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use relay_core::model::new_id;
 use relay_core::v2::{
@@ -26,13 +24,13 @@ use serde_json::json;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::commands::CommandError;
+use crate::process;
 use crate::settings;
 
 /// One invocation gets three minutes from spawn to terminal result.
 pub const TIMEOUT: Duration = Duration::from_secs(180);
 const MAX_STDOUT: usize = 2 * 1024 * 1024;
 const MAX_STDERR: usize = 256 * 1024;
-const POLL: Duration = Duration::from_millis(100);
 /// A line in the private canary instruction. If the child echoes it, discovery was not isolated.
 pub const CANARY_MARKER: &str = "RELAY_CANARY_PWNED";
 
@@ -891,38 +889,6 @@ pub fn child_environment(
     env
 }
 
-/// Drains to EOF but retains at most `limit` bytes. Continuing to read after the cap keeps
-/// the child from blocking on a full pipe while the deadline still bounds memory.
-fn read_bounded<R: Read>(mut reader: R, limit: usize) -> String {
-    let mut bytes = Vec::new();
-    let mut chunk = [0u8; 8192];
-    loop {
-        match reader.read(&mut chunk) {
-            Ok(0) => break,
-            Ok(n) => {
-                if bytes.len() < limit {
-                    let remaining = limit - bytes.len();
-                    bytes.extend_from_slice(&chunk[..n.min(remaining)]);
-                }
-            }
-            Err(_) => break,
-        }
-    }
-    String::from_utf8_lossy(&bytes).into_owned()
-}
-
-/// A reader/writer that will not stop after the child exits is itself a cleanup failure.
-fn join_bounded<T>(handle: std::thread::JoinHandle<T>, label: &str) -> Result<T, String> {
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while !handle.is_finished() {
-        if Instant::now() >= deadline {
-            return Err(format!("{label} did not stop after the child exited"));
-        }
-        std::thread::sleep(POLL);
-    }
-    handle.join().map_err(|_| format!("{label} panicked"))
-}
-
 /// The real Windows process runner.
 pub struct ProcessRunner;
 
@@ -956,202 +922,36 @@ fn launch(invocation: &Invocation, args: &[String]) -> Result<String, String> {
     let system_root =
         PathBuf::from(std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into()));
     let mut command = Command::new(&exe);
-    command
-        .args(args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .current_dir(&work)
-        .env_clear();
+    command.args(args).current_dir(&work).env_clear();
     for (key, value) in child_environment(invocation, &exe, &system_root) {
         command.env(key, value);
     }
-    #[cfg(windows)]
-    let (child, job) = spawn_suspended(command)?;
-    #[cfg(not(windows))]
-    let child = command
-        .spawn()
-        .map_err(|error| format!("cannot start opencode: {error}"))?;
-    drive_child(
-        child,
-        #[cfg(windows)]
-        Some(job),
-        invocation,
+    let output = process::run(
+        command,
+        Some(invocation.prompt.as_bytes()),
         TIMEOUT,
+        MAX_STDOUT,
+        MAX_STDERR,
+        "opencode",
     )
-}
-
-fn drive_child(
-    mut child: Child,
-    #[cfg(windows)] job: Option<JobObject>,
-    invocation: &Invocation,
-    timeout: Duration,
-) -> Result<String, String> {
-    // All three streams run concurrently with the deadline. A child that refuses stdin or
-    // writes before reading can no longer block the writer or strand the reader threads.
-    let stdin = child.stdin.take();
-    let stdout = child.stdout.take().ok_or("OpenCode stdout is not piped")?;
-    let stderr = child.stderr.take().ok_or("OpenCode stderr is not piped")?;
-    let prompt = invocation.prompt.as_bytes().to_vec();
-    let out_thread = std::thread::spawn(move || read_bounded(stdout, MAX_STDOUT));
-    let err_thread = std::thread::spawn(move || read_bounded(stderr, MAX_STDERR));
-    let write_thread = std::thread::spawn(move || {
-        if let Some(mut stdin) = stdin {
-            stdin
-                .write_all(&prompt)
-                .map_err(|error| error.to_string())?;
-            stdin.flush().map_err(|error| error.to_string())?;
-        }
-        Ok::<(), String>(())
-    });
-
-    let started = Instant::now();
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) => {}
-            Err(error) => {
-                let _ = child.kill();
-                #[cfg(windows)]
-                if let Some(job) = &job {
-                    job.terminate();
-                }
-                let _ = join_bounded(out_thread, "stdout");
-                let _ = join_bounded(err_thread, "stderr");
-                let _ = join_bounded(write_thread, "stdin");
-                return Err(format!("cannot wait for opencode: {error}"));
-            }
-        }
-        if started.elapsed() >= timeout {
-            let _ = child.kill();
-            #[cfg(windows)]
-            if let Some(job) = &job {
-                job.terminate();
-            }
-            let _ = child.wait();
-            let cleanup = (|| -> Result<(), String> {
-                let _ = join_bounded(out_thread, "stdout")?;
-                let _ = join_bounded(err_thread, "stderr")?;
-                let _ = join_bounded(write_thread, "stdin")?;
-                Ok(())
-            })();
-            let message = format!("OpenCode timed out after {}s", timeout.as_secs());
-            return Err(match cleanup {
-                Ok(()) => message,
-                Err(reason) => format!("{message}; cleanup failed: {reason}"),
-            });
-        }
-        std::thread::sleep(POLL);
-    };
-    let out = join_bounded(out_thread, "stdout")?;
-    let err = join_bounded(err_thread, "stderr")?;
-    let write = join_bounded(write_thread, "stdin")?;
-    if !status.success() {
+    .map_err(|error| sanitize_stage_error(&error.to_string()))?;
+    let out = String::from_utf8_lossy(&output.stdout).into_owned();
+    let err = String::from_utf8_lossy(&output.stderr).into_owned();
+    if !output.success {
         return Err(sanitize_stage_error(&format!(
-            "opencode exited with {status}: {}",
+            "opencode exited with an error: {}",
             err.lines().last().unwrap_or("no error output")
         )));
     }
-    write.map_err(|reason| sanitize_stage_error(&reason))?;
+    if let Some(error) = output.stdin_error {
+        return Err(sanitize_stage_error(&error));
+    }
     if canary_detected(&out) {
         return Err(
             "OpenCode discovered an ancestor instruction; its configuration is not isolated".into(),
         );
     }
     Ok(out)
-}
-
-#[cfg(windows)]
-fn spawn_suspended(mut command: Command) -> Result<(Child, JobObject), String> {
-    use std::os::windows::process::CommandExt;
-
-    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-    const CREATE_SUSPENDED: u32 = 0x0000_0004;
-    command.creation_flags(CREATE_NO_WINDOW | CREATE_SUSPENDED);
-    let mut child = command
-        .spawn()
-        .map_err(|error| format!("cannot start opencode: {error}"))?;
-    let job = attach_job_object(&child).ok_or_else(|| {
-        let _ = child.kill();
-        "kill-on-close Job assignment failed; refusing to run OpenCode".to_string()
-    })?;
-    if let Err(error) = resume_process(child.id()) {
-        let _ = child.kill();
-        return Err(error);
-    }
-    Ok((child, job))
-}
-
-#[cfg(windows)]
-fn resume_process(process_id: u32) -> Result<(), String> {
-    use windows_sys::Win32::Foundation::CloseHandle;
-    use windows_sys::Win32::System::Threading::{OpenThread, ResumeThread, THREAD_SUSPEND_RESUME};
-    unsafe {
-        // The initial thread of a Windows process shares its id with the process.
-        let thread = OpenThread(THREAD_SUSPEND_RESUME, 0, process_id);
-        if thread.is_null() {
-            return Err("cannot open the suspended OpenCode thread".into());
-        }
-        let previous = ResumeThread(thread);
-        CloseHandle(thread);
-        if previous == u32::MAX {
-            Err("cannot resume the suspended OpenCode thread".into())
-        } else {
-            Ok(())
-        }
-    }
-}
-
-#[cfg(windows)]
-struct JobObject(windows_sys::Win32::Foundation::HANDLE);
-
-#[cfg(windows)]
-impl JobObject {
-    /// Kills the whole child tree on timeout, including grandchildren that hold the pipes.
-    fn terminate(&self) {
-        unsafe {
-            windows_sys::Win32::System::JobObjects::TerminateJobObject(self.0, 1);
-        }
-    }
-}
-
-#[cfg(windows)]
-impl Drop for JobObject {
-    fn drop(&mut self) {
-        unsafe {
-            windows_sys::Win32::Foundation::CloseHandle(self.0);
-        }
-    }
-}
-
-#[cfg(windows)]
-fn attach_job_object(child: &Child) -> Option<JobObject> {
-    use std::os::windows::io::AsRawHandle;
-    use windows_sys::Win32::System::JobObjects::{
-        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
-        SetInformationJobObject,
-    };
-    unsafe {
-        let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
-        if job.is_null() {
-            return None;
-        }
-        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
-        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-        if SetInformationJobObject(
-            job,
-            JobObjectExtendedLimitInformation,
-            &info as *const _ as *const _,
-            std::mem::size_of_val(&info) as u32,
-        ) == 0
-            || AssignProcessToJobObject(job, child.as_raw_handle() as _) == 0
-        {
-            windows_sys::Win32::Foundation::CloseHandle(job);
-            return None;
-        }
-        Some(JobObject(job))
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1709,41 +1509,6 @@ mod tests {
         );
         assert_eq!(credential_env("openai/gpt-5-nano"), "OPENAI_API_KEY");
         assert_eq!(credential_env("unknown/model"), "OPENCODE_API_KEY");
-    }
-
-    #[test]
-    fn timeout_kills_a_child_that_refuses_stdin_and_joins_all_streams() {
-        let mut command = Command::new("powershell.exe");
-        command
-            .args(["-NoProfile", "-Command", "Start-Sleep -Seconds 20"])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        let child = match command.spawn() {
-            Ok(child) => child,
-            Err(_) => return,
-        };
-        let invocation = Invocation {
-            task_id: "timeout-test".into(),
-            attempt_id: "a".into(),
-            prompt: "x".repeat(64 * 1024),
-            model: "relay-test/fixture".into(),
-            credential: None,
-            agent: "relay-brief".into(),
-            grill: None,
-            scratch: PathBuf::new(),
-        };
-        let started = Instant::now();
-        let result = drive_child(
-            child,
-            #[cfg(windows)]
-            None,
-            &invocation,
-            Duration::from_millis(500),
-        );
-        let error = result.expect_err("a sleeping child must time out");
-        assert!(error.contains("timed out"), "{error}");
-        assert!(started.elapsed() < Duration::from_secs(8));
     }
 
     #[test]
