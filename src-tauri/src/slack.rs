@@ -5,6 +5,7 @@
 
 mod claude;
 pub(crate) mod directory;
+pub(crate) mod reader;
 pub(crate) mod thread;
 pub(crate) mod window;
 

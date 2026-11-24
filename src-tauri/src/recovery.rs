@@ -108,45 +108,27 @@ async fn run_once(app: &AppHandle) {
             Some(&target.canonical_url),
         );
         if target.provider == "slack" {
-            // Background retry reuses the same cache-first resolver as a chip insertion. A hit
-            // here makes no CLI call, clears the recovery row and refreshes the shared snapshot.
-            let (update, snapshot_json, recovered) = match parsed {
-                Some(identity) => {
-                    let resolution = crate::slack::thread::resolve(app, &store, &identity).await;
-                    if resolution.coalesced && resolution.thread.is_none() {
-                        // Another surface already owns this thread; its event will refresh us.
-                        in_flight.remove(&key);
-                        continue;
-                    }
-                    let snapshot_json = resolution.row.snapshot.map(|snapshot| snapshot.to_json());
-                    if resolution.thread.is_some() {
-                        (decide_success(), snapshot_json, true)
-                    } else {
-                        let failure = resolution
-                            .failure
-                            .map(|failure| failure.to_provider_failure())
-                            .unwrap_or(ProviderFailure::Unavailable);
-                        (
-                            decide_failure(Some(&target), &failure, ms, &version),
-                            None,
-                            false,
-                        )
-                    }
-                }
-                None => (
-                    decide_failure(Some(&target), &ProviderFailure::Unavailable, ms, &version),
-                    None,
-                    false,
-                ),
+            let Some(identity) = parsed else {
+                let update =
+                    decide_failure(Some(&target), &ProviderFailure::Unavailable, ms, &version);
+                let _ = store.record_recovery(&key, &expected, &update, None, &now());
+                in_flight.remove(&key);
+                continue;
             };
-            let applied = store
-                .record_recovery(&key, &expected, &update, snapshot_json.as_deref(), &now())
-                .unwrap_or(false);
-            in_flight.remove(&key);
-            if applied && recovered {
-                let _ = app.emit(REFERENCE_EVENT, key);
-                let _ = app.emit("relay://v2-change", ());
+            let Some(read) = crate::slack::reader::resolve(app, &store, &identity).await else {
+                let update =
+                    decide_failure(Some(&target), &ProviderFailure::Unavailable, ms, &version);
+                let _ = store.record_recovery(&key, &expected, &update, None, &now());
+                in_flight.remove(&key);
+                continue;
+            };
+            if read.coalesced() && !read.recovered() {
+                // Another surface already owns this read. Its event will refresh us.
+                in_flight.remove(&key);
+                continue;
             }
+            crate::slack::reader::persist(app, &store, &identity, &read).await;
+            in_flight.remove(&key);
             continue;
         }
         let outcome = match parsed {

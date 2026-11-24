@@ -60,19 +60,9 @@ pub async fn v2_reference_exact(
     let Some(identity) = ReferenceKey::from_identity(&key, canonical_url.as_deref()) else {
         return Ok(None);
     };
-    if matches!(identity, ReferenceKey::Slack { .. }) {
-        // Slack is a cache-first thread read, not a work-provider exact read. The chip insertion
-        // path calls this same command from both Composer surfaces, so resolution starts there.
-        let resolution = slack::thread::resolve(&app, &store, &identity).await;
-        slack::thread::persist(&app, &store, &identity, &resolution).await;
-        return Ok(Some(resolution.row));
-    }
-    if matches!(identity, ReferenceKey::SlackWindow { .. }) {
-        // A picked conversation is a frozen window: the same command completes the read and hands
-        // #34 the immutable bounds and content through the shared resolved-Reference row.
-        let resolution = slack::window::resolve(&app, &store, &identity).await;
-        slack::window::persist(&app, &store, &identity, &resolution).await;
-        return Ok(Some(resolution.row));
+    if let Some(read) = slack::reader::resolve(&app, &store, &identity).await {
+        slack::reader::persist(&app, &store, &identity, &read).await;
+        return Ok(Some(read.row().clone()));
     }
     let creds = live_credentials(&store).await;
     let Some(row) = read_exact(&identity, &creds, &now()).await.ok() else {
