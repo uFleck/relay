@@ -113,6 +113,7 @@ Then state the commit reviewed and any follow-up package that should be opened.
 | 2026-11-24 | [T3 dispatch session adapter](2026-11-24-t3-dispatch-session.md) | `eaee295` | HungerG Free | Local implementation complete; CI pending |
 | 2026-11-24 | [T3 progress session interface](2026-11-24-t3-progress-session.md) | `940105e` | HungerG Free | Local implementation complete; CI pending |
 | 2026-11-24 | [Workspace store per webview](2026-11-24-workspace-store.md) | `7b22e4d` | HungerG Free | Local implementation complete; CI pending |
+| 2026-11-24 | [Relay v0.11.0 architecture release](2026-11-24-release-0.11.0.md) | TBD | HungerG Free | Version bump ready; publish pending |
 
 The release audit is a section of the scaffold record because it audits the
 scaffold's release pipeline; it does not change the scaffold commit.
