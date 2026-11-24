@@ -2,7 +2,6 @@
 //! `relay_core::v2::grilling`; this module only owns processes, the loopback adapter and events.
 
 use std::collections::{HashMap, HashSet};
-use std::fs;
 use std::sync::{Arc, Mutex};
 
 use relay_core::v2::{
@@ -17,10 +16,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::commands::CommandError;
 use crate::grilling_mcp::RunningGrill;
-use crate::opencode::{
-    BoundaryCache, GrillServerConfig, Invocation, ProcessRunner, Runner, verify_boundary,
-};
-use crate::settings;
+use crate::opencode::{AttemptInput, BoundaryCache, GrillServerConfig, run_isolated};
 
 /// One exchange in the Task's retained transcript.
 #[derive(Debug, Serialize)]
@@ -393,28 +389,19 @@ fn run_with_endpoint(
         url: server.0,
         bearer: server.1,
     };
-    let config = settings::opencode_config(store).map_err(|error| error.message)?;
-    let model = config
-        .model
-        .ok_or_else(|| "set an OpenCode provider/model in Settings".to_string())?;
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|error| error.to_string())?;
-    let scratch = dir.join("grilling").join(&input.attempt_id);
-    fs::create_dir_all(&scratch).map_err(|error| error.to_string())?;
-    let invocation = Invocation {
-        task_id: input.task_id.clone(),
-        attempt_id: input.attempt_id.clone(),
-        prompt: input.prompt.clone(),
-        model,
-        credential: config.key,
-        agent: "relay-grill".into(),
-        grill: Some(grill.clone()),
-        scratch,
-    };
-    verify_boundary(boundary, app, store, &invocation.agent, Some(&grill))?;
-    let stdout = ProcessRunner.run(&invocation)?;
+    let stdout = run_isolated(
+        app,
+        store,
+        AttemptInput {
+            task_id: input.task_id.clone(),
+            attempt_id: input.attempt_id.clone(),
+            prompt: input.prompt.clone(),
+            agent: "relay-grill",
+            scratch_group: "grilling",
+            grill: Some(grill),
+        },
+        boundary,
+    )?;
     terminal_outcome(&stdout).map_err(|reason| sanitize_stage_error(&reason))?;
     let text = assistant_text(&stdout);
     match parse_grill_result(&text) {
