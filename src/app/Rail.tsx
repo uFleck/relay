@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import type { V2AgentMode } from "../ipc";
 import { Icon, type IconName } from "../components/Icon";
 import { useKeybinds } from "../keybinds";
@@ -33,7 +34,7 @@ export function Rail({ view, onView, version, needsYou, notice, wordmarkMode }: 
   );
 
   return (
-    <nav className="rail" aria-label="Views">
+    <nav className="rail" aria-label="Views" data-parity="rail">
       <div className="mark" data-mode={wordmarkMode ?? undefined}>
         <span className="wordmark">
           relay<span className="dot" key={wordmarkMode ?? "none"}>.</span>
@@ -51,18 +52,24 @@ export function Rail({ view, onView, version, needsYou, notice, wordmarkMode }: 
           </span>
         ),
       )}
+      {item("settings", "gear", "Settings")}
       <div className="sp" />
       {notice}
-      {item("settings", "gear", "Settings")}
       <div className="hint meta">
         <div>
-          <kbd>{summon}</kbd> summon
+          {summon.split("+").map((key, index) => (
+            <Fragment key={`${key}-${index}`}>
+              {index > 0 && "+"}
+              <kbd>{key.toLowerCase()}</kbd>
+            </Fragment>
+          ))}{" "}
+          summon
         </div>
         <div>
-          <kbd>Ctrl</kbd>+<kbd>↵</kbd> send
+          <kbd>ctrl</kbd>+<kbd>↵</kbd> send
         </div>
         <div>
-          <kbd>Esc</kbd> dismiss
+          <kbd>esc</kbd> dismiss
         </div>
       </div>
     </nav>

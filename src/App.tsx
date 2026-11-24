@@ -119,7 +119,7 @@ export default function App() {
           onView={setView}
           version={version}
           needsYou={needsYou}
-          notice={<RailUpdate update={update} version={version} />}
+          notice={<RailUpdate update={update} />}
           wordmarkMode={draft.mode}
         />
 
@@ -177,7 +177,8 @@ export default function App() {
 }
 
 /** Updater lives in the rail: one line of state and the action that fits it. */
-function RailUpdate({ update, version }: { update: ReturnType<typeof useUpdater>; version: string }) {
+function RailUpdate({ update }: { update: ReturnType<typeof useUpdater> }) {
+  if (update.kind === "idle" || update.kind === "checking") return null;
   const label =
     update.kind === "available"
       ? `${update.version} available`
@@ -185,11 +186,7 @@ function RailUpdate({ update, version }: { update: ReturnType<typeof useUpdater>
         ? `Downloading${update.progress === null ? "…" : ` ${update.progress}%`}`
         : update.kind === "ready"
           ? `${update.version} ready`
-          : update.kind === "checking"
-            ? "Checking…"
-            : update.kind === "error"
-              ? "Update failed"
-              : `Relay ${version} is up to date`;
+          : "Update failed";
   return (
     <div className="unote" role="status">
       <span className="tx">{label}</span>

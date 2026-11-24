@@ -47,9 +47,9 @@ export function draftSummary(text: string): DraftSummary {
 export function draftLabel(summary: DraftSummary): string {
   const total = summary.counts.act + summary.counts.wait + summary.counts.grill;
   if (total === 0) return "note";
-  const parts: string[] = [];
-  if (summary.counts.act) parts.push(`${summary.counts.act} act`);
-  if (summary.counts.wait) parts.push(`${summary.counts.wait} wait`);
-  if (summary.counts.grill) parts.push(`${summary.counts.grill} grill`);
-  return `${total} ${total === 1 ? "task" : "tasks"} · ${parts.join(" · ")}`;
+  const kinds: string[] = [];
+  if (summary.counts.act) kinds.push("act");
+  if (summary.counts.wait) kinds.push("wait");
+  if (summary.counts.grill) kinds.push("grill");
+  return `${total} ${total === 1 ? "task" : "tasks"}: ${kinds.join(", ")}`;
 }

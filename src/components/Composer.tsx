@@ -135,6 +135,7 @@ export function Composer({
   return (
     <div
       className={`composer${compact ? " compact" : ""}`}
+      data-parity="composer"
       data-first-mode={draft.mode ?? undefined}
       data-counts={`${draft.counts.act}-${draft.counts.wait}-${draft.counts.grill}`}
     >
@@ -171,7 +172,7 @@ export function Composer({
       ) : (
         <ReferenceEditor
           value={text}
-          placeholder="Capture a note. ! Act · ? Wait · ?? Grill"
+          placeholder="Write a note. ! acts, ? waits, ?? grills."
           ariaLabel="Composer"
           autoFocus={autoFocus}
           onChange={setText}
@@ -194,11 +195,13 @@ export function Composer({
         </button>
       )}
       <div className="composer-actions">
-        <span className="meta composer-hint">@ reference · + project · ctrl ↵ send</span>
+        <span className="meta composer-hint">@ reference</span>
+        <span className="meta composer-hint">+ project</span>
+        <span className="meta composer-hint">ctrl ↵ send</span>
         <span className="meta composer-count" aria-live="polite">
           {draftLabel(draft)}
         </span>
-        <button type="button" className="btn pri" disabled={busy} onClick={() => void submit()}>
+        <button type="button" className="btn pri composer-submit" disabled={busy} onClick={() => void submit()}>
           {busy ? "Saving…" : note ? "Save changes" : "Capture"}
         </button>
       </div>

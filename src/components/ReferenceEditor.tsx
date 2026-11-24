@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { lineDirective } from "../directives";
 import {
   convertUrls,
@@ -19,8 +19,10 @@ import {
   type V2PickerRow,
 } from "../references";
 import { useEntering } from "../ui/motion";
+import { visualFixtureChips } from "../visual-fixture";
 import {
   onReferenceChange,
+  isVisualFixture,
   v2ReferenceExact,
   v2ReferenceParse,
   v2ReferencePicker,
@@ -78,7 +80,6 @@ export function ReferenceEditor({
   const [highlight, setHighlight] = useState(0);
   const [errorToken, setErrorToken] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const decorationRef = useRef<HTMLDivElement>(null);
   const undo = useRef<EditorState[]>([]);
   const lastConversion = useRef<{ chip: Chip; delimiter: string; at: number } | null>(null);
   const lastPaste = useRef<{ at: number; previous: EditorState } | null>(null);
@@ -98,25 +99,6 @@ export function ReferenceEditor({
     setState({ text: value, chips: [] });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
-
-  // The Dock's input grows with its decoration so Rust can measure one stable content root.
-  // Other hosts keep their own textarea sizing rules.
-  useLayoutEffect(() => {
-    const input = inputRef.current;
-    const decoration = decorationRef.current;
-    if (!input || !decoration) return;
-    if (!input.closest(".dock")) {
-      input.style.height = "";
-      return;
-    }
-    const size = () => {
-      input.style.height = `${decoration.offsetHeight}px`;
-    };
-    size();
-    const observer = new ResizeObserver(size);
-    observer.observe(decoration);
-    return () => observer.disconnect();
-  }, [state.text]);
 
   useEffect(() => onReferenceChange(() => {
     if (pickerOpen && queryRef.current) void runLocal(queryRef.current);
@@ -150,7 +132,8 @@ export function ReferenceEditor({
       Action rows keep stable ids, so a late search result never moves the highlight. */
   const applyRows = () => {
     const merged = mergeLiveRows(localRef.current, liveRef.current);
-    const next = [...slackActionRows(queryRef.current), ...merged];
+    const actions = inputRef.current?.closest(".nb-dock") ? [] : slackActionRows(queryRef.current);
+    const next = [...actions, ...merged];
     const key = rowsRef.current[highlightRef.current]?.key;
     rowsRef.current = next;
     setRows(next);
@@ -288,8 +271,11 @@ export function ReferenceEditor({
   const changed = (text: string, caret: number) => {
     lastConversion.current = null;
     lastPaste.current = null;
-    const chips = state.chips.filter((chip) => text.includes(chip.token));
-    commit({ text, chips });
+    const kept = state.chips.filter((chip) => text.includes(chip.token));
+    const fixtureChips = isVisualFixture()
+      ? visualFixtureChips(text).filter((chip) => !kept.some((existing) => existing.key === chip.key))
+      : [];
+    commit({ text, chips: [...kept, ...fixtureChips] });
     trackTypedToken(text, caret);
   };
 
@@ -605,7 +591,9 @@ export function ReferenceEditor({
       const base = starts[at];
       const end = base + line.length;
       const nodes: React.ReactNode[] = [];
-      let cursor = base;
+      const sigil = mode ? line.slice(0, mode === "grill" ? 2 : 1) : "";
+      let cursor = base + sigil.length;
+      if (sigil) nodes.push(<span className="de-sigil" key={`${lineKeys[at]}-sigil`}>{sigil}</span>);
       for (const mark of marks) {
         if (mark.at < base || mark.at >= end) continue;
         nodes.push(state.text.slice(cursor, mark.at));
@@ -613,8 +601,8 @@ export function ReferenceEditor({
         const pop = enteringChips.has(mark.key) ? " pop" : "";
         nodes.push(
           <span
-            className={`${mark.kind === "chip" ? "ref-chip" : "ref-token-error"}${pop}`}
-            data-unresolved={chip?.unavailable ? "true" : undefined}
+            className={`ref-chip${pop}`}
+            data-unresolved={mark.kind === "error" || chip?.unavailable ? "true" : undefined}
             key={`${mark.key}-${mark.at}`}
           >
             {mark.text}
@@ -634,8 +622,8 @@ export function ReferenceEditor({
 
   return (
     <div className="ref-editor">
-      <div className="ref-editor-surface">
-        <div className="ref-editor-decoration" aria-hidden="true" ref={decorationRef}>
+      <div className="ref-editor-surface" data-multiline={multiline ? "true" : "false"}>
+        <div className="ref-editor-decoration" aria-hidden="true">
           {decorate()}
         </div>
         <textarea
@@ -646,6 +634,7 @@ export function ReferenceEditor({
             }
           }}
           className={`ref-editor-input${multiline ? "" : " single"}`}
+          rows={1}
           value={state.text}
           placeholder={placeholder}
           aria-label={ariaLabel ?? "Composer"}

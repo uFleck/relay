@@ -11,6 +11,10 @@
   box-sizing: border-box;
 }
 
+.composer .ref-editor-decoration {
+  min-height: 64px;
+}
+
 .composer-input,
 .composer-line-input {
   width: 100%;

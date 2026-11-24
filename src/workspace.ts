@@ -45,11 +45,17 @@ export function dayLabel(key: string) {
   });
 }
 
-/** Oldest first, with the immutable ULID as the tie-breaker for equal timestamps. */
+/** Day groups run oldest to newest. Today reads forward; earlier days read newest first,
+    matching the Dock + Lens prototype's conversation spine. */
 export function sortTimeline(notes: readonly V2Note[]): V2Note[] {
-  return [...notes].sort(
-    (a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt) || a.id.localeCompare(b.id),
-  );
+  const today = todayKey();
+  return [...notes].sort((a, b) => {
+    const dayA = dayKey(a.createdAt);
+    const dayB = dayKey(b.createdAt);
+    if (dayA !== dayB) return dayA.localeCompare(dayB);
+    const direction = dayA === today ? 1 : -1;
+    return (Date.parse(a.createdAt) - Date.parse(b.createdAt)) * direction || a.id.localeCompare(b.id);
+  });
 }
 
 export interface DayGroup {
