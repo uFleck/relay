@@ -12,7 +12,7 @@ use super::briefing::{
     BriefContent, BriefError, BriefRecord, BriefStatus, ReferenceInputKind, TaskLineState,
     build_reference_plan, parse_model_output, render_brief, sanitize_stage_error, source_signature,
 };
-use super::model::{AgentMode, GrillTurn, TaskStatus};
+use super::model::AgentMode;
 use super::store::{V2Error, V2Store};
 use crate::model::{new_id, now};
 
@@ -721,56 +721,6 @@ pub fn recover_interrupted(store: &V2Store) -> Result<usize, V2Error> {
         recovered += 1;
     }
     Ok(recovered)
-}
-
-/// Projections used by the store when it derives Task fields from a Grilling row.
-pub(crate) fn task_fields(
-    status: GrillStatus,
-    has_project: bool,
-    failure_stage: Option<String>,
-    failure_reason: Option<String>,
-) -> (
-    TaskStatus,
-    Option<GrillTurn>,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-) {
-    match status {
-        GrillStatus::Pending => (
-            TaskStatus::Grilling,
-            Some(GrillTurn::Agent),
-            Some("Grilling this Task…".into()),
-            None,
-            None,
-        ),
-        GrillStatus::Question => (
-            TaskStatus::Grilling,
-            Some(GrillTurn::UserQuestion),
-            Some("Answer the Grilling question.".into()),
-            None,
-            None,
-        ),
-        GrillStatus::Brief | GrillStatus::Approved => (
-            if has_project {
-                TaskStatus::Grilling
-            } else {
-                TaskStatus::NeedsProject
-            },
-            Some(GrillTurn::ClosingApproval),
-            Some("Review the Brief and press Go.".into()),
-            None,
-            None,
-        ),
-        GrillStatus::Failed => (
-            TaskStatus::Failed,
-            None,
-            Some("Retry the Grilling stage.".into()),
-            Some(failure_stage.unwrap_or_else(|| FAILURE_STAGE.to_string())),
-            failure_reason,
-        ),
-        GrillStatus::Cancelled => (TaskStatus::Cancelled, None, None, None, None),
-    }
 }
 
 // ---------------------------------------------------------------------------
