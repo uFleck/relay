@@ -1730,48 +1730,25 @@ impl V2Store {
             .rendered
             .as_deref()
             .is_some_and(|text| !text.trim().is_empty());
-        let (status, failure_stage, failure_reason, pending_action) = match record.status {
-            BriefStatus::Pending => (
-                TaskStatus::Briefing,
-                None,
-                None,
-                Some("Writing the Brief…".to_string()),
-            ),
-            BriefStatus::WaitingReference => (
-                TaskStatus::Failed,
-                Some(super::briefing::FAILURE_STAGE.to_string()),
-                Some("A Reference has no readable or cached content. Continue with link only or Retry.".to_string()),
-                Some("Continue with link only, or Retry after the Reference resolves.".to_string()),
-            ),
-            BriefStatus::Failed => (
-                TaskStatus::Failed,
-                record.failure_stage.clone(),
-                record.failure_reason.clone(),
-                Some("Retry the Briefing stage.".to_string()),
-            ),
-            BriefStatus::Ready | BriefStatus::Approved => (
-                super::briefing::derive_task_status(
-                    task.agent_mode,
-                    record.status,
-                    task.project_id.is_some(),
-                    has_brief,
-                ),
-                None,
-                None,
-                None,
-            ),
-        };
+        let projection = crate::task_lifecycle::brief_projection(
+            task.agent_mode,
+            record.status,
+            task.project_id.is_some(),
+            has_brief,
+            record.failure_stage.clone(),
+            record.failure_reason.clone(),
+        );
         tx.execute(
             "UPDATE tasks SET status = ?2, brief = ?3, failure_stage = ?4,
                  failure_reason = ?5, pending_action = ?6, updated_at = ?7
              WHERE id = ?1",
             params![
                 record.task_id,
-                status.as_str(),
+                projection.status.as_str(),
                 record.rendered,
-                failure_stage,
-                failure_reason,
-                pending_action,
+                projection.failure_stage,
+                projection.failure_reason,
+                projection.pending_action,
                 now(),
             ],
         )?;
@@ -1911,24 +1888,23 @@ impl V2Store {
             upsert_brief(&tx, brief)?;
         }
         let task = task_by_id(&tx, &record.task_id)?;
-        let (status, turn, pending_action, failure_stage, failure_reason) =
-            super::grilling::task_fields(
-                record.status,
-                task.project_id.is_some(),
-                record.failure_stage.clone(),
-                record.failure_reason.clone(),
-            );
+        let projection = crate::task_lifecycle::grill_projection(
+            record.status,
+            task.project_id.is_some(),
+            record.failure_stage.clone(),
+            record.failure_reason.clone(),
+        );
         tx.execute(
             "UPDATE tasks SET status = ?2, grill_turn = ?3, pending_action = ?4,
                  failure_stage = ?5, failure_reason = ?6, updated_at = ?7
              WHERE id = ?1",
             params![
                 record.task_id,
-                status.as_str(),
-                turn.map(GrillTurn::as_str),
-                pending_action,
-                failure_stage,
-                failure_reason,
+                projection.status.as_str(),
+                projection.grill_turn.map(GrillTurn::as_str),
+                projection.pending_action,
+                projection.failure_stage,
+                projection.failure_reason,
                 now(),
             ],
         )?;

@@ -236,13 +236,7 @@ impl SendOperation {
 }
 
 /// A Task status an observation wants to commit. `None` means preserve the last known state.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProgressEffect {
-    pub status: TaskStatus,
-    pub pending_action: Option<String>,
-    pub failure_stage: Option<String>,
-    pub failure_reason: Option<String>,
-}
+pub type ProgressEffect = crate::task_lifecycle::TaskProjection;
 
 /// The inputs that decide whether a read may change a Task. The store rechecks all of them inside
 /// its write transaction; a late read with a stale revision is discarded.
@@ -278,6 +272,7 @@ fn attributable(ctx: &ObservationContext<'_>, observed_run: Option<&str>) -> boo
 
 fn needs_answer() -> ProgressEffect {
     ProgressEffect {
+        grill_turn: None,
         status: TaskStatus::NeedsAnswer,
         pending_action: Some("Answer the question in T3; Relay keeps watching this thread.".into()),
         failure_stage: None,
@@ -287,6 +282,7 @@ fn needs_answer() -> ProgressEffect {
 
 fn dispatched() -> ProgressEffect {
     ProgressEffect {
+        grill_turn: None,
         status: TaskStatus::Dispatched,
         pending_action: Some("T3 is working on this Task.".into()),
         failure_stage: None,
@@ -296,6 +292,7 @@ fn dispatched() -> ProgressEffect {
 
 fn returned() -> ProgressEffect {
     ProgressEffect {
+        grill_turn: None,
         status: TaskStatus::Returned,
         pending_action: Some("Review the reply, follow up or close the Task.".into()),
         failure_stage: None,
@@ -325,6 +322,7 @@ fn failure_reason(observation: &ThreadObservation) -> String {
 
 fn failed(observation: &ThreadObservation) -> ProgressEffect {
     ProgressEffect {
+        grill_turn: None,
         status: TaskStatus::Failed,
         pending_action: Some("Retry the T3 run, follow up or close the Task.".into()),
         failure_stage: Some(FAILURE_STAGE.to_string()),

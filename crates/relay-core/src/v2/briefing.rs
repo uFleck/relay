@@ -573,24 +573,8 @@ pub fn derive_task_status(
     has_project: bool,
     has_brief: bool,
 ) -> TaskStatus {
-    if brief_status == BriefStatus::Failed {
-        return TaskStatus::Failed;
-    }
-    if !has_brief {
-        return if mode == AgentMode::Grill {
-            TaskStatus::Grilling
-        } else {
-            TaskStatus::Briefing
-        };
-    }
-    if !has_project {
-        return TaskStatus::NeedsProject;
-    }
-    if mode == AgentMode::Wait && brief_status != BriefStatus::Approved {
-        TaskStatus::AwaitingApproval
-    } else {
-        TaskStatus::Briefing
-    }
+    crate::task_lifecycle::brief_projection(mode, brief_status, has_project, has_brief, None, None)
+        .status
 }
 
 // ---------------------------------------------------------------------------
