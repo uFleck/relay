@@ -5,6 +5,9 @@
 //! starts it hidden with a kill-on-close Job Object, and redirects every configuration path into
 //! a per-attempt scratch directory. A canary in an ancestor `AGENTS.md` is checked in the output.
 
+mod attempt;
+pub(crate) use attempt::{AttemptInput, run as run_isolated};
+
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -1254,55 +1257,20 @@ fn run_attempt(
     input: &BriefInput,
     boundary: &BoundaryCache,
 ) {
-    let config = match settings::opencode_config(store) {
-        Ok(config) => config,
-        Err(error) => {
-            let _ = fail_attempt(store, &input.task_id, &input.attempt_id, &error.message);
-            return;
-        }
-    };
-    let Some(model) = config.model else {
-        let _ = fail_attempt(
-            store,
-            &input.task_id,
-            &input.attempt_id,
-            "Set an OpenCode provider/model in Settings.",
-        );
-        return;
-    };
-    let dir = match app.path().app_data_dir() {
-        Ok(dir) => dir,
-        Err(error) => {
-            let _ = fail_attempt(store, &input.task_id, &input.attempt_id, &error.to_string());
-            return;
-        }
-    };
-    let scratch = dir.join("briefing").join(&input.attempt_id);
-    if let Err(error) = fs::create_dir_all(&scratch) {
-        let _ = fail_attempt(store, &input.task_id, &input.attempt_id, &error.to_string());
-        return;
-    }
-    let invocation = Invocation {
-        task_id: input.task_id.clone(),
-        attempt_id: input.attempt_id.clone(),
-        prompt: input.prompt.clone(),
-        model,
-        credential: config.key,
-        agent: "relay-brief".into(),
-        grill: None,
-        scratch,
-    };
-    if let Err(reason) = verify_boundary(boundary, app, store, &invocation.agent, None) {
-        let _ = fail_attempt(
-            store,
-            &input.task_id,
-            &input.attempt_id,
-            &format!("CLI isolation could not be verified: {reason}"),
-        );
-        return;
-    }
-    let runner = ProcessRunner;
-    let outcome = runner.run(&invocation).and_then(|stdout| {
+    let outcome = attempt::run(
+        app,
+        store,
+        attempt::AttemptInput {
+            task_id: input.task_id.clone(),
+            attempt_id: input.attempt_id.clone(),
+            prompt: input.prompt.clone(),
+            agent: "relay-brief",
+            scratch_group: "briefing",
+            grill: None,
+        },
+        boundary,
+    )
+    .and_then(|stdout| {
         terminal_outcome(&stdout).map_err(|reason| sanitize_stage_error(&reason))?;
         Ok(assistant_text(&stdout))
     });
