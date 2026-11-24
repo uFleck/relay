@@ -8,9 +8,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use relay_core::t3_progress::{
-    CommitGuard, ObservationContext, RETRY_MESSAGE, SendKind, SendOperation, SendState,
-    T3ProgressView, ThreadObservation, confirms_send, decide, task_status,
+    RETRY_MESSAGE, SendKind, SendOperation, SendState, T3ProgressView, confirms_send, task_status,
 };
+use relay_core::t3_session;
 use relay_core::v2::{TaskStatus, V2Store};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -177,7 +177,7 @@ async fn observe(
     let outcome = tokio::task::spawn_blocking(move || -> Result<bool, String> {
         let observation =
             t3_cli::show_observation(&thread_id, &data_dir).map_err(|e| e.to_string())?;
-        commit_captured(&store, &watch, &observation).map_err(|e| e.to_string())
+        t3_session::observe_captured(&store, &watch, &observation).map_err(|e| e.to_string())
     })
     .await;
     match outcome {
@@ -202,76 +202,13 @@ async fn observe(
     state.end(&task_id);
 }
 
-/// Commits with the revision and operation captured before the read. A closure or a newer
-/// observation that landed meanwhile makes this a no-op.
-fn commit_captured(
-    store: &V2Store,
-    watch: &relay_core::t3_progress::ProgressWatch,
-    observation: &ThreadObservation,
-) -> Result<bool, relay_core::v2::V2Error> {
-    let view = store
-        .progress_view(&watch.task_id)?
-        .ok_or(relay_core::v2::V2Error::NotFound(watch.task_id.clone()))?;
-    let status = task_status(&view.task_status).unwrap_or(TaskStatus::Dispatched);
-    let context = ObservationContext {
-        current_status: status,
-        expected_run_id: view.run_id.as_deref(),
-        send: watch.send.as_ref(),
-        observation,
-    };
-    let Some(effect) = decide(&context) else {
-        return Ok(false);
-    };
-    let guard = CommitGuard {
-        task_id: watch.task_id.clone(),
-        attempt_id: watch.attempt_id.clone(),
-        thread_id: watch.thread_id.clone(),
-        revision: watch.revision,
-        operation_revision: watch.send.as_ref().map(|operation| operation.revision),
-    };
-    store.commit_observation(&guard, &effect, observation)
-}
-
-/// Commits an observation already read at another boundary, using current revisions.
-fn commit_observed(
-    store: &Arc<V2Store>,
-    task_id: &str,
-    observation: &ThreadObservation,
-) -> Result<bool, CommandError> {
-    let view = store
-        .progress_view(task_id)?
-        .ok_or_else(|| CommandError::new("invalid_input", "this Task has no T3 thread"))?;
-    let status = task_status(&view.task_status).unwrap_or(TaskStatus::Dispatched);
-    if matches!(status, TaskStatus::Returned | TaskStatus::Failed) {
-        return Ok(store.refresh_progress_metadata(task_id, observation)?);
-    }
-    let context = ObservationContext {
-        current_status: status,
-        expected_run_id: view.run_id.as_deref(),
-        send: view.active_send.as_ref(),
-        observation,
-    };
-    let Some(effect) = decide(&context) else {
-        return Ok(false);
-    };
-    let guard = CommitGuard {
-        task_id: task_id.to_string(),
-        attempt_id: view.attempt_id,
-        thread_id: view.thread_id,
-        revision: view.revision,
-        operation_revision: view.active_send.as_ref().map(|send| send.revision),
-    };
-    Ok(store.commit_observation(&guard, &effect, observation)?)
-}
-
 /// A fresh, user-initiated refresh (one read when an open sheet mounts).
 fn refresh_now(store: &Arc<V2Store>, task_id: &str) -> Result<bool, CommandError> {
-    let view = store
-        .progress_view(task_id)?
+    let view = t3_session::progress_view(store, task_id)?
         .ok_or_else(|| CommandError::new("invalid_input", "this Task has no T3 thread"))?;
     let observation = t3_cli::show_observation(&view.thread_id, &data_dir_for(store, task_id)?)
         .map_err(|error| CommandError::new("invalid_input", error.to_string()))?;
-    commit_observed(store, task_id, &observation)
+    Ok(t3_session::observe_current(store, task_id, &observation)?)
 }
 
 fn data_dir_for(store: &Arc<V2Store>, task_id: &str) -> Result<String, CommandError> {
@@ -286,7 +223,7 @@ pub fn v2_t3_progress(
     task_id: String,
     store: State<'_, Arc<V2Store>>,
 ) -> Result<Option<T3ProgressView>, CommandError> {
-    Ok(store.progress_view(&task_id)?)
+    Ok(t3_session::progress_view(store.inner(), &task_id)?)
 }
 
 /// One metadata refresh when an open Returned or Failed sheet mounts.
@@ -300,8 +237,7 @@ pub fn v2_t3_refresh(
         return Ok(());
     }
     let store = app.state::<Arc<V2Store>>().inner().clone();
-    let status = store
-        .progress_view(&task_id)?
+    let status = t3_session::progress_view(&store, &task_id)?
         .and_then(|view| task_status(&view.task_status));
     if !matches!(
         status,
@@ -359,8 +295,7 @@ fn send_message(
     kind: SendKind,
     message: &str,
 ) -> Result<SendResult, CommandError> {
-    let view = store
-        .progress_view(task_id)?
+    let view = t3_session::progress_view(store, task_id)?
         .ok_or_else(|| CommandError::new("invalid_input", "this Task has no T3 thread"))?;
     let eligible = match kind {
         SendKind::Followup => view.can_follow_up,
@@ -388,7 +323,7 @@ fn send_message(
         )
     })?;
     if observed.status.is_active() || observed.pending_request_count > 0 {
-        let _ = commit_observed(store, task_id, &observed);
+        let _ = t3_session::observe_current(store, task_id, &observed);
         return Ok(SendResult::of(
             "draft_unsent",
             "T3 is still working. Relay is observing that run; the draft was not sent.",
@@ -396,7 +331,7 @@ fn send_message(
         ));
     }
     // The eligibility read also refreshes the baseline run id/count before the draft is reserved.
-    let _ = commit_observed(store, task_id, &observed);
+    let _ = t3_session::observe_current(store, task_id, &observed);
     let Some(operation) = store.reserve_send(task_id, kind, message)? else {
         return Ok(SendResult::of(
             "fenced",
@@ -504,8 +439,7 @@ pub fn v2_t3_check_again(
 }
 
 fn check_send(store: &Arc<V2Store>, task_id: &str) -> Result<bool, CommandError> {
-    let view = store
-        .progress_view(task_id)?
+    let view = t3_session::progress_view(store, task_id)?
         .ok_or_else(|| CommandError::new("invalid_input", "this Task has no T3 thread"))?;
     let Some(operation) = view.active_send else {
         return Ok(false);
@@ -514,16 +448,10 @@ fn check_send(store: &Arc<V2Store>, task_id: &str) -> Result<bool, CommandError>
         return Ok(false);
     }
     let data_dir = data_dir_for(store, task_id)?;
-    let observation = t3_cli::show_observation(&operation.thread_id, &data_dir).ok();
-    let Some(run_id) = observation
-        .as_ref()
-        .and_then(|observed| confirms_send(&operation, observed))
-    else {
+    let Some(observation) = t3_cli::show_observation(&operation.thread_id, &data_dir).ok() else {
         return Ok(false);
     };
-    Ok(store
-        .confirm_send(&operation.operation_id, &run_id)
-        .unwrap_or(false))
+    Ok(t3_session::confirm_send(store, task_id, &observation)?)
 }
 
 #[derive(Debug, Serialize)]
@@ -561,8 +489,7 @@ fn resend_draft(
     task_id: &str,
     user_confirmed: bool,
 ) -> Result<SendResult, CommandError> {
-    let view = store
-        .progress_view(task_id)?
+    let view = t3_session::progress_view(store, task_id)?
         .ok_or_else(|| CommandError::new("invalid_input", "this Task has no T3 thread"))?;
     let Some(existing) = view.active_send else {
         return Err(CommandError::new(
@@ -585,7 +512,7 @@ fn resend_draft(
             "this draft cannot be resent in its current state",
         ));
     }
-    let Some(reopened) = store.reopen_send(&existing.operation_id)? else {
+    let Some(reopened) = t3_session::reopen_send(store, &existing.operation_id)? else {
         return Err(CommandError::new(
             "invalid_input",
             "the retained draft could not be reopened",
@@ -610,7 +537,7 @@ pub fn v2_t3_close(
         "cancelled" => TaskStatus::Cancelled,
         _ => return Err(CommandError::new("invalid_input", "unknown closure")),
     };
-    if !store.close_task(&task_id, target)? {
+    if !t3_session::close(&store, &task_id, target)? {
         return Err(CommandError::new(
             "invalid_input",
             "this Task is already closed",

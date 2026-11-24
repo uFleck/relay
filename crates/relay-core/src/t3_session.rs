@@ -5,7 +5,11 @@ use crate::t3_dispatch::{
     DispatchAttempt, DispatchClaim, DispatchStart, ListedThread, ThreadIdentity, bind, claim,
     identity_matches, record_known_failure, record_uncertain, save_thread_id, unique_candidate,
 };
-use crate::v2::{T3Target, V2Error, V2Store};
+use crate::t3_progress::{
+    CommitGuard, ObservationContext, ProgressWatch, SendState, T3ProgressView, ThreadObservation,
+    confirms_send, decide, task_status,
+};
+use crate::v2::{T3Target, TaskStatus, V2Error, V2Store};
 
 #[derive(Debug)]
 pub enum TransportError {
@@ -119,6 +123,100 @@ pub fn reconcile(
         );
     }
     bind(store, &attempt.attempt_id, &identity)
+}
+
+pub fn progress_view(store: &V2Store, task_id: &str) -> Result<Option<T3ProgressView>, V2Error> {
+    store.progress_view(task_id)
+}
+
+pub fn observe_captured(
+    store: &V2Store,
+    watch: &ProgressWatch,
+    observation: &ThreadObservation,
+) -> Result<bool, V2Error> {
+    let view = store
+        .progress_view(&watch.task_id)?
+        .ok_or(V2Error::NotFound(watch.task_id.clone()))?;
+    let status = task_status(&view.task_status).unwrap_or(TaskStatus::Dispatched);
+    let context = ObservationContext {
+        current_status: status,
+        expected_run_id: view.run_id.as_deref(),
+        send: watch.send.as_ref(),
+        observation,
+    };
+    let Some(effect) = decide(&context) else {
+        return Ok(false);
+    };
+    let guard = CommitGuard {
+        task_id: watch.task_id.clone(),
+        attempt_id: watch.attempt_id.clone(),
+        thread_id: watch.thread_id.clone(),
+        revision: watch.revision,
+        operation_revision: watch.send.as_ref().map(|operation| operation.revision),
+    };
+    store.commit_observation(&guard, &effect, observation)
+}
+
+pub fn observe_current(
+    store: &V2Store,
+    task_id: &str,
+    observation: &ThreadObservation,
+) -> Result<bool, V2Error> {
+    let view = store
+        .progress_view(task_id)?
+        .ok_or_else(|| V2Error::InvalidInput("this Task has no T3 thread".into()))?;
+    let status = task_status(&view.task_status).unwrap_or(TaskStatus::Dispatched);
+    if matches!(status, TaskStatus::Returned | TaskStatus::Failed) {
+        return store.refresh_progress_metadata(task_id, observation);
+    }
+    let context = ObservationContext {
+        current_status: status,
+        expected_run_id: view.run_id.as_deref(),
+        send: view.active_send.as_ref(),
+        observation,
+    };
+    let Some(effect) = decide(&context) else {
+        return Ok(false);
+    };
+    let guard = CommitGuard {
+        task_id: task_id.to_string(),
+        attempt_id: view.attempt_id,
+        thread_id: view.thread_id,
+        revision: view.revision,
+        operation_revision: view.active_send.as_ref().map(|send| send.revision),
+    };
+    store.commit_observation(&guard, &effect, observation)
+}
+
+pub fn confirm_send(
+    store: &V2Store,
+    task_id: &str,
+    observation: &ThreadObservation,
+) -> Result<bool, V2Error> {
+    let Some(view) = store.progress_view(task_id)? else {
+        return Ok(false);
+    };
+    let Some(operation) = view.active_send else {
+        return Ok(false);
+    };
+    if operation.state != SendState::NeedsConfirmation {
+        return Ok(false);
+    }
+    let Some(run_id) = confirms_send(&operation, observation) else {
+        return Ok(false);
+    };
+    store.confirm_send(&operation.operation_id, &run_id)
+}
+
+pub fn reopen_send(
+    store: &V2Store,
+    operation_id: &str,
+) -> Result<Option<crate::t3_progress::SendOperation>, V2Error> {
+    store.reopen_send(operation_id)
+}
+
+pub fn close(store: &V2Store, task_id: &str, status: TaskStatus) -> Result<bool, V2Error> {
+    store.close_task(task_id, status)
 }
 
 fn complete_identity(
