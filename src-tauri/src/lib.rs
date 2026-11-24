@@ -11,6 +11,7 @@ mod keybinds;
 mod live;
 mod note_import;
 mod opencode;
+mod process;
 mod progress;
 mod recovery;
 mod secrets;

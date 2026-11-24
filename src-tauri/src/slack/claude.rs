@@ -2,15 +2,16 @@
 //! prompt, tool allowlist and stream parsing; this module only locates the CLI, builds
 //! its isolated settings and runs it off the async thread. No token is read or stored.
 
-use std::io::Read;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::process::Command;
+use std::time::Duration;
 
 use relay_core::claude_slack::{self as core, ClaudeError, RunRequest, Runner};
 
+use crate::process::{self, ProcessError};
+
 const RUN_TIMEOUT: Duration = Duration::from_secs(90);
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+const MAX_OUTPUT: usize = 1024 * 1024;
 
 fn user_home() -> Option<PathBuf> {
     std::env::var_os("USERPROFILE").map(PathBuf::from)
@@ -76,49 +77,20 @@ impl ProcessRunner {
         command
             .args(args)
             .envs(env.iter().copied())
-            .current_dir(&self.cwd)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            command.creation_flags(CREATE_NO_WINDOW);
-        }
-        let mut child = command
-            .spawn()
-            .map_err(|error| ClaudeError::Cli(format!("could not start claude: {error}")))?;
-        let mut stdout = child.stdout.take().expect("piped stdout");
-        let mut stderr = child.stderr.take().expect("piped stderr");
-        let out = std::thread::spawn(move || {
-            let mut bytes = Vec::new();
-            let _ = stdout.read_to_end(&mut bytes);
-            bytes
-        });
-        let err = std::thread::spawn(move || {
-            let mut bytes = Vec::new();
-            let _ = stderr.read_to_end(&mut bytes);
-            bytes
-        });
-        let started = Instant::now();
-        loop {
-            match child.try_wait() {
-                Ok(Some(_)) => break,
-                Ok(None) if started.elapsed() > deadline => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(ClaudeError::Timeout);
-                }
-                Ok(None) => std::thread::sleep(Duration::from_millis(100)),
-                Err(error) => return Err(ClaudeError::Cli(error.to_string())),
-            }
-        }
-        let stdout = String::from_utf8_lossy(&out.join().unwrap_or_default()).into_owned();
+            .current_dir(&self.cwd);
+        let output = process::run(command, None, deadline, MAX_OUTPUT, MAX_OUTPUT, "claude")
+            .map_err(|error| match error {
+                ProcessError::Timeout(_) => ClaudeError::Timeout,
+                _ => ClaudeError::Cli("claude process failed".into()),
+            })?;
+        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
         if stdout.trim().is_empty() {
-            let detail = String::from_utf8_lossy(&err.join().unwrap_or_default()).into_owned();
+            let detail = String::from_utf8_lossy(&output.stderr).into_owned();
             let detail: String = detail.trim().chars().take(200).collect();
-            return Err(ClaudeError::Cli(if detail.is_empty() {
+            return Err(ClaudeError::Cli(if output.success {
                 "claude produced no output".into()
+            } else if detail.is_empty() {
+                "claude exited without output".into()
             } else {
                 detail
             }));
