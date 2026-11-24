@@ -13,12 +13,10 @@ import {
   onDockDpi,
   onDockFocus,
   onEvent,
-  onV2Change,
   openMain,
   requestUpdateCheck,
   setDnd,
   showMainWindow,
-  v2WorkspaceSnapshot,
   type HoverFlags,
   type V2AgentMode,
   type V2WorkspaceSnapshot,
@@ -35,16 +33,16 @@ import {
 import { prefersReducedMotion } from "../ui/motion";
 import { useKeybinds } from "../keybinds";
 import { followUpdates, requestInstall, useUpdater, type UpdateState } from "../updater";
-import { needsYouCount, waitingTasks } from "../workspace";
+import { needsYouCount, useWorkspace, waitingTasks } from "../workspace";
 
 /* The Dock reads only the v2 workspace. The retired v1 snapshot, claim board and Slack
    source row are gone; the native session and focus machinery below is unchanged. */
 const REFRESH_MS = 20_000;
 
 export function HoverApp() {
-  const [v2, setV2] = useState<V2WorkspaceSnapshot | null>(null);
+  const { workspace: v2, error: workspaceError, refresh: refreshV2 } = useWorkspace();
+  const failed = workspaceError !== null;
   const [version, setVersion] = useState("");
-  const [failed, setFailed] = useState(false);
   const [flags, setFlags] = useState<HoverFlags>({ pinned: false, dnd: false, paused: false, ready: false, visible: false });
   const [pulsing, setPulsing] = useState(false);
   const [composing, setComposing] = useState(true);
@@ -87,19 +85,12 @@ export function HoverApp() {
     requestAnimationFrame(() => setPulsing(true));
   }, []);
 
-  const refreshV2 = useCallback(async () => {
-    try {
-      const workspace = await v2WorkspaceSnapshot();
-      const ids = new Set(waitingTasks(workspace.tasks).map((task) => task.id));
-      if (waitingIds.current && [...ids].some((id) => !waitingIds.current!.has(id))) pulse();
-      waitingIds.current = ids;
-      setV2(workspace);
-      setFailed(false);
-    } catch (error) {
-      console.warn("[relay] hover v2 workspace", error);
-      setFailed(true);
-    }
-  }, [pulse]);
+  useEffect(() => {
+    if (!v2) return;
+    const ids = new Set(waitingTasks(v2.tasks).map((task) => task.id));
+    if (waitingIds.current && [...ids].some((id) => !waitingIds.current!.has(id))) pulse();
+    waitingIds.current = ids;
+  }, [v2, pulse]);
 
   /** Explicit dismissal keeps the draft: the Composer stays mounted and only the native window hides. */
   const dismissDock = useCallback(async (reason: "escape" | "saved") => {
@@ -206,13 +197,10 @@ export function HoverApp() {
   useEffect(() => {
     followUpdates();
     void appVersion().then(setVersion).catch(() => undefined);
-    void refreshV2();
     const timer = window.setInterval(() => void refreshV2(), REFRESH_MS);
-    const offV2 = onV2Change(() => void refreshV2());
     const offState = onEvent("relay://state", setFlags);
     return () => {
       window.clearInterval(timer);
-      offV2();
       offState();
     };
   }, [refreshV2]);
