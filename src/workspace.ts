@@ -1,15 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
-  errorText,
-  onV2Change,
   v2WorkspaceSearch,
-  v2WorkspaceSnapshot,
   type V2Note,
   type V2Task,
   type V2TaskStatus,
   type V2WorkspaceSnapshot,
   type WorkspaceSearchResult,
 } from "./ipc";
+import { workspaceStore } from "./workspaceStore";
 
 /* Shared workspace read, filter path and timeline helpers. Notebook and Tasks consume the
    same snapshot, the same search result and the same post-commit refresh signal. */
@@ -95,27 +93,12 @@ export interface WorkspaceState {
 }
 
 export function useWorkspace(): WorkspaceState {
-  const [workspace, setWorkspace] = useState<V2WorkspaceSnapshot | null>(null);
-  const [version, setVersion] = useState(0);
-  const [error, setError] = useState<string | null>(null);
-
-  const refresh = useCallback(async () => {
-    try {
-      setWorkspace(await v2WorkspaceSnapshot());
-      setVersion((n) => n + 1);
-      setError(null);
-    } catch (cause) {
-      setError(errorText(cause));
-    }
-  }, []);
-
-  useEffect(() => {
-    void refresh();
-    // One shared, cross-window signal: a Dock submission refreshes both views.
-    return onV2Change(() => void refresh());
-  }, [refresh]);
-
-  return { workspace, version, error, refresh };
+  const state = useSyncExternalStore(
+    workspaceStore.subscribe,
+    workspaceStore.getSnapshot,
+    workspaceStore.getSnapshot,
+  );
+  return { ...state, refresh: workspaceStore.refresh };
 }
 
 export interface WorkspaceFilter {

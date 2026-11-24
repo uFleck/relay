@@ -1,14 +1,13 @@
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { Composer } from "../components/Composer";
 import {
   errorText,
-  onEvent,
-  v2NotebookSnapshot,
   v2TaskAssignProject,
-  type V2NotebookSnapshot,
+  type V2Note,
   type V2Project,
   type V2Task,
 } from "../ipc";
+import { useWorkspace } from "../workspace";
 
 /* A temporary v2 pane on the Notes route. It shares the Composer with the Dock and shows
    the saved Notes with their Task rows. The full Notebook timeline belongs to #26. */
@@ -67,22 +66,8 @@ function TaskRow({
 }
 
 export function V2Capture({ onNotice }: Props) {
-  const [snapshot, setSnapshot] = useState<V2NotebookSnapshot | null>(null);
+  const { workspace: snapshot, refresh: reload } = useWorkspace();
   const [editing, setEditing] = useState<string | null>(null);
-
-  const reload = useCallback(async () => {
-    try {
-      setSnapshot(await v2NotebookSnapshot());
-    } catch (error) {
-      onNotice(`Could not read the v2 notebook: ${errorText(error)}`);
-    }
-  }, [onNotice]);
-
-  useEffect(() => {
-    void reload();
-    const off = onEvent("relay://v2-change", () => void reload());
-    return off;
-  }, [reload]);
 
   const assign = async (task: V2Task, projectId: string) => {
     try {
@@ -93,7 +78,7 @@ export function V2Capture({ onNotice }: Props) {
     }
   };
 
-  const lines = (note: V2NotebookSnapshot["notes"][number]) => (
+  const lines = (note: V2Note) => (
     <>
       {note.lines.map((line) => (
         <div className="v2-line" key={line.id}>
