@@ -17,6 +17,14 @@ Status: local implementation complete; CI and live provider acceptance pending.
 
 The two tests assert that thread and window Reference keys route to their matching policy.
 
+## Verification update
+
+- `cargo test -p relay-core`: 174 passed, 2 ignored, 0 failed.
+- `pnpm typecheck`: Pass.
+- `pnpm test`: 44 passed.
+- `pnpm build`: Pass.
+- Node 24.4.1 was prepended to the process PATH for all pnpm commands.
+
 ## Known risks
 
 - No live Slack connector or desktop run exercised window recovery.
