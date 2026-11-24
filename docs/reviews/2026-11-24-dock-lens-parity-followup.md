@@ -1,6 +1,6 @@
 # Dock + Lens visual parity follow-up
 
-Status: implemented locally; composer states are pixel-identical; strict full-shell check retains 72 renderer-rounding pixels.
+Status: implemented locally; v0.10.2 pending PR, publish and operator install; composer states are pixel-identical; strict full-shell check retains 72 renderer-rounding pixels.
 
 - **Goal** - Make the shipped Relay main window match the immutable J variant in `C:\Projects\relay-proto-vi\src\hover\visual-identity.prototype.html`, without touching the stale main checkout.
 - **Agent / model** - OpenCode session on the operator-restricted free model. Worktree `C:\Users\Pichau\.t3\worktrees\relay\relay-v2-visual-parity-followup`, branch `relay-v2/visual-parity-followup`, branched from `origin/master` (`35767fe`). An independent comment-review subagent was run on the same restricted free-model allowlist. No cross-family reviewer was available under the operator's restriction.
