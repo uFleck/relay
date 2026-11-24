@@ -105,6 +105,7 @@ Then state the commit reviewed and any follow-up package that should be opened.
 | 2026-11-24 | [Slack Reference reader facade and window recovery](2026-11-24-slack-reader-facade.md) | `9f2e9fc` | HungerG Free | Local implementation complete; live provider acceptance pending |
 | 2026-11-24 | [Shared Windows child-process module](2026-11-24-windows-process-module.md) | `0570ca9` | HungerG Free | Local implementation complete; CI pending |
 | 2026-11-24 | [T3 CLI shared process migration](2026-11-24-t3-process-migration.md) | `c976ef7` | HungerG Free | Local implementation complete; CI pending |
+| 2026-11-24 | [OpenCode shared process migration](2026-11-24-opencode-process-migration.md) | `a4561b1` | HungerG Free | Local implementation complete; CI pending |
 
 The release audit is a section of the scaffold record because it audits the
 scaffold's release pipeline; it does not change the scaffold commit.
