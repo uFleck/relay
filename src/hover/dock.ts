@@ -7,8 +7,8 @@ import type { V2Note } from "../ipc";
 
 export type DockLayoutState = "compact" | "picker" | "picker-lens";
 
-/** The chosen prototype's preferred width, clamped to the native window's available width. */
-export const DOCK_PREFERRED_WIDTH = 760;
+/** The Dock's preferred width (`DOCK_WIDTH_CSS` in hover.rs), clamped to the work area. */
+export const DOCK_PREFERRED_WIDTH = 640;
 
 /** The picker floats above the input; its settled box and gap must be added to the measured root. */
 export const PICKER_MAX_HEIGHT = 320;

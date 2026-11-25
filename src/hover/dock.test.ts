@@ -9,8 +9,8 @@ describe("Dock hand-off", () => {
     expect(dockLayoutState(true, true)).toBe("picker-lens");
   });
 
-  it("keeps the prototype width and the registered summon chord", () => {
-    expect(DOCK_PREFERRED_WIDTH).toBe(760);
+  it("keeps the capture-bar width and the registered summon chord", () => {
+    expect(DOCK_PREFERRED_WIDTH).toBe(640);
     expect(SUMMON_CHORD).toBe("Ctrl+Alt+R");
   });
 

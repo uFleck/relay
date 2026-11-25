@@ -45,7 +45,6 @@ const UPDATE_CHECK_EVENT: &str = "update://check";
 /// The tray's check items, kept so a change made from a page shows in the menu too.
 struct TrayChecks {
     paused: CheckMenuItem<Wry>,
-    dnd: CheckMenuItem<Wry>,
 }
 
 fn data_file(app: &AppHandle, name: &str) -> tauri::Result<PathBuf> {
@@ -94,13 +93,6 @@ fn set_paused_flag(app: &AppHandle, paused: bool) -> hover::Snapshot {
     app.state::<HoverState>().set_paused(app, paused)
 }
 
-fn set_dnd_flag(app: &AppHandle, dnd: bool) -> hover::Snapshot {
-    if let Some(checks) = app.try_state::<TrayChecks>() {
-        let _ = checks.dnd.set_checked(dnd);
-    }
-    app.state::<HoverState>().set_dnd(app, dnd)
-}
-
 #[tauri::command]
 fn show_main_window(app: AppHandle) {
     show_main(&app);
@@ -117,21 +109,9 @@ fn set_paused(app: AppHandle, paused: bool) -> hover::Snapshot {
     set_paused_flag(&app, paused)
 }
 
-#[tauri::command]
-fn set_dnd(app: AppHandle, dnd: bool) -> hover::Snapshot {
-    set_dnd_flag(&app, dnd)
-}
-
-/// For the hover's update row: the main window owns the updater, so the check runs there.
-#[tauri::command]
-fn check_for_updates(app: AppHandle) {
-    request_update_check(&app);
-}
-
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let toggle = MenuItem::with_id(app, "toggle", "Show / Hide", true, None::<&str>)?;
     let paused = CheckMenuItem::with_id(app, "pause", "Pause capture", true, false, None::<&str>)?;
-    let dnd = CheckMenuItem::with_id(app, "dnd", "Do not disturb", true, false, None::<&str>)?;
     let notebook = MenuItem::with_id(app, "notebook", "Notebook", true, None::<&str>)?;
     let tasks = MenuItem::with_id(app, "tasks", "Tasks", true, None::<&str>)?;
     let settings = MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
@@ -143,7 +123,6 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             &toggle,
             &PredefinedMenuItem::separator(app)?,
             &paused,
-            &dnd,
             &PredefinedMenuItem::separator(app)?,
             &notebook,
             &tasks,
@@ -153,7 +132,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             &quit,
         ],
     )?;
-    app.manage(TrayChecks { paused, dnd });
+    app.manage(TrayChecks { paused });
 
     let mut tray = TrayIconBuilder::with_id(TRAY)
         .tooltip("Relay")
@@ -165,10 +144,6 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
             "pause" => {
                 let paused = app.state::<HoverState>().snapshot().paused;
                 set_paused_flag(app, !paused);
-            }
-            "dnd" => {
-                let dnd = app.state::<HoverState>().snapshot().dnd;
-                set_dnd_flag(app, !dnd);
             }
             "notebook" => open_route(app, "/notebook"),
             "tasks" => open_route(app, "/tasks"),
@@ -244,8 +219,6 @@ pub fn run() {
             show_main_window,
             open_main,
             set_paused,
-            set_dnd,
-            check_for_updates,
             commands::app_version,
             commands::v2_notebook_snapshot,
             commands::v2_workspace_snapshot,
