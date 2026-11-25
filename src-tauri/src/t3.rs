@@ -6,18 +6,14 @@
 //! stdout and translates only recognised failures into fixed, sanitized statuses. stderr
 //! is never returned or logged: it may contain user paths or provider text.
 
-use std::{env, path::PathBuf, time::Duration};
+use std::time::Duration;
+
+use crate::t3_cli::{self, CliError};
 
 use relay_core::v2::T3Target;
 use serde::Serialize;
 
 const CHECK_TIMEOUT: Duration = Duration::from_secs(8);
-#[cfg(windows)]
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-
-/// The launcher names the T3 desktop app installs. On Windows it is a `.cmd` shim in
-/// a user bin folder that the app adds to the user PATH.
-const LAUNCHERS: &[&str] = &["t3.cmd", "t3.exe", "t3"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -44,61 +40,30 @@ impl MappingResult {
     }
 }
 
-/// Finds the installed launcher on the process PATH. A GUI app started before T3
-/// changed the user PATH needs a restart, which the reason text calls out.
-pub fn find_launcher() -> Option<PathBuf> {
-    let path = env::var_os("PATH")?;
-    for dir in env::split_paths(&path) {
-        for name in LAUNCHERS {
-            let candidate = dir.join(name);
-            if candidate.is_file() {
-                return Some(candidate);
-            }
-        }
-    }
-    None
-}
-
-/// Runs `t3 thread list --project <target> --json`. stdout is discarded; only the
-/// exit status and a lowercased copy of stderr used for classification stay alive.
+/// Checks the mapping through the same launcher and process runner used by dispatch.
 pub async fn check_target(target: &T3Target) -> MappingResult {
-    let Some(launcher) = find_launcher() else {
-        return MappingResult::of(
+    let selector = target.value().to_owned();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let home = t3_cli::t3_home().ok_or(CliError::LauncherMissing)?;
+        t3_cli::list_output(&selector, &home.to_string_lossy(), CHECK_TIMEOUT)
+    })
+    .await;
+
+    match result {
+        Ok(Ok(output)) => classify(
+            output.status_success,
+            &String::from_utf8_lossy(&output.stderr),
+        ),
+        Ok(Err(CliError::LauncherMissing)) => MappingResult::of(
             MappingState::LauncherMissing,
-            "t3 was not found on PATH. Install T3 Code or restart Relay after installation.",
-        );
-    };
-
-    let mut command = tokio::process::Command::new(launcher);
-    command
-        .args(["thread", "list", "--project", target.value(), "--json"])
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .kill_on_drop(true);
-    #[cfg(windows)]
-    command.creation_flags(CREATE_NO_WINDOW);
-
-    let output = match tokio::time::timeout(CHECK_TIMEOUT, command.output()).await {
-        Ok(Ok(output)) => output,
-        Ok(Err(_)) => {
-            return MappingResult::of(
-                MappingState::LauncherMissing,
-                "The t3 launcher could not be started. Check the T3 installation.",
-            );
-        }
-        Err(_) => {
-            return MappingResult::of(
-                MappingState::Timeout,
-                "The T3 mapping check timed out. Is T3 Code running?",
-            );
-        }
-    };
-    // stdout is deliberately dropped without parsing or logging.
-    classify(
-        output.status.success(),
-        &String::from_utf8_lossy(&output.stderr),
-    )
+            "The T3 launcher could not be started. Check the T3 installation.",
+        ),
+        Ok(Err(CliError::Timeout)) => MappingResult::of(
+            MappingState::Timeout,
+            "The T3 mapping check timed out. Is T3 Code running?",
+        ),
+        _ => MappingResult::of(MappingState::Unavailable, "T3 could not check the mapping."),
+    }
 }
 
 /// Pure translation of a finished CLI call. Every reason is a fixed string.

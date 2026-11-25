@@ -97,6 +97,9 @@ pub fn resolve_launcher() -> Option<PathBuf> {
     }
     let home = t3_home()?;
     let bin = home.join("bin");
+    if !bin.is_absolute() {
+        return None;
+    }
     LAUNCHERS
         .iter()
         .map(|name| bin.join(name))
@@ -223,9 +226,9 @@ fn command_for(
 }
 
 pub(crate) struct Output {
-    status_success: bool,
+    pub(crate) status_success: bool,
     stdout: Vec<u8>,
-    stderr: Vec<u8>,
+    pub(crate) stderr: Vec<u8>,
     timed_out: bool,
 }
 
@@ -396,8 +399,11 @@ pub fn response_from_stdout(stdout: &[u8]) -> Option<StartResponse> {
     parse_start(stdout)
 }
 
-/// `t3 thread list --project <selector> --json` in the frozen data directory.
-pub fn list(selector: &str, data_dir: &str) -> Result<Vec<ListedThread>, CliError> {
+pub(crate) fn list_output(
+    selector: &str,
+    data_dir: &str,
+    timeout: Duration,
+) -> Result<Output, CliError> {
     let arguments = vec![
         "thread".to_string(),
         "list".to_string(),
@@ -407,7 +413,12 @@ pub fn list(selector: &str, data_dir: &str) -> Result<Vec<ListedThread>, CliErro
         "--base-dir".to_string(),
         data_dir.to_string(),
     ];
-    let output = run_with(None, &arguments, None, data_dir, QUERY_TIMEOUT)?;
+    run_with(None, &arguments, None, data_dir, timeout)
+}
+
+/// `t3 thread list --project <selector> --json` in the frozen data directory.
+pub fn list(selector: &str, data_dir: &str) -> Result<Vec<ListedThread>, CliError> {
+    let output = list_output(selector, data_dir, QUERY_TIMEOUT)?;
     if !output.status_success {
         return Err(CliError::BadOutput("the thread list could not be read"));
     }
