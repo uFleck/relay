@@ -270,12 +270,7 @@ export function HoverApp() {
         data-compose="on"
         data-dock-state={dockLayout}
       >
-        <Panel dock={dock} draftMode={draft.mode} paused={flags.paused} failed={failed} />
-        {focusHint && (
-          <div className="focus-hint" role="status">
-            Click to focus
-          </div>
-        )}
+        <Panel dock={dock} draftMode={draft.mode} paused={flags.paused} failed={failed} focusHint={focusHint} />
       </div>
     </div>
   );
@@ -286,9 +281,10 @@ interface PanelProps {
   draftMode: DraftSummary["mode"];
   paused: boolean;
   failed: boolean;
+  focusHint: boolean;
 }
 
-function Panel({ dock, draftMode, paused, failed }: PanelProps) {
+function Panel({ dock, draftMode, paused, failed, focusHint }: PanelProps) {
   const { summon } = useKeybinds();
   return (
     <DockContext.Provider value={dock}>
@@ -311,6 +307,7 @@ function Panel({ dock, draftMode, paused, failed }: PanelProps) {
                   <kbd title="Summon">{summon}</kbd>
                 </span>
                 {paused && <span className="warn-fg">capture paused</span>}
+                {focusHint && <span className="focus-hint" role="status">Click to focus</span>}
                 <button type="button" className="linkish open" onClick={() => void showMainWindow()}>
                   Open Relay
                   <Icon name="ext" small />
