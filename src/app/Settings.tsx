@@ -39,12 +39,10 @@ import {
   type T3TargetKind,
 } from "../settings";
 import type { RepoCandidate } from "../types";
-import type { UpdateState } from "../updater";
 import { Select, Switch } from "../ui/controls";
-import { UpdateActions } from "./UpdateActions";
 
 /* The dedicated v2 Settings view. Each provider owns its state and its errors: a
-   failing probe or write leaves the other sections and the updater usable. Values entered
+   failing probe or write leaves the other sections usable. Values entered
    by the user go only to a write command through a password field and are cleared on
    submit; the backend returns masks, never the value itself. */
 
@@ -78,10 +76,9 @@ function parseScope(raw: string | null, projects: V2Project[]): ImportScope {
 interface Props {
   provider: ProviderKey | null;
   version: string;
-  update: UpdateState;
 }
 
-export function SettingsView({ provider, version, update }: Props) {
+export function SettingsView({ provider, version }: Props) {
   const [statuses, setStatuses] = useState<ProviderStatusMap>({});
   const [projects, setProjects] = useState<V2Project[]>([]);
   const [settings, setSettings] = useState<V2Settings | null>(null);
@@ -196,23 +193,6 @@ export function SettingsView({ provider, version, update }: Props) {
       <PageBar title="Settings" meta={`Relay ${version}`} />
       <div className="scroll settings-scroll">
         <div className="set-col">
-          <section className="set-sec" aria-labelledby="settings-updates">
-            <h2 className="set-h" id="settings-updates">Updates</h2>
-            <div className="set-row">
-              <div className="set-label">
-                <b>Relay {version}</b>
-                <span className="meta">
-                  {update.kind === "error"
-                    ? `Update failed: ${update.message}`
-                    : update.kind === "idle"
-                      ? "Up to date"
-                      : "An update is in progress"}
-                </span>
-              </div>
-              <UpdateActions update={update} />
-            </div>
-          </section>
-
           <section className="set-sec" aria-labelledby="settings-keybinds">
             <h2 className="set-h" id="settings-keybinds">Keybinds</h2>
             <div className="set-row">

@@ -1054,26 +1054,112 @@ h3.sub {
   white-space: pre-wrap;
 }
 
+/* Rail update notice: one quiet line; the changelog tooltip opens to the right. */
 .unote {
-  display: grid;
-  gap: 6px;
-  margin: 0 4px 8px;
-  padding: 8px 10px;
-  border: 1px solid var(--border-default);
-  border-radius: var(--r);
-  background: var(--bg-elevated);
-  font-size: 11px;
+  position: relative;
+  margin: 0 0 10px;
 }
-.unote .tx {
-  color: var(--text-secondary);
-  overflow-wrap: anywhere;
-}
-.unote .btn {
+.un-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   width: 100%;
-  justify-content: center;
-  min-height: 26px;
-  padding: 0 8px;
-  font-size: 11px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent-text);
+  font: 500 12px var(--font-mono);
+  text-align: left;
+  cursor: pointer;
+}
+.un-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+}
+.un-btn:disabled {
+  cursor: default;
+}
+.unote[data-kind="error"] .un-btn {
+  background: color-mix(in srgb, var(--err) 12%, transparent);
+  color: var(--err);
+}
+.un-tip {
+  position: absolute;
+  left: calc(100% + 12px);
+  bottom: 0;
+  z-index: 70;
+  width: 320px;
+  max-height: min(420px, 70vh);
+  overflow: auto;
+  padding: 12px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-lg);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-pop);
+  color: var(--text-primary);
+  font: 400 12.5px/1.5 var(--font-ui);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateX(-4px);
+  transition: opacity var(--fast) var(--ease), transform var(--fast) var(--ease), visibility 0s linear var(--fast);
+  scrollbar-width: thin;
+}
+.unote:hover .un-tip,
+.unote:focus-within .un-tip {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  transition-delay: 0s;
+}
+.un-rel + .un-rel {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-default);
+}
+.un-rel header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 4px;
+  font-family: var(--font-mono);
+}
+.un-rel h4 {
+  margin: 8px 0 2px;
+  font: 600 11px var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+.un-rel p {
+  margin: 2px 0;
+  color: var(--text-secondary);
+}
+.un-rel p.it {
+  position: relative;
+  padding-left: 14px;
+}
+.un-rel p.it::before {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 0.62em;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+}
+.rail-ver {
+  align-self: flex-start;
+  margin-top: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-tertiary);
+  font: 400 11px var(--font-mono);
+  cursor: pointer;
+}
+.rail-ver:hover {
+  color: var(--text-secondary);
 }
 
 /* Search results: a modal over the unfiltered views. */

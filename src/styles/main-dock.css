@@ -258,9 +258,6 @@
   letter-spacing: normal;
   color: var(--text-tertiary);
 }
-.rail .unote {
-  margin: 0 0 8px;
-}
 
 .main.notebook {
   position: static;

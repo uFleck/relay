@@ -8,7 +8,6 @@ import { MissingTask, Tasks } from "./app/Tasks";
 import { TaskSheet } from "./app/TaskSheet";
 import { SettingsView } from "./app/Settings";
 import { SearchModal } from "./app/SearchModal";
-import { UpdateActions } from "./app/UpdateActions";
 import { appVersion, onEvent } from "./ipc";
 import { parseRoute, readLocation, writeLocation, type Route, type View } from "./route";
 import { startUpdateChecks, useUpdater } from "./updater";
@@ -127,7 +126,7 @@ export default function App() {
         onView={setView}
         version={version}
         needsYou={needsYou}
-        notice={<RailUpdate update={update} />}
+        update={update}
         wordmarkMode={draft.mode}
       />
       <div className="column">
@@ -151,7 +150,7 @@ export default function App() {
               <Tasks workspace={workspace} filter={viewFilter} selectedTaskId={route.task} onSelect={openTask} />
             )}
             {route.view === "settings" && (
-              <SettingsView provider={route.provider} version={version} update={update} />
+              <SettingsView provider={route.provider} version={version} />
             )}
 
             {route.task && selectedTask && (
@@ -191,25 +190,6 @@ export default function App() {
           </button>
         </div>
       )}
-    </div>
-  );
-}
-
-/** Updater lives in the rail: one line of state and the action that fits it. */
-function RailUpdate({ update }: { update: ReturnType<typeof useUpdater> }) {
-  if (update.kind === "idle" || update.kind === "checking") return null;
-  const label =
-    update.kind === "available"
-      ? `${update.version} available`
-      : update.kind === "downloading"
-        ? `Downloading${update.progress === null ? "…" : ` ${update.progress}%`}`
-        : update.kind === "ready"
-          ? `${update.version} ready`
-          : "Update failed";
-  return (
-    <div className="unote" role="status">
-      <span className="tx">{label}</span>
-      <UpdateActions update={update} />
     </div>
   );
 }
