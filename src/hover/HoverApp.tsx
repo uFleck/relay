@@ -296,7 +296,7 @@ function Panel({ dock, draftMode, paused, failed }: PanelProps) {
         <div className="dock-scroll">
           <div className="dock-content" ref={dock.contentRef} data-layout={dock.layout} data-mode={draftMode ?? undefined}>
             <section className="hcomposer" aria-label="Capture">
-              <Composer compact autoFocus />
+              <Composer compact capture autoFocus />
             </section>
             <div className="hfoot">
               {failed && <div className="slot warn-fg">Could not read Relay's data · retrying</div>}
