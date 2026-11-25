@@ -86,16 +86,17 @@
   font-weight: 400;
   letter-spacing: normal;
 }
-.nb-note-head .btn {
-  position: absolute;
-  top: 0;
-  right: 0;
+.nb-note-actions {
+  display: flex;
+  gap: 4px;
   opacity: 0;
-  transition: opacity var(--fast) var(--ease);
 }
-.nb-note:hover .nb-note-head .btn,
-.nb-note:focus-within .nb-note-head .btn {
+.nb-note:hover .nb-note-actions,
+.nb-note:focus-within .nb-note-actions {
   opacity: 1;
+}
+@media (hover: none) {
+  .nb-note-actions { opacity: 1; }
 }
 .nb-lines {
   gap: 0;
@@ -462,3 +463,29 @@
 .nb-dock .ref-lens-link {
   display: none;
 }
+
+.delete-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  background: rgb(0 0 0 / .48);
+}
+
+.delete-confirmation {
+  position: fixed;
+  inset: 50% auto auto 50%;
+  z-index: 91;
+  width: min(390px, calc(100% - 32px));
+  transform: translate(-50%, -50%);
+  padding: 20px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--r);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+
+.delete-confirmation h2 { margin: 0 0 8px; }
+.delete-confirmation p { margin: 0 0 16px; }
+.delete-confirmation [role="alert"],
+.delete-action { color: var(--err); }
+.delete-actions { display: flex; justify-content: flex-end; gap: 8px; }

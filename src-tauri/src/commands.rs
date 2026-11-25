@@ -94,6 +94,28 @@ pub fn v2_composer_save(
     Ok(saved)
 }
 
+#[tauri::command(async)]
+pub fn v2_note_delete(
+    note_id: String,
+    app: AppHandle,
+    store: State<'_, Arc<V2Store>>,
+) -> Result<(), CommandError> {
+    store.delete_note(&note_id)?;
+    let _ = app.emit(V2_CHANGE_EVENT, note_id);
+    Ok(())
+}
+
+#[tauri::command(async)]
+pub fn v2_task_delete(
+    task_id: String,
+    app: AppHandle,
+    store: State<'_, Arc<V2Store>>,
+) -> Result<(), CommandError> {
+    store.delete_task(&task_id)?;
+    let _ = app.emit(V2_CHANGE_EVENT, task_id);
+    Ok(())
+}
+
 /// The local `@` picker query. Core owns the ranking and grouping; this command is a thin
 /// read over the v2 store so a missing IPC binding cannot be mistaken for an empty result.
 #[tauri::command(async)]

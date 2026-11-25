@@ -251,6 +251,8 @@ pub fn run() {
             commands::v2_workspace_snapshot,
             commands::v2_workspace_search,
             commands::v2_composer_save,
+            commands::v2_note_delete,
+            commands::v2_task_delete,
             commands::v2_reference_picker,
             commands::v2_reference_parse,
             live::v2_reference_search,

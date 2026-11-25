@@ -599,15 +599,78 @@ impl V2Store {
         Ok(saved)
     }
 
-    /// Deletes a Note and its lines/Tasks. The Import ledger has no foreign key to a
-    /// Note, so its source keys survive the deletion.
+    /// Deletes a Note once its Tasks have been handled. The Import ledger is independent.
     pub fn delete_note(&self, id: &str) -> Result<(), V2Error> {
-        let changed = self
-            .conn()
-            .execute("DELETE FROM notes WHERE id = ?1", params![id])?;
-        if changed == 0 {
-            return Err(V2Error::NotFound(format!("note {id}")));
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let note = note_by_id(&tx, id)?;
+        if !note.tasks.is_empty() {
+            return Err(V2Error::InvalidInput(
+                "Delete this note's tasks first.".into(),
+            ));
         }
+        tx.execute("DELETE FROM notes WHERE id = ?1", params![id])?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Removes local tracking, keeping the active source line as ordinary Note text.
+    /// T3 threads and provider references belong to their existing external targets.
+    pub fn delete_task(&self, id: &str) -> Result<(), V2Error> {
+        use super::composer::directive;
+
+        let mut conn = self.conn();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let task = task_by_id(&tx, id)?;
+        let sending: bool = tx.query_row(
+            "SELECT EXISTS (SELECT 1 FROM dispatch_attempts WHERE task_id = ?1 AND state = 'launching')
+                OR EXISTS (SELECT 1 FROM t3_operations WHERE task_id = ?1 AND state = 'reserved')",
+            params![id],
+            |row| row.get(0),
+        )?;
+        if sending {
+            return Err(V2Error::InvalidInput(
+                "Relay is sending to T3. Try again when it finishes.".into(),
+            ));
+        }
+        let at = now();
+        let line: String = tx.query_row(
+            "SELECT text FROM note_lines WHERE id = ?1",
+            params![task.source_line_id],
+            |row| row.get(0),
+        )?;
+        if let Some(mode) = directive(&line) {
+            let sigil_len = if mode == AgentMode::Grill { 2 } else { 1 };
+            let content = line[sigil_len..].trim_start();
+            // Keep any further leading punctuation as text even after another Composer save.
+            let text = if directive(content).is_some() {
+                format!(" {content}")
+            } else {
+                content.to_owned()
+            };
+            tx.execute(
+                "UPDATE note_lines SET text = ?1, updated_at = ?2 WHERE id = ?3",
+                params![text, at, task.source_line_id],
+            )?;
+        }
+        tx.execute("DELETE FROM tasks WHERE id = ?1", params![id])?;
+
+        let note = note_by_id(&tx, &task.note_id)?;
+        let body = note
+            .lines
+            .iter()
+            .filter(|line| {
+                directive(&line.text).is_none()
+                    || !note.tasks.iter().any(|task| task.source_line_id == line.id)
+            })
+            .map(|line| line.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        tx.execute(
+            "UPDATE notes SET rev = rev + 1, body = ?1, updated_at = ?2 WHERE id = ?3",
+            params![body, at, note.id],
+        )?;
+        tx.commit()?;
         Ok(())
     }
 

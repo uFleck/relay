@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Composer } from "../components/Composer";
+import { DeleteConfirmation } from "../components/DeleteConfirmation";
+import { v2NoteDelete } from "../ipc";
 import type { DraftSummary } from "../directives";
 import type { V2Note, V2Project, V2Reference, V2Task, V2WorkspaceSnapshot } from "../ipc";
 import { useEntering } from "../ui/motion";
@@ -149,6 +151,7 @@ export function Notebook({ workspace, filter, focusNoteId, selectedTaskId, onOpe
                 onCloseEdit={closeEditor}
                 onOpenTask={onOpenTask}
                 onNotice={onNotice}
+                onDeleted={onSaved}
                 onSaved={() => {
                   closeEditor();
                   onSaved();
@@ -177,6 +180,7 @@ interface CardProps {
   onOpenTask: (id: string) => void;
   onNotice: (message: string) => void;
   onSaved: () => void;
+  onDeleted: () => void;
 }
 
 function NoteCard({
@@ -191,6 +195,7 @@ function NoteCard({
   onOpenTask,
   onNotice,
   onSaved,
+  onDeleted,
 }: CardProps) {
   const active = new Set(note.lines.map((line) => line.id));
   // A removed source line has no active row; its Task still belongs to this Note and is
@@ -213,6 +218,7 @@ function NoteCard({
             : ""}
         </span>
         <span className="push" />
+        <div className="nb-note-actions">
         {editing ? (
           <button type="button" className="btn ghost" onClick={onCloseEdit}>
             Close editor
@@ -222,6 +228,18 @@ function NoteCard({
             Edit
           </button>
         )}
+          {!editing && (
+            <DeleteConfirmation
+              label="Delete note"
+              description={note.tasks.length > 0 ? "Delete this note’s tasks first." : "This permanently removes the note from Relay."}
+              blocked={note.tasks.length > 0}
+              onDelete={async () => {
+                await v2NoteDelete(note.id);
+                onDeleted();
+              }}
+            />
+          )}
+        </div>
       </div>
 
       {editing ? (

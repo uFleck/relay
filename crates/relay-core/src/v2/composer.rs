@@ -68,7 +68,7 @@ pub fn parse_line_with_projects(text: &str, projects: &[V2Project]) -> ParsedLin
     }
 }
 
-fn directive(text: &str) -> Option<AgentMode> {
+pub(super) fn directive(text: &str) -> Option<AgentMode> {
     if text.starts_with("??") {
         Some(AgentMode::Grill)
     } else if text.starts_with('?') {

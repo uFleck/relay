@@ -247,6 +247,44 @@ fn round_trip_persists_lines_tasks_references_settings_project_and_ledger() {
     assert_eq!(reopened.search_notes("plain thought", 10).unwrap().len(), 1);
     assert_eq!(reopened.search_tasks("ship", 10).unwrap().len(), 1);
 
+    // A Note with Tasks requires an explicit Task deletion first.
+    assert!(matches!(
+        reopened.delete_note(&saved.id),
+        Err(V2Error::InvalidInput(_))
+    ));
+    let task = &saved.tasks[0];
+    reopened.delete_task(&task.id).unwrap();
+    let updated = reopened.notebook_snapshot().unwrap().notes.remove(0);
+    assert_eq!(updated.revision, saved.revision + 1);
+    assert_eq!(updated.tasks, vec![saved.tasks[1].clone()]);
+    let line = updated
+        .lines
+        .iter()
+        .find(|line| line.id == task.source_line_id)
+        .unwrap();
+    assert_eq!(line.text, "ship the fix");
+    assert_eq!(updated.body, "a plain thought\nship the fix");
+    assert_eq!(reopened.search_notes("ship", 10).unwrap().len(), 1);
+    assert!(reopened.search_tasks("ship", 10).unwrap().is_empty());
+    let resaved = composer::save_submission(
+        &reopened,
+        ComposerSaveRequest::Edit {
+            note_id: updated.id,
+            expected_revision: updated.revision,
+            lines: updated
+                .lines
+                .into_iter()
+                .map(|line| composer::ComposerLineInput {
+                    line_id: Some(line.id),
+                    text: line.text,
+                })
+                .collect(),
+        },
+    )
+    .unwrap();
+    assert_eq!(resaved.tasks, vec![saved.tasks[1].clone()]);
+    reopened.delete_task(&saved.tasks[1].id).unwrap();
+
     // Deleting the Note must not release the Import ledger key.
     reopened.delete_note(&saved.id).unwrap();
     assert!(reopened.notebook_snapshot().unwrap().notes.is_empty());
