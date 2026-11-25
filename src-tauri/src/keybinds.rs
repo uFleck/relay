@@ -19,11 +19,18 @@ const FILE: &str = "keybinds.json";
 #[serde(rename_all = "camelCase")]
 pub struct Keybinds {
     pub summon: String,
+    /// Vim mode in the main window. On unless the user turned it off; older files lack it.
+    #[serde(default = "vim_default")]
+    pub vim: bool,
+}
+
+const fn vim_default() -> bool {
+    true
 }
 
 impl Default for Keybinds {
     fn default() -> Self {
-        Self { summon: DEFAULT_SUMMON.into() }
+        Self { summon: DEFAULT_SUMMON.into(), vim: vim_default() }
     }
 }
 
@@ -59,6 +66,7 @@ pub fn load(app: &AppHandle) -> Keybinds {
     match serde_json::from_str::<Keybinds>(&text) {
         Ok(binds) => Keybinds {
             summon: validate(&binds.summon).unwrap_or_else(|_| DEFAULT_SUMMON.into()),
+            vim: binds.vim,
         },
         Err(_) => Keybinds::default(),
     }
@@ -120,7 +128,7 @@ pub fn v2_keybinds_get(app: AppHandle) -> Keybinds {
 
 #[tauri::command]
 pub fn v2_keybinds_set(app: AppHandle, binds: Keybinds) -> Result<Keybinds, String> {
-    let binds = Keybinds { summon: validate(&binds.summon)? };
+    let binds = Keybinds { summon: validate(&binds.summon)?, vim: binds.vim };
     if !register(&app, &binds.summon) {
         return Err(format!("“{}” is taken by another app. The old shortcut stays active.", binds.summon));
     }
@@ -135,4 +143,23 @@ pub fn v2_keybinds_set(app: AppHandle, binds: Keybinds) -> Result<Keybinds, Stri
         .map_err(|error| format!("Could not write the keybind config: {error}"))?;
     let _ = app.emit(EVENT, &binds);
     Ok(binds)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Keybinds;
+
+    #[test]
+    fn a_config_written_before_vim_mode_turns_it_on() {
+        let binds: Keybinds = serde_json::from_str(r#"{"summon":"alt+space"}"#).unwrap();
+        assert_eq!(binds.summon, "alt+space");
+        assert!(binds.vim);
+    }
+
+    #[test]
+    fn vim_mode_off_survives_a_round_trip() {
+        let json = serde_json::to_string(&Keybinds { summon: "ctrl+alt+r".into(), vim: false }).unwrap();
+        let binds: Keybinds = serde_json::from_str(&json).unwrap();
+        assert!(!binds.vim);
+    }
 }

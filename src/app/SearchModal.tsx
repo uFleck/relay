@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../components/Icon";
 import type { V2WorkspaceSnapshot } from "../ipc";
+import { useKeybinds } from "../keybinds";
 import type { WorkspaceFilter } from "../workspace";
 
 /* Ctrl K opens Search at once with its own input. The views behind it stay unfiltered, so
@@ -32,6 +33,7 @@ function shortDate(iso: string): string {
 export function SearchModal({ query, onQuery, filter, workspace, onOpenNote, onOpenTask, onClose }: Props) {
   const [active, setActive] = useState(0);
   const input = useRef<HTMLInputElement>(null);
+  const { vim } = useKeybinds();
   const searching = query.trim().length > 0;
 
   const hits = useMemo<Hit[]>(() => {
@@ -61,16 +63,20 @@ export function SearchModal({ query, onQuery, filter, workspace, onOpenNote, onO
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+      const key = event.key.toLowerCase();
+      // With Vim mode on, ctrl+j and ctrl+k move through results like the arrows.
+      const vimMove = vim && event.ctrlKey && (key === "j" || key === "k");
+      if (!vimMove && (event.ctrlKey || event.metaKey) && key === "k") {
         event.preventDefault();
         event.stopPropagation();
         input.current?.focus();
         input.current?.select();
-      } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      } else if (vimMove || event.key === "ArrowDown" || event.key === "ArrowUp") {
         event.preventDefault();
+        event.stopPropagation();
         setActive((current) => {
           if (!hits.length) return 0;
-          const step = event.key === "ArrowDown" ? 1 : -1;
+          const step = event.key === "ArrowDown" || (vimMove && key === "j") ? 1 : -1;
           return (current + step + hits.length) % hits.length;
         });
       } else if (event.key === "Enter" && searching && hits[active]) {
@@ -85,7 +91,7 @@ export function SearchModal({ query, onQuery, filter, workspace, onOpenNote, onO
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [hits, active, onClose, searching]);
+  }, [hits, active, onClose, searching, vim]);
 
   function open(hit: Hit) {
     if (hit.kind === "note") onOpenNote(hit.id);
@@ -136,7 +142,7 @@ export function SearchModal({ query, onQuery, filter, workspace, onOpenNote, onO
           ))}
         </div>
         <footer className="sm-foot meta">
-          <span><kbd>↑</kbd><kbd>↓</kbd> move</span>
+          <span><kbd>↑</kbd><kbd>↓</kbd>{vim && <> or <kbd>ctrl j</kbd><kbd>ctrl k</kbd></>} move</span>
           <span><kbd>↵</kbd> open</span>
           <span><kbd>Esc</kbd> close</span>
         </footer>

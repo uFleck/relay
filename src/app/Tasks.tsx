@@ -62,6 +62,7 @@ export function Tasks({ workspace, filter, selectedTaskId, onSelect }: Props) {
         }}
         className={`ts-row${task.id === selectedTaskId ? " on" : ""}`}
         data-task-row={task.id}
+        data-vim-item=""
         onClick={() => onSelect(task.id)}
       >
         <span className={`ts-sigil mode-${task.agentMode}`}>{SIGIL[task.agentMode]}</span>
