@@ -1655,43 +1655,131 @@ h3.sub {
   box-shadow: none;
 }
 
-/* ── v2 Settings ── */
+/* ── v2 Settings ──
+   One column at the Notebook's width. Each section is a mono heading over hairline rows:
+   what the setting is on the left, its control on the right. */
 
 .settings-scroll {
-  padding: 0 0 32px calc(var(--page-x) - 20px);
+  padding: 0 0 40px var(--page-x);
 }
-.psec-intro {
-  margin: 0 20px 6px;
+.set-col {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  max-width: 760px;
+}
+.set-h {
+  margin: 14px 0 8px;
+  font: 700 13px var(--font-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+}
+.set-intro {
+  margin: -2px 0 10px;
   line-height: 1.5;
 }
-.psec-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 10px;
-  padding: 0 20px 8px;
-}
-.psec {
-  padding: 12px 14px 14px;
-  border: 1px solid var(--border-default);
-  border-radius: var(--r-lg);
-  background: var(--bg-surface);
-  outline: none;
-}
-.psec:focus-visible {
-  border-color: var(--accent);
-  box-shadow: var(--ring);
-}
-.psec-head {
+.set-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 24px;
+  padding: 12px 0;
+  border-top: 1px solid var(--border-default);
+  border-bottom: 1px solid var(--border-default);
 }
-.psec-head h3 {
-  margin: 0;
-  font: 700 14px var(--font-ui);
+.set-label {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.set-label b {
+  font: 600 14px var(--font-ui);
+  color: var(--text-primary);
+}
+.set-label .meta {
+  line-height: 1.5;
+}
+.set-ctl {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.set-input {
+  width: 180px;
+  height: var(--ctl);
+  padding: 0 10px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--r);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+}
+.set-input.mono {
+  font: 400 12.5px var(--font-mono);
+}
+.set-input:focus-visible {
+  border-color: var(--accent);
+  outline: none;
+  box-shadow: var(--ring);
+}
+.set-list {
+  border-top: 1px solid var(--border-default);
+}
+.prow {
+  border-bottom: 1px solid var(--border-default);
+  outline: none;
+}
+.prow:focus-visible .prow-head {
+  background: var(--hover-tint);
+}
+.prow-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 48px;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+.prow-head:hover {
+  background: var(--hover-tint);
+}
+.prow-head b {
+  width: 92px;
+  flex: none;
+  font: 600 14px var(--font-ui);
+}
+.prow-sum {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.prow-chev {
+  width: 12px;
+  color: var(--text-tertiary);
+  font-size: 16px;
+  transition: transform var(--fast) var(--ease);
+}
+.prow.open .prow-chev {
+  transform: rotate(90deg);
+}
+.prow-body {
+  padding: 0 4px 16px 108px;
+}
+.prow-body .pform {
+  max-width: 440px;
+}
+.settings .psec-reason {
+  margin: 0 0 4px;
 }
 .pst {
-  margin-left: auto;
   padding: 2px 8px;
   border: 1px solid var(--border-strong);
   border-radius: 999px;
@@ -1731,7 +1819,7 @@ h3.sub {
   padding: 0 10px;
   border: 1px solid var(--border-default);
   border-radius: var(--r);
-  background: var(--bg-elevated);
+  background: var(--bg-surface);
   color: var(--text-primary);
   font: 400 13px var(--font-ui);
 }
@@ -1766,14 +1854,17 @@ h3.sub {
   font-family: var(--font-mono);
   font-size: 11px;
 }
-.import-form {
-  padding: 0 20px 8px;
+.settings .pform {
+  margin-top: 0;
+}
+.settings .import-form {
+  max-width: 440px;
 }
 .set-msg {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin: 10px 20px 0;
+  margin: 0;
   padding: 8px 12px;
   border: 1px solid var(--border-default);
   border-radius: var(--r);
