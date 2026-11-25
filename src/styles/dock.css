@@ -228,16 +228,11 @@
   visibility: hidden;
 }
 .focus-hint {
-  position: absolute;
-  right: 16px;
-  bottom: 8px;
-  z-index: 40;
   padding: 4px 10px;
   border-radius: 12px;
   background: var(--bg-elevated);
   color: var(--text-secondary);
   font: 500 11px var(--font-mono);
-  pointer-events: none;
 }
 .dock-viewport {
   position: absolute;

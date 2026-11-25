@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { vimStep, type VimCommand } from "../vim";
 
 /* Vim mode for the main window. Normal mode moves a selection through the current view's
@@ -58,17 +58,21 @@ export function useVim({ enabled, blocked, scope, onCommand }: Options): VimMode
     };
   }, []);
 
-  useEffect(() => {
+  const clearSelection = useCallback(() => {
     selected.current?.removeAttribute("data-vim-on");
     selected.current = null;
-  }, [scope, enabled]);
+  }, []);
+
+  useEffect(() => {
+    clearSelection();
+  }, [scope, enabled, clearSelection]);
 
   useEffect(() => {
     if (!enabled) return;
 
     const select = (el: HTMLElement | undefined) => {
       if (!el) return;
-      selected.current?.removeAttribute("data-vim-on");
+      clearSelection();
       el.setAttribute("data-vim-on", "");
       el.scrollIntoView({ block: "nearest" });
       selected.current = el;
@@ -136,13 +140,27 @@ export function useVim({ enabled, blocked, scope, onCommand }: Options): VimMode
       }
     };
 
+    const onPointer = () => {
+      if (selected.current) clearSelection();
+      if (pending.current) {
+        window.clearTimeout(timer.current);
+        pending.current = "";
+      }
+    };
+
     window.addEventListener("keydown", onKey);
+    window.addEventListener("pointermove", onPointer, true);
+    window.addEventListener("pointerdown", onPointer, true);
+    window.addEventListener("wheel", onPointer, { capture: true, passive: true });
     return () => {
       window.removeEventListener("keydown", onKey);
+      window.removeEventListener("pointermove", onPointer, true);
+      window.removeEventListener("pointerdown", onPointer, true);
+      window.removeEventListener("wheel", onPointer, true);
       window.clearTimeout(timer.current);
       pending.current = "";
     };
-  }, [enabled, blocked]);
+  }, [enabled, blocked, clearSelection]);
 
   return mode;
 }
