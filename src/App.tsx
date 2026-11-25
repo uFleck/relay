@@ -72,7 +72,7 @@ export default function App() {
         searchRef.current?.select();
         return;
       }
-      if (e.key === "Escape") {
+      if (e.key === "Escape" && !e.defaultPrevented) {
         if (route.task && !typing(e.target)) {
           e.preventDefault();
           closeSheet();
@@ -128,6 +128,7 @@ export default function App() {
             workspace={workspace}
             filter={viewFilter}
             focusNoteId={route.note}
+            onCloseNote={() => setView("notebook")}
             selectedTaskId={route.task}
             onOpenTask={openTask}
             onNotice={setNotice}

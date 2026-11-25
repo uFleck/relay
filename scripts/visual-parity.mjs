@@ -119,6 +119,7 @@ async function captureSurface(page, surface, directory) {
       continue;
     }
     if (state.name === "composer-empty") {
+      if (surface === "app") await page.getByRole("button", { name: "New note" }).click();
       await setDraft(page, surface, "");
       await captureElement(page, state[surface], file);
       continue;
