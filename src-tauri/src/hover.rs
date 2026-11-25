@@ -24,8 +24,9 @@ Rust owns the bottom-centre anchor, the monitor work area and the DPI conversion
 sends a measured CSS height. Keeping the decisions here makes them testable without Win32 and
 keeps reentrant Win32 calls out of the state lock. */
 
-/// Preferred Dock width and bottom margin in CSS pixels (prototype, SPEC-v2 "Dock + Lens").
-pub const DOCK_WIDTH_CSS: f64 = 760.0;
+/// Preferred Dock width and bottom margin in CSS pixels. The Dock is a capture bar, so it stays
+/// narrower than the Notebook column.
+pub const DOCK_WIDTH_CSS: f64 = 640.0;
 pub const DOCK_MARGIN_CSS: f64 = 16.0;
 
 /// A rectangle in physical pixels. Coordinates are signed so monitors left of or above the primary
@@ -136,7 +137,6 @@ pub fn suppress_for_notification_state(state: i32) -> bool {
 
 struct Flags {
     pinned: bool,
-    dnd: bool,
     paused: bool,
     /// Mirrored from the Dock session so both windows can read the same state.
     ready: bool,
@@ -147,7 +147,6 @@ impl Flags {
     fn snapshot(&self) -> Snapshot {
         Snapshot {
             pinned: self.pinned,
-            dnd: self.dnd,
             paused: self.paused,
             ready: self.ready,
             visible: self.visible,
@@ -158,7 +157,6 @@ impl Flags {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub struct Snapshot {
     pub pinned: bool,
-    pub dnd: bool,
     pub paused: bool,
     pub ready: bool,
     pub visible: bool,
@@ -191,7 +189,6 @@ impl Default for HoverState {
         Self {
             flags: Mutex::new(Flags {
                 pinned: false,
-                dnd: false,
                 paused: false,
                 ready: false,
                 visible: false,
@@ -222,10 +219,6 @@ impl HoverState {
 
     pub fn set_pinned(&self, app: &AppHandle, pinned: bool) -> Snapshot {
         self.update(app, |f| f.pinned = pinned)
-    }
-
-    pub fn set_dnd(&self, app: &AppHandle, dnd: bool) -> Snapshot {
-        self.update(app, |f| f.dnd = dnd)
     }
 
     pub fn set_paused(&self, app: &AppHandle, paused: bool) -> Snapshot {
@@ -1099,7 +1092,6 @@ mod tests {
     fn flags() -> Flags {
         Flags {
             pinned: false,
-            dnd: false,
             paused: false,
             ready: true,
             visible: false,
@@ -1110,7 +1102,6 @@ mod tests {
     fn flags_keep_the_provider_toggles_and_mirror_session_status() {
         let snapshot = Flags {
             pinned: true,
-            dnd: true,
             paused: true,
             ..flags()
         }
@@ -1119,7 +1110,6 @@ mod tests {
             snapshot,
             Snapshot {
                 pinned: true,
-                dnd: true,
                 paused: true,
                 ready: true,
                 visible: false
@@ -1138,7 +1128,7 @@ mod tests {
                 height: 1032,
             },
             1.0,
-            DOCK_WIDTH_CSS,
+            760.0,
             420.0,
         );
         assert_eq!(
@@ -1159,7 +1149,7 @@ mod tests {
                 height: 1290,
             },
             1.25,
-            DOCK_WIDTH_CSS,
+            760.0,
             420.0,
         );
         assert_eq!(
@@ -1180,7 +1170,7 @@ mod tests {
                 height: 1548,
             },
             1.5,
-            DOCK_WIDTH_CSS,
+            760.0,
             420.0,
         );
         assert_eq!(
@@ -1205,7 +1195,7 @@ mod tests {
                 height: 1548,
             },
             1.5,
-            DOCK_WIDTH_CSS,
+            760.0,
             420.0,
         );
         assert_eq!(
@@ -1229,7 +1219,7 @@ mod tests {
                 height: 300,
             },
             1.0,
-            DOCK_WIDTH_CSS,
+            760.0,
             2000.0,
         );
         assert_eq!(
@@ -1250,7 +1240,7 @@ mod tests {
                 height: 1032,
             },
             1.0,
-            DOCK_WIDTH_CSS,
+            760.0,
             420.0,
         );
         assert_eq!(
@@ -1365,7 +1355,7 @@ mod tests {
                 height: 1290,
             },
             1.25,
-            DOCK_WIDTH_CSS,
+            760.0,
             400.0,
         );
         let new = dock_rect(
@@ -1376,7 +1366,7 @@ mod tests {
                 height: 1548,
             },
             1.5,
-            DOCK_WIDTH_CSS,
+            760.0,
             400.0,
         );
         // The work-area bottom minus the physical margin is the same in both scales: 1270 and 1524.

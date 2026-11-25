@@ -1,11 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EMPTY_DRAFT, type DraftSummary } from "../directives";
 import { Composer } from "../components/Composer";
-import { BriefPanel } from "../components/BriefPanel";
-import { GrillPanel } from "../components/GrillPanel";
 import { Icon } from "../components/Icon";
 import {
-  appVersion,
   dockDismiss,
   dockReady,
   dockResize,
@@ -13,15 +10,9 @@ import {
   onDockDpi,
   onDockFocus,
   onEvent,
-  openMain,
-  requestUpdateCheck,
-  setDnd,
   showMainWindow,
   type HoverFlags,
-  type V2AgentMode,
-  type V2WorkspaceSnapshot,
 } from "../ipc";
-import { taskRoute } from "../route";
 import type { HoverEdge } from "../types";
 import {
   DockContext,
@@ -32,36 +23,28 @@ import {
 } from "./dock";
 import { prefersReducedMotion } from "../ui/motion";
 import { useKeybinds } from "../keybinds";
-import { followUpdates, requestInstall, useUpdater, type UpdateState } from "../updater";
-import { needsYouCount, useWorkspace, waitingTasks } from "../workspace";
+import { useWorkspace } from "../workspace";
 
-/* The Dock reads only the v2 workspace. The retired v1 snapshot, claim board and Slack
-   source row are gone; the native session and focus machinery below is unchanged. */
+/* The Dock only captures: a new note, or lines appended to an existing one. Tasks, updates
+   and the rest of Relay live in the main window. The native session and focus machinery
+   below sizes the window to the content, so the Dock never scrolls. */
+
 const REFRESH_MS = 20_000;
 
 export function HoverApp() {
   const { workspace: v2, error: workspaceError, refresh: refreshV2 } = useWorkspace();
   const failed = workspaceError !== null;
-  const [version, setVersion] = useState("");
-  const [flags, setFlags] = useState<HoverFlags>({ pinned: false, dnd: false, paused: false, ready: false, visible: false });
-  const [pulsing, setPulsing] = useState(false);
-  const [composing, setComposing] = useState(true);
-  const [showWaiting, setShowWaiting] = useState(false);
-  /** A Wait or Grill Task with its inline panel open in the Dock; empty when none is open. */
-  const [dockBrief, setDockBrief] = useState<string | null>(null);
+  const [flags, setFlags] = useState<HoverFlags>({ pinned: false, paused: false, ready: false, visible: false });
   const [dockLayout, setDockLayout] = useState<DockLayoutState>("compact");
   const [draft, setDraft] = useState<DraftSummary>(EMPTY_DRAFT);
   const [dockVisible, setDockVisible] = useState(!inTauri);
   const [focusHint, setFocusHint] = useState(false);
   const [growing, setGrowing] = useState(false);
-  const composerActive = useRef(false);
-  const update = useUpdater();
   const shell = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const escConsumed = useRef(false);
-  const waitingIds = useRef<Set<string> | null>(null);
   // Native session plumbing. Every queued measurement carries the session id it started with.
   const sessionRef = useRef<number | null>(null);
   const layoutRef = useRef(dockLayout);
@@ -69,29 +52,6 @@ export function HoverApp() {
   const pickerOpenRef = useRef(false);
   const sentHeight = useRef<number | null>(null);
   const readySent = useRef(false);
-  // The pointer poll and the timers read these without restarting.
-  const live = useRef({ dnd: flags.dnd, composer: false, waiting: false, brief: false });
-  live.current = {
-    dnd: flags.dnd,
-    composer: composerActive.current,
-    waiting: showWaiting,
-    brief: dockBrief !== null,
-  };
-
-  const pulse = useCallback(() => {
-    if (live.current.dnd) return;
-    // Remove then re-add the class so a change mid-pulse restarts the 3 beats.
-    setPulsing(false);
-    requestAnimationFrame(() => setPulsing(true));
-  }, []);
-
-  useEffect(() => {
-    if (!v2) return;
-    const ids = new Set(waitingTasks(v2.tasks).map((task) => task.id));
-    if (waitingIds.current && [...ids].some((id) => !waitingIds.current!.has(id))) pulse();
-    waitingIds.current = ids;
-  }, [v2, pulse]);
-
   /** Explicit dismissal keeps the draft: the Composer stays mounted and only the native window hides. */
   const dismissDock = useCallback(async (reason: "escape" | "saved") => {
     const id = sessionRef.current;
@@ -195,8 +155,6 @@ export function HoverApp() {
   );
 
   useEffect(() => {
-    followUpdates();
-    void appVersion().then(setVersion).catch(() => undefined);
     const timer = window.setInterval(() => void refreshV2(), REFRESH_MS);
     const offState = onEvent("relay://state", setFlags);
     return () => {
@@ -204,10 +162,6 @@ export function HoverApp() {
       offState();
     };
   }, [refreshV2]);
-
-  useEffect(() => {
-    if (flags.dnd) setPulsing(false);
-  }, [flags.dnd]);
 
   // Native activation is verified in Rust before this event arrives. A refused activation leaves
   // the Dock clickable with a hint; an ended session hides it without clearing the draft.
@@ -234,10 +188,10 @@ export function HoverApp() {
   // The textarea only exists while composing. Focus again if the Dock becomes visible after
   // that mount, so a summon that races the first v2 read still leaves a usable caret.
   useEffect(() => {
-    if (!dockVisible || !composing) return;
+    if (!dockVisible) return;
     const frame = requestAnimationFrame(() => inputRef.current?.focus());
     return () => cancelAnimationFrame(frame);
-  }, [dockVisible, composing]);
+  }, [dockVisible]);
 
   useEffect(() => {
     if (!inTauri) return;
@@ -282,24 +236,6 @@ export function HoverApp() {
     return () => window.removeEventListener("keydown", onKey, true);
   }, [dismissDock]);
 
-  /** Badge activation opens the waiting list from the unfiltered read. */
-  const openWaiting = useCallback(() => {
-    setShowWaiting(true);
-  }, []);
-
-  const openComposer = useCallback(() => {
-    setComposing(true);
-  }, []);
-
-  const closeComposer = useCallback(() => {
-    void dismissDock("escape");
-  }, [dismissDock]);
-
-  const toggleDnd = useCallback(async () => {
-    const next = await setDnd(!flags.dnd).catch(() => null);
-    if (next) setFlags(next);
-  }, [flags.dnd]);
-
   const shownEdge: HoverEdge = "right";
 
   if (!v2) {
@@ -319,10 +255,6 @@ export function HoverApp() {
     );
   }
 
-  const needsYou = needsYouCount(v2.tasks);
-  const badge = needsYou > 0 ? String(needsYou) : update.kind === "ready" ? "↑" : null;
-  const fit = update.kind !== "idle" && update.kind !== "checking";
-
   return (
     <div
       className={`hroot${inTauri ? "" : " dev"}`}
@@ -334,195 +266,54 @@ export function HoverApp() {
     >
       <div
         ref={shell}
-        className={`hov dock${fit ? " fit" : ""}`}
-        data-compose={composing ? "on" : undefined}
+        className="hov dock"
+        data-compose="on"
         data-dock-state={dockLayout}
       >
-        <Panel
-          dock={dock}
-          draftMode={draft.mode}
-          v2={v2}
-          version={version}
-          needsYou={needsYou}
-          badge={badge}
-          onOpenWaiting={openWaiting}
-          showWaiting={showWaiting}
-          onToggleWaiting={() => setShowWaiting((open) => !open)}
-          pulse={pulse}
-          pulsing={pulsing}
-          onPulseEnd={() => setPulsing(false)}
-          dockBrief={dockBrief}
-          onDockBrief={setDockBrief}
-          onDockChanged={() => void refreshV2()}
-          flags={flags}
-          update={update}
-          failed={failed}
-          onDnd={() => void toggleDnd()}
-          composing={composing}
-          onCompose={openComposer}
-          onCloseComposer={closeComposer}
-          onComposerActive={(active) => {
-            composerActive.current = active;
-          }}
-        />
+        <Panel dock={dock} draftMode={draft.mode} paused={flags.paused} failed={failed} />
         {focusHint && (
           <div className="focus-hint" role="status">
             Click to focus
           </div>
         )}
       </div>
-      {!inTauri && (
-        <div className="devbar">
-          <button type="button" className="btn" onClick={pulse}>
-            Simulate change
-          </button>
-        </div>
-      )}
     </div>
   );
 }
 
 interface PanelProps {
   dock: DockBridge;
-  draftMode: V2AgentMode | null;
-  v2: V2WorkspaceSnapshot;
-  version: string;
-  needsYou: number;
-  badge: string | null;
-  onOpenWaiting: () => void;
-  showWaiting: boolean;
-  onToggleWaiting: () => void;
-  pulse: () => void;
-  pulsing: boolean;
-  onPulseEnd: () => void;
-  dockBrief: string | null;
-  onDockBrief: (id: string | null) => void;
-  onDockChanged: () => void;
-  flags: HoverFlags;
-  update: UpdateState;
+  draftMode: DraftSummary["mode"];
+  paused: boolean;
   failed: boolean;
-  onDnd: () => void;
-  composing: boolean;
-  onCompose: () => void;
-  onCloseComposer: () => void;
-  onComposerActive: (active: boolean) => void;
 }
 
-function Panel({
-  dock,
-  draftMode,
-  v2,
-  version,
-  needsYou,
-  badge,
-  onOpenWaiting,
-  showWaiting,
-  onToggleWaiting,
-  pulsing,
-  onPulseEnd,
-  dockBrief,
-  onDockBrief,
-  onDockChanged,
-  flags,
-  update,
-  failed,
-  onDnd,
-  composing,
-  onCompose,
-  onCloseComposer,
-  onComposerActive,
-}: PanelProps) {
+function Panel({ dock, draftMode, paused, failed }: PanelProps) {
   const { summon } = useKeybinds();
-  const waiting = waitingTasks(v2.tasks);
-  const needs = waiting.length > 0;
-  const openTask = (task: string) => void openMain(taskRoute(task));
-
-  const needsSection = showWaiting ? (
-    <WaitingList
-      key="waiting"
-      tasks={waiting}
-      projects={v2.projects}
-      dockBrief={dockBrief}
-      onDockBrief={onDockBrief}
-      onDockChanged={onDockChanged}
-      openTask={openTask}
-      onClose={onToggleWaiting}
-    />
-  ) : (
-    <button
-      type="button"
-      className={`grp need-toggle${needs ? " has" : ""} ${pulsing ? "pulse" : ""}`}
-      key="needs"
-      onClick={needs ? onOpenWaiting : undefined}
-      onAnimationEnd={onPulseEnd}
-      aria-expanded={showWaiting}
-      disabled={!needs}
-    >
-      {needs ? (
-        <>
-          <span className="wait-dot" />
-          <b>{waiting.length}</b> {waiting.length === 1 ? "task needs you" : "tasks need you"}
-          <Icon name="ext" small className="push" />
-        </>
-      ) : (
-        <>
-          <span className="ok">✓</span> Nothing needs you
-        </>
-      )}
-    </button>
-  );
-
   return (
     <DockContext.Provider value={dock}>
       <div className="dock-viewport" ref={dock.viewportRef}>
         <div className="dock-scroll">
-          <div className="dock-content" ref={dock.contentRef} data-layout={dock.layout}>
-            <div className="hh">
-              <span className="wordmark" data-mode={draftMode ?? undefined}>
-                relay<span className="dot" key={draftMode ?? "none"}>.</span>
-              </span>
-              {flags.paused && <span className="meta">capture paused</span>}
-              <span className="push" />
-              {badge && (
-                <button
-                  type="button"
-                  className={`b${needsYou ? "" : " upd"}`}
-                  aria-label={`${needsYou} tasks need you — show waiting tasks`}
-                  onClick={onOpenWaiting}
-                >
-                  {badge}
-                </button>
-              )}
-              <button type="button" className={`rb${composing ? " on" : ""}`} title="Capture a note" aria-pressed={composing} onClick={onCompose}>
-                <Icon name="pencil" />
-              </button>
-              <button type="button" className={`rb${flags.dnd ? " on" : ""}`} title="Do not disturb" aria-pressed={flags.dnd} onClick={onDnd}>
-                <Icon name="moon" />
-              </button>
-            </div>
-
-            <UpdateBanner update={update} version={version} />
-
-            <div className="hb">{needsSection}</div>
-
-            {composing && (
-              <section className="hcomposer" aria-label="Capture">
-                <Composer compact autoFocus onActiveChange={onComposerActive} />
-                <button type="button" className="btn ghost" onClick={onCloseComposer}>
-                  Close composer
-                </button>
-              </section>
-            )}
-
+          <div className="dock-content" ref={dock.contentRef} data-layout={dock.layout} data-mode={draftMode ?? undefined}>
+            <section className="hcomposer" aria-label="Capture">
+              <Composer compact autoFocus />
+            </section>
             <div className="hfoot">
-              {failed ? (
-                <div className="slot warn-fg">Could not read Relay's data · retrying</div>
-              ) : null}
+              {failed && <div className="slot warn-fg">Could not read Relay's data · retrying</div>}
               <div className="hf">
-                <kbd title="Summon">{summon}</kbd>
-                <button type="button" className="btn ghost open" onClick={() => void showMainWindow()}>
-                  <Icon name="ext" />
+                <span>
+                  <kbd>ctrl</kbd>+<kbd>↵</kbd> send
+                </span>
+                <span>
+                  <kbd>esc</kbd> dismiss
+                </span>
+                <span>
+                  <kbd title="Summon">{summon}</kbd>
+                </span>
+                {paused && <span className="warn-fg">capture paused</span>}
+                <button type="button" className="linkish open" onClick={() => void showMainWindow()}>
                   Open Relay
+                  <Icon name="ext" small />
                 </button>
               </div>
             </div>
@@ -530,139 +321,5 @@ function Panel({
         </div>
       </div>
     </DockContext.Provider>
-  );
-}
-
-/** The main window owns the updater; this banner mirrors it. Restart only installs what is already downloaded.
-    "Up to date" and "checking" show nothing. */
-function UpdateBanner({ update, version }: { update: UpdateState; version: string }) {
-  if (update.kind === "ready") {
-    return (
-      <div className="ban">
-        <span className="ic">
-          <Icon name="download" />
-        </span>
-        <span className="tx">
-          <b>Relay {update.version} is ready</b>
-          <small>signed · restarts Relay</small>
-        </span>
-        <button type="button" className="btn pri" onClick={requestInstall}>
-          Restart
-        </button>
-      </div>
-    );
-  }
-  if (update.kind === "available" || update.kind === "downloading") {
-    const pct = update.kind === "downloading" && update.progress !== null ? Math.round(update.progress * 100) : null;
-    return (
-      <div className="ban">
-        <span className="ic">
-          <Icon name="download" />
-        </span>
-        <span className="tx">
-          <b>
-            {update.kind === "available" ? `Relay ${update.version} available` : `Downloading ${update.version}`}
-            {pct !== null && ` · ${pct}%`}
-          </b>
-          {pct !== null && (
-            <span className="trk">
-              <i style={{ width: `${pct}%` }} />
-            </span>
-          )}
-        </span>
-        <button type="button" className="btn" onClick={() => void openMain("/settings")}>
-          Details
-        </button>
-      </div>
-    );
-  }
-  if (update.kind === "error") {
-    return (
-      <div className="ban warn">
-        <span className="ic">!</span>
-        <span className="tx">
-          <b>Update check failed</b>
-          <small>Relay {version}</small>
-        </span>
-        <button type="button" className="btn" onClick={() => void requestUpdateCheck()}>
-          Retry
-        </button>
-      </div>
-    );
-  }
-  return null;
-}
-
-/** The full waiting list from the unfiltered v2 read, newest change first, inside Dock bounds. */
-function WaitingList({
-  tasks,
-  projects,
-  dockBrief,
-  onDockBrief,
-  onDockChanged,
-  openTask,
-  onClose,
-}: {
-  tasks: V2WorkspaceSnapshot["tasks"];
-  projects: V2WorkspaceSnapshot["projects"];
-  dockBrief: string | null;
-  onDockBrief: (id: string | null) => void;
-  onDockChanged: () => void;
-  openTask: (id: string) => void;
-  onClose: () => void;
-}) {
-  const briefed = tasks.find((task) => task.id === dockBrief);
-  return (
-    <section className="grp waiting" aria-label="Tasks waiting on you">
-      <h3>
-        Waiting on you <span className="meta">{tasks.length}</span>
-        <button type="button" className="linkish push" onClick={onClose}>
-          Hide
-        </button>
-      </h3>
-      <div className="waiting-list">
-        {tasks.map((task) => (
-          <div className="wt-row" key={task.id}>
-            <button
-              type="button"
-              className="wt"
-              aria-expanded={
-                (task.agentMode === "wait" || task.agentMode === "grill") && dockBrief === task.id
-              }
-              onClick={() =>
-                task.agentMode === "wait" || task.agentMode === "grill"
-                  ? onDockBrief(dockBrief === task.id ? null : task.id)
-                  : openTask(task.id)
-              }
-            >
-              <span className="t">{task.originalLine}</span>
-              <span className="meta">{task.status.replace(/_/g, " ")}</span>
-            </button>
-            <button
-              type="button"
-              className="ib"
-              title="Open in Relay"
-              onClick={() => openTask(task.id)}
-            >
-              <Icon name="ext" small />
-            </button>
-          </div>
-        ))}
-      </div>
-      {briefed && (briefed.agentMode === "wait" || briefed.agentMode === "grill") && (
-        <div className="dock-brief" onClick={(event) => event.stopPropagation()}>
-          {briefed.agentMode === "grill" ? (
-            <GrillPanel compact taskId={briefed.id} projects={projects} onChanged={onDockChanged} />
-          ) : (
-            <BriefPanel
-              compact
-              taskId={briefed.id}
-              projects={projects}
-              onChanged={onDockChanged}
-            />
-          )}
-        </div>
-      )}
-    </section>
   );
 }

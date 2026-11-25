@@ -50,10 +50,7 @@ export const showMainWindow = () =>
 export const openMain = (route: string) =>
   call<void>("open_main", { route }, () => console.info(`[relay] open_main → ${route}`));
 
-/** Asks the main window, which owns the updater, to run a manual check. */
-export const requestUpdateCheck = () => call<void>("check_for_updates", undefined, () => undefined);
-
-/** App version from Cargo, shared by the rail, Settings and the Dock. */
+/** App version from Cargo, shared by the Rail and Settings. */
 export const appVersion = () => call<string>("app_version", undefined, () => "0.0.0");
 
 /* ── hover window ── */
@@ -61,19 +58,16 @@ export const appVersion = () => call<string>("app_version", undefined, () => "0.
 /** The flags Rust keeps for the hover; `relay://state` carries the same shape. */
 export interface HoverFlags {
   pinned: boolean;
-  dnd: boolean;
   paused: boolean;
   ready: boolean;
   visible: boolean;
 }
 
-let browserFlags: HoverFlags = { pinned: false, dnd: false, paused: false, ready: true, visible: true };
+let browserFlags: HoverFlags = { pinned: false, paused: false, ready: true, visible: true };
 const browserSet = (patch: Partial<HoverFlags>) => () => (browserFlags = { ...browserFlags, ...patch });
 
 export const hoverSetPinned = (pinned: boolean) =>
   call<HoverFlags>("hover_set_pinned", { pinned }, browserSet({ pinned }));
-
-export const setDnd = (dnd: boolean) => call<HoverFlags>("set_dnd", { dnd }, browserSet({ dnd }));
 
 export const setPaused = (paused: boolean) => call<HoverFlags>("set_paused", { paused }, browserSet({ paused }));
 

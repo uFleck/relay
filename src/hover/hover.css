@@ -58,22 +58,7 @@ svg.i {
   font: 600 15px/1 var(--font-ui);
   color: var(--text-primary);
 }
-.tab .b {
-  min-width: 22px;
-  height: 18px;
-  padding: 0 5px;
-  border: 0;
-  border-radius: 9px;
-  background: var(--warn);
-  color: #1a1200;
-  font: 700 10.5px/18px var(--font-ui);
-  text-align: center;
-  cursor: pointer;
-}
-.tab .b.upd {
-  background: var(--accent);
-  color: var(--on-accent);
-}
+
 /* The share of today's tasks in progress, filled from the bottom. */
 .tab .fill {
   position: relative;
@@ -147,10 +132,7 @@ svg.i {
     opacity: 0;
   }
 }
-.hov.fit {
-  height: auto;
-  max-height: var(--hov-h);
-}
+
 /* The Composer takes its own row inside the fixed panel; the needs list shrinks instead. */
 .hov[data-compose="on"] {
   grid-template-rows: auto auto auto minmax(0, 1fr) auto auto auto;
@@ -175,106 +157,8 @@ svg.i {
   border-radius: 0 var(--r-cap) var(--r-cap) 0;
 }
 
-.hh {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 2px 2px 2px 6px;
-  user-select: none;
-}
-.hh b {
-  font: 600 14px var(--font-ui);
-}
-.rb {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--text-secondary);
-}
-.rb:hover {
-  background: var(--hover-tint);
-}
-.rb.on {
-  background: var(--accent-soft);
-  color: var(--accent-text);
-}
-.rb.grip {
-  cursor: grab;
-}
-
 /* Update banner: everything but "up to date" sits at the top, where it is seen. */
-.ban {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 4px 0 2px;
-  padding: 8px 10px;
-  border-radius: 10px;
-  background: var(--accent-soft);
-}
-.ban.warn {
-  background: color-mix(in srgb, var(--warn) 14%, transparent);
-}
-.ban .ic {
-  display: grid;
-  place-items: center;
-  flex: none;
-  width: 26px;
-  height: 26px;
-  border-radius: 8px;
-  background: var(--accent);
-  color: var(--on-accent);
-}
-.ban.warn .ic {
-  background: var(--warn);
-  color: #1a1200;
-}
-.ban .tx {
-  flex: 1;
-  min-width: 0;
-  font-size: 12.5px;
-  line-height: 1.3;
-}
-.ban .tx small {
-  display: block;
-  color: var(--text-secondary);
-  font-size: 11.5px;
-}
-.ban .trk {
-  display: block;
-  height: 4px;
-  margin-top: 4px;
-  border-radius: 2px;
-  background: var(--bg-elevated);
-  overflow: hidden;
-}
-.ban .trk i {
-  display: block;
-  height: 100%;
-  background: var(--accent);
-}
 
-.hero {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 6px 8px 10px;
-}
-.hero .big {
-  font: 600 32px/1 var(--font-ui);
-  letter-spacing: -0.02em;
-  white-space: nowrap;
-}
-.hero .big small {
-  margin-left: 4px;
-  font: 400 13px var(--font-ui);
-  color: var(--text-secondary);
-  letter-spacing: 0;
-}
 .chips {
   display: flex;
   flex-wrap: wrap;
@@ -306,91 +190,7 @@ svg.i {
 }
 
 /* Needs-you surfaces: the collapsed summary row and the full waiting list. */
-.need-toggle {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  width: 100%;
-  padding: 6px 8px;
-  border: 1px solid var(--border-default);
-  border-radius: 10px;
-  background: var(--bg-page);
-  color: var(--text-secondary);
-  font: 12px var(--font-ui);
-  text-align: left;
-  cursor: pointer;
-}
-.need-toggle.has {
-  border-color: color-mix(in srgb, var(--warn) 45%, var(--border-default));
-  color: var(--warn);
-}
-.need-toggle:disabled {
-  cursor: default;
-}
-.wait-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--warn);
-}
-.waiting-list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  max-height: 158px;
-  overflow-y: auto;
-}
-.wt {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  min-height: 26px;
-  padding: 3px 6px;
-  border: 0;
-  border-radius: 6px;
-  background: none;
-  color: var(--text-primary);
-  font: 12px var(--font-ui);
-  text-align: left;
-  cursor: pointer;
-}
-.wt:hover {
-  background: var(--hover-tint);
-}
-.wt .t {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
-.hb {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-height: 0;
-  overflow: hidden;
-}
-.grp {
-  padding: 4px;
-  border: 1px solid var(--border-default);
-  border-radius: 10px;
-  background: var(--bg-page);
-}
-.grp h3 {
-  display: flex;
-  justify-content: space-between;
-  margin: 0;
-  padding: 4px 6px 2px;
-  font: 600 12px var(--font-ui);
-  color: var(--text-secondary);
-}
-.grp h3 .meta {
-  font-weight: 400;
-  color: var(--text-tertiary);
-}
 .calm {
   display: flex;
   align-items: center;
@@ -398,16 +198,6 @@ svg.i {
   padding: 2px 8px;
   color: var(--text-tertiary);
   font-size: 12px;
-}
-.calm .ok {
-  display: grid;
-  place-items: center;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: color-mix(in srgb, var(--ok) 20%, transparent);
-  color: var(--ok);
-  font-size: 10px;
 }
 
 /* Claim rows: the avatar ring is the lease left since the last progress. */
@@ -641,17 +431,7 @@ button.card:hover {
   color: var(--text-tertiary);
   font-size: 11.5px;
 }
-.syncs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 9px;
-  min-width: 0;
-}
-.syncs span {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
+
 .hf kbd {
   padding: 1px 5px;
   border-radius: 4px;
@@ -680,27 +460,6 @@ button.card:hover {
   top: 30px;
   box-shadow: var(--shadow-pop);
 }
-.devbar {
-  position: fixed;
-  left: 16px;
-  bottom: 16px;
-  display: flex;
-  gap: 6px;
-}
-.devbar .btn {
-  background: var(--bg-surface);
-}
 
 /* Inline Brief panel in the Dock waiting list (#34). */
-.wt-row {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-.wt-row .wt {
-  flex: 1;
-  min-width: 0;
-}
-.dock-brief {
-  margin-top: 6px;
-}
+
