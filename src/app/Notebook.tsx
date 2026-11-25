@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Composer } from "../components/Composer";
-import type { DraftSummary } from "../directives";
+import { lineDirective, type DraftSummary } from "../directives";
 import type { V2Note, V2Project, V2Reference, V2Task, V2WorkspaceSnapshot } from "../ipc";
 import { useEntering } from "../ui/motion";
 import {
@@ -197,6 +197,19 @@ function NoteCard({
   // drawn from the frozen original line rather than disappearing with the edit.
   const detached = note.tasks.filter((task) => !active.has(task.sourceLineId));
 
+  const renderTask = (task: V2Task) => (
+    <div className="nb-task-line" key={task.id}>
+      <TaskBranch
+        task={task}
+        project={projects.find((candidate) => candidate.id === task.projectId)}
+        selected={task.id === selectedTaskId}
+        fresh={freshTasks.has(task.id)}
+        onOpen={() => onOpenTask(task.id)}
+        detached={!active.has(task.sourceLineId)}
+      />
+    </div>
+  );
+
   return (
     <article
       className={`nb-note${fresh ? " fresh" : ""}`}
@@ -235,42 +248,19 @@ function NoteCard({
       ) : (
         <div className="nb-lines">
           {note.lines.map((line) => {
-            const lineTasks = note.tasks.filter((task) => task.sourceLineId === line.id);
+            const tasks = note.tasks.filter((task) => task.sourceLineId === line.id);
             return (
-              <div className="nb-line" key={line.id}>
-                <div className="nb-line-text"><InlineLine text={line.text} references={line.references} /></div>
-                {lineTasks.length > 0 && (
-                  <div className="nb-branches">
-                    {lineTasks.map((task) => (
-                      <TaskBranch
-                        key={task.id}
-                        task={task}
-                        project={projects.find((candidate) => candidate.id === task.projectId)}
-                        selected={task.id === selectedTaskId}
-                        fresh={freshTasks.has(task.id)}
-                        onOpen={() => onOpenTask(task.id)}
-                      />
-                    ))}
+              <Fragment key={line.id}>
+                {!tasks.some((task) => task.originalLine === line.text) && (
+                  <div className="nb-line">
+                    <div className="nb-line-text"><InlineLine text={line.text} references={line.references} /></div>
                   </div>
                 )}
-              </div>
+                {tasks.map(renderTask)}
+              </Fragment>
             );
           })}
-          {detached.length > 0 && (
-            <div className="nb-branches">
-              {detached.map((task) => (
-                <TaskBranch
-                  key={task.id}
-                  task={task}
-                  project={projects.find((candidate) => candidate.id === task.projectId)}
-                  selected={task.id === selectedTaskId}
-                  fresh={freshTasks.has(task.id)}
-                  onOpen={() => onOpenTask(task.id)}
-                  detached
-                />
-              ))}
-            </div>
-          )}
+          {detached.map(renderTask)}
         </div>
       )}
     </article>
@@ -314,26 +304,22 @@ function TaskBranch({
   onOpen: () => void;
   detached?: boolean;
 }) {
+  const { originalLine } = task;
+  const sourceMode = lineDirective(originalLine);
+  const content = sourceMode ? originalLine.slice(SIGIL[sourceMode].length).trimStart() : originalLine;
   return (
-    <div
-      role="button"
-      tabIndex={0}
+    <button
+      type="button"
       className={`nb-branch mode-${task.agentMode}${selected ? " on" : ""}${detached ? " detached" : ""}${fresh ? " fresh" : ""}`}
       data-task-id={task.id}
       data-tone={statusTone(task.status)}
       onClick={onOpen}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onOpen();
-        }
-      }}
       title={detached ? "Source line removed; showing the saved Task line" : "Open Task"}
     >
       <span className="nb-sigil">{SIGIL[task.agentMode]}</span>
-      {task.originalLine}
+      <span className="nb-branch-text"><InlineLine text={content} references={task.references} /></span>
       <span className="nb-status">{task.status.replace(/_/g, " ")}</span>
       {project && <span className="nb-project">+{project.name}</span>}
-    </div>
+    </button>
   );
 }
