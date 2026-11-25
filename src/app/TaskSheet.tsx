@@ -1,11 +1,12 @@
 import { useEffect, useRef } from "react";
+import { DeleteConfirmation } from "../components/DeleteConfirmation";
 import { Icon } from "../components/Icon";
 import { BriefPanel } from "../components/BriefPanel";
 import { GrillPanel } from "../components/GrillPanel";
 import { DispatchPanel } from "../components/DispatchPanel";
 import { T3ProgressPanel } from "../components/T3ProgressPanel";
 import { SIGIL } from "../workspace";
-import type { V2Note, V2Project, V2Task } from "../ipc";
+import { v2TaskDelete, type V2Note, type V2Project, type V2Task } from "../ipc";
 
 /* The v2 Task sheet. App resolves the Task by its routed id from the unfiltered workspace on
    every committed change, so an open sheet refreshes without the filter moving it. Act and Wait
@@ -17,9 +18,10 @@ interface Props {
   note: V2Note | undefined;
   projects: V2Project[];
   onClose: () => void;
+  onDeleted: () => void;
 }
 
-export function TaskSheet({ task, project, note, projects, onClose }: Props) {
+export function TaskSheet({ task, project, note, projects, onClose, onDeleted }: Props) {
   const sheetRef = useRef<HTMLElement>(null);
   const sourceLine = note?.lines.find((line) => line.id === task.sourceLineId)?.text;
 
@@ -137,6 +139,14 @@ export function TaskSheet({ task, project, note, projects, onClose }: Props) {
             Created {task.createdAt} · updated {task.updatedAt}
           </p>
         </section>
+        <DeleteConfirmation
+          label="Delete task"
+          description="This removes the task from Relay. Any linked T3 thread stays in T3."
+          onDelete={async () => {
+            await v2TaskDelete(task.id);
+            onDeleted();
+          }}
+        />
       </div>
     </aside>
   );

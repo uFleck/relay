@@ -72,7 +72,7 @@ export default function App() {
         searchRef.current?.select();
         return;
       }
-      if (e.key === "Escape" && !e.defaultPrevented) {
+      if (e.key === "Escape" && !e.defaultPrevented && !document.querySelector(".delete-confirmation")) {
         if (route.task && !typing(e.target)) {
           e.preventDefault();
           closeSheet();
@@ -151,6 +151,10 @@ export default function App() {
             note={workspace.notes.find((candidate) => candidate.id === selectedTask.noteId)}
             projects={workspace.projects}
             onClose={closeSheet}
+            onDeleted={() => {
+              closeSheet();
+              afterSave();
+            }}
           />
         )}
         {route.task && !selectedTask && <MissingTask id={route.task} onClose={closeSheet} />}

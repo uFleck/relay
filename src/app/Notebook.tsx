@@ -1,7 +1,8 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Composer } from "../components/Composer";
+import { DeleteConfirmation } from "../components/DeleteConfirmation";
 import { EMPTY_DRAFT, lineDirective, type DraftSummary } from "../directives";
-import { errorText, v2WorkspaceSnapshot, type V2Note, type V2Project, type V2Reference, type V2Task, type V2WorkspaceSnapshot } from "../ipc";
+import { errorText, v2NoteDelete, v2WorkspaceSnapshot, type V2Note, type V2Project, type V2Reference, type V2Task, type V2WorkspaceSnapshot } from "../ipc";
 import { useEntering } from "../ui/motion";
 import {
   groupByDay,
@@ -190,6 +191,7 @@ export function Notebook({ workspace, filter, focusNoteId, onCloseNote, selected
                 freshTasks={enteringTasks}
                 onEdit={() => openEditor(note)}
                 onOpenTask={onOpenTask}
+                onSaved={onSaved}
               />
             ))}
           </section>
@@ -235,6 +237,7 @@ interface CardProps {
   freshTasks: ReadonlySet<string>;
   onEdit: () => void;
   onOpenTask: (id: string) => void;
+  onSaved: () => void;
 }
 
 function NoteCard({
@@ -247,6 +250,7 @@ function NoteCard({
   freshTasks,
   onEdit,
   onOpenTask,
+  onSaved,
 }: CardProps) {
   const active = new Set(note.lines.map((line) => line.id));
   // A removed source line has no active row; its Task still belongs to this Note and is
@@ -286,6 +290,17 @@ function NoteCard({
           <button type="button" className="btn ghost nb-edit" onClick={onEdit} disabled={editorOpen}>
             {editing ? "Editing" : "Edit"}
           </button>
+          {!editing && (
+            <DeleteConfirmation
+              label="Delete note"
+              description={note.tasks.length > 0 ? "Delete this note’s tasks first." : "This permanently removes the note from Relay."}
+              blocked={note.tasks.length > 0}
+              onDelete={async () => {
+                await v2NoteDelete(note.id);
+                onSaved();
+              }}
+            />
+          )}
         </div>
       </div>
 

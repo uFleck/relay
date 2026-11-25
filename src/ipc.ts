@@ -663,6 +663,14 @@ export const onSlackDirectory = (handler: (progress: SlackDirectoryProgress) => 
 
 /* Writes never fall back to a mock: a missing command or a stale revision must surface as
    an error, not as a note that looks saved. In a plain browser there is no store at all. */
+export async function v2NoteDelete(noteId: string): Promise<void> {
+  return invoke("v2_note_delete", { noteId });
+}
+
+export async function v2TaskDelete(taskId: string): Promise<void> {
+  return invoke("v2_task_delete", { taskId });
+}
+
 export async function v2ComposerSave(request: V2ComposerSaveRequest): Promise<V2Note> {
   if (!inTauri) throw new Error("Saving a note requires the Relay desktop app.");
   return await invoke<V2Note>("v2_composer_save", { request });
