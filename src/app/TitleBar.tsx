@@ -1,8 +1,10 @@
-import { forwardRef, useState } from "react";
+import { useState } from "react";
 import { Icon } from "../components/Icon";
 import { inTauri } from "../ipc";
 
-/* 36px custom title bar. `data-tauri-drag-region` must sit on each element that drags, not only the parent. */
+/* The title bar spans the main column. Pages fill its title and actions slots through
+   PageBar; the window controls stay on the right. `data-tauri-drag-region` must sit on each
+   element that drags, not only the parent. */
 
 async function withWindow(action: "minimize" | "toggleMaximize" | "close") {
   if (!inTauri) return false;
@@ -18,38 +20,24 @@ async function withWindow(action: "minimize" | "toggleMaximize" | "close") {
 }
 
 interface Props {
-  query: string;
-  onQuery: (q: string) => void;
+  onTitleSlot?: (element: HTMLDivElement | null) => void;
+  onActionsSlot?: (element: HTMLDivElement | null) => void;
+  onSearch?: () => void;
 }
 
-export const TitleBar = forwardRef<HTMLInputElement, Props>(function TitleBar({ query, onQuery }, searchRef) {
+export function TitleBar({ onTitleSlot, onActionsSlot, onSearch }: Props) {
   const [maximized, setMaximized] = useState(false);
 
   return (
     <header className="title" data-tauri-drag-region>
-      <Icon name="relay" small className="accent-fg" />
-      <span className="name" data-tauri-drag-region>
-        Relay
-      </span>
-      <label className="search">
-        <Icon name="search" small />
-        <input
-          ref={searchRef}
-          value={query}
-          onChange={(e) => onQuery(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") {
-              e.stopPropagation();
-              onQuery("");
-              e.currentTarget.blur();
-            }
-          }}
-          placeholder="Search tasks, changes, threads"
-          spellCheck={false}
-          aria-label="Search"
-        />
-        <kbd>Ctrl K</kbd>
-      </label>
+      <div className="tb-page" ref={onTitleSlot} data-tauri-drag-region />
+      <div className="tb-actions" ref={onActionsSlot} />
+      {onSearch && (
+        <button type="button" className="ib tb-search" title="Search (Ctrl K)" aria-label="Search" onClick={onSearch}>
+          <Icon name="search" small />
+        </button>
+      )}
+      <span className="tb-div" aria-hidden="true" />
       <div className="wc">
         <button type="button" title="Minimize" onClick={() => void withWindow("minimize")}>
           <Icon name="min" small />
@@ -67,4 +55,4 @@ export const TitleBar = forwardRef<HTMLInputElement, Props>(function TitleBar({ 
       </div>
     </header>
   );
-});
+}

@@ -1,3 +1,4 @@
+import { PageBar } from "./PageBar";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Icon } from "../components/Icon";
 import {
@@ -174,12 +175,7 @@ export function SettingsView({ provider, version, update }: Props) {
 
   return (
     <section className="main settings" aria-label="Settings">
-      <header className="head">
-        <div>
-          <h1>Settings</h1>
-          <div className="date meta">Relay {version}</div>
-        </div>
-      </header>
+      <PageBar title="Settings" meta={`Relay ${version}`} />
       <div className="scroll settings-scroll">
         <h2 className="sub" id="settings-updates">
           Updates

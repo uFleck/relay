@@ -6,12 +6,6 @@
   min-height: 0;
 }
 
-.nb-head,
-.tasks .head,
-.settings .head {
-  border-bottom: 1px solid var(--border-default);
-}
-
 .nb-scroll {
   padding: 0 18px 24px;
 }
@@ -126,8 +120,9 @@
 
 /* ── Tasks ── */
 
+/* Tasks reads like the Notebook: flat rows on the page, mono section headings. */
 .ts-scroll {
-  padding: 10px 16px 24px;
+  padding: 0 0 24px calc(var(--page-x) - 10px);
 }
 
 .ts-group {
@@ -138,14 +133,18 @@
   display: flex;
   align-items: baseline;
   gap: 8px;
-  margin: 0 0 8px;
-  font: 600 13px var(--font-ui);
+  margin: 14px 0 6px 10px;
+  font: 700 13px var(--font-mono);
   color: var(--text-secondary);
-  letter-spacing: 0.01em;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
 }
 
 .ts-group-hint {
-  font-weight: 400;
+  font: 400 11px var(--font-mono);
+  color: var(--text-tertiary);
+  letter-spacing: normal;
+  text-transform: none;
 }
 
 .ts-group-summary {
@@ -174,19 +173,20 @@
   gap: 10px;
   width: 100%;
   min-height: 44px;
-  margin-bottom: 6px;
+  margin-bottom: 2px;
   padding: 6px 10px;
-  border: 1px solid var(--border-default);
+  border: 0;
   border-radius: var(--r);
-  background: var(--bg-surface);
+  background: transparent;
   color: var(--text-primary);
   text-align: left;
   cursor: pointer;
 }
 
-.ts-row:hover,
+.ts-row:hover {
+  background: var(--hover-tint);
+}
 .ts-row.on {
-  border-color: var(--accent);
   background: var(--sel-bg);
 }
 

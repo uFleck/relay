@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { EMPTY_DRAFT, type DraftSummary } from "./directives";
 import { TitleBar } from "./app/TitleBar";
+import { PageBarContext } from "./app/PageBar";
 import { Rail } from "./app/Rail";
 import { Notebook } from "./app/Notebook";
 import { MissingTask, Tasks } from "./app/Tasks";
@@ -24,10 +25,18 @@ export default function App() {
   const [notice, setNotice] = useState<string | null>(null);
   const [draft, setDraft] = useState<DraftSummary>(EMPTY_DRAFT);
   const update = useUpdater();
-  const searchRef = useRef<HTMLInputElement>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [titleSlot, setTitleSlot] = useState<HTMLDivElement | null>(null);
+  const [actionsSlot, setActionsSlot] = useState<HTMLDivElement | null>(null);
+  const slots = useMemo(() => ({ title: titleSlot, actions: actionsSlot }), [titleSlot, actionsSlot]);
   const { workspace, version: workspaceVersion, error: workspaceError, refresh } = useWorkspace();
   const filter = useWorkspaceFilter(query, workspaceVersion);
   /** Search owns the query. The views keep showing the full workspace behind the modal. */
+  const openSearch = useCallback(() => setSearchOpen(true), []);
+  const closeSearch = useCallback(() => {
+    setSearchOpen(false);
+    setQuery("");
+  }, []);
   const viewFilter = useWorkspaceFilter("", workspaceVersion);
 
   const navigate = useCallback((next: Route) => {
@@ -68,8 +77,7 @@ export default function App() {
     function onKey(e: KeyboardEvent) {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
-        searchRef.current?.focus();
-        searchRef.current?.select();
+        openSearch();
         return;
       }
       if (e.key === "Escape" && !e.defaultPrevented && !document.querySelector(".delete-confirmation")) {
@@ -81,24 +89,26 @@ export default function App() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [route.task, notice, closeSheet]);
+  }, [route.task, notice, closeSheet, openSearch]);
 
   if (!workspace) {
     return (
-      <div className="win">
-        <TitleBar ref={searchRef} query={query} onQuery={setQuery} />
-        <div className="boot" role={workspaceError ? "alert" : "status"}>
-          {workspaceError ? (
-            <>
-              <b>Relay could not read its workspace.</b>
-              <span className="meta">{workspaceError}</span>
-              <button type="button" className="btn" onClick={() => void refresh()}>
-                Try again
-              </button>
-            </>
-          ) : (
-            <span className="meta">Loading…</span>
-          )}
+      <div className="win solo">
+        <div className="column">
+          <TitleBar />
+          <div className="boot" role={workspaceError ? "alert" : "status"}>
+            {workspaceError ? (
+              <>
+                <b>Relay could not read its workspace.</b>
+                <span className="meta">{workspaceError}</span>
+                <button type="button" className="btn" onClick={() => void refresh()}>
+                  Try again
+                </button>
+              </>
+            ) : (
+              <span className="meta">Loading…</span>
+            )}
+          </div>
         </div>
       </div>
     );
@@ -112,61 +122,65 @@ export default function App() {
 
   return (
     <div className="win">
-      <TitleBar ref={searchRef} query={query} onQuery={setQuery} />
-      <div className={`body${route.task ? " with-sheet" : ""}`}>
-        <Rail
-          view={route.view}
-          onView={setView}
-          version={version}
-          needsYou={needsYou}
-          notice={<RailUpdate update={update} />}
-          wordmarkMode={draft.mode}
-        />
+      <Rail
+        view={route.view}
+        onView={setView}
+        version={version}
+        needsYou={needsYou}
+        notice={<RailUpdate update={update} />}
+        wordmarkMode={draft.mode}
+      />
+      <div className="column">
+        <TitleBar onTitleSlot={setTitleSlot} onActionsSlot={setActionsSlot} onSearch={openSearch} />
+        <PageBarContext.Provider value={slots}>
+          <div className={`body${route.task ? " with-sheet" : ""}`}>
+            {route.view === "notebook" && (
+              <Notebook
+                workspace={workspace}
+                filter={viewFilter}
+                focusNoteId={route.note}
+                onCloseNote={() => setView("notebook")}
+                selectedTaskId={route.task}
+                onOpenTask={openTask}
+                onNotice={setNotice}
+                onSaved={afterSave}
+                onDraftChange={setDraft}
+              />
+            )}
+            {route.view === "tasks" && (
+              <Tasks workspace={workspace} filter={viewFilter} selectedTaskId={route.task} onSelect={openTask} />
+            )}
+            {route.view === "settings" && (
+              <SettingsView provider={route.provider} version={version} update={update} />
+            )}
 
-        {route.view === "notebook" && (
-          <Notebook
-            workspace={workspace}
-            filter={viewFilter}
-            focusNoteId={route.note}
-            onCloseNote={() => setView("notebook")}
-            selectedTaskId={route.task}
-            onOpenTask={openTask}
-            onNotice={setNotice}
-            onSaved={afterSave}
-            onDraftChange={setDraft}
-          />
-        )}
-        {route.view === "tasks" && (
-          <Tasks workspace={workspace} filter={viewFilter} selectedTaskId={route.task} onSelect={openTask} />
-        )}
-        {route.view === "settings" && (
-          <SettingsView provider={route.provider} version={version} update={update} />
-        )}
-
-        {route.task && selectedTask && (
-          <TaskSheet
-            key={selectedTask.id}
-            task={selectedTask}
-            project={workspace.projects.find((candidate) => candidate.id === selectedTask.projectId)}
-            note={workspace.notes.find((candidate) => candidate.id === selectedTask.noteId)}
-            projects={workspace.projects}
-            onClose={closeSheet}
-            onDeleted={() => {
-              closeSheet();
-              afterSave();
-            }}
-          />
-        )}
-        {route.task && !selectedTask && <MissingTask id={route.task} onClose={closeSheet} />}
+            {route.task && selectedTask && (
+              <TaskSheet
+                key={selectedTask.id}
+                task={selectedTask}
+                project={workspace.projects.find((candidate) => candidate.id === selectedTask.projectId)}
+                note={workspace.notes.find((candidate) => candidate.id === selectedTask.noteId)}
+                projects={workspace.projects}
+                onClose={closeSheet}
+                onDeleted={() => {
+                  closeSheet();
+                  afterSave();
+                }}
+              />
+            )}
+            {route.task && !selectedTask && <MissingTask id={route.task} onClose={closeSheet} />}
+          </div>
+        </PageBarContext.Provider>
       </div>
-      {query.trim() && (
+      {searchOpen && (
         <SearchModal
           query={query}
+          onQuery={setQuery}
           filter={filter}
           workspace={workspace}
           onOpenNote={openNote}
           onOpenTask={openTask}
-          onClose={() => setQuery("")}
+          onClose={closeSearch}
         />
       )}
       {notice && (

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import { Icon } from "../components/Icon";
 import type { V2Task, V2WorkspaceSnapshot } from "../ipc";
+import { PageBar } from "./PageBar";
 import { groupTasks, SIGIL, type TaskGroupId, type WorkspaceFilter } from "../workspace";
 
 /* The v2 Tasks surface: three groups sorted by latest change, sharing the Notebook filter.
@@ -78,20 +79,17 @@ export function Tasks({ workspace, filter, selectedTaskId, onSelect }: Props) {
 
   return (
     <section className="main tasks" aria-label="Tasks">
-      <header className="head">
-        <div>
-          <h1 ref={headingRef} tabIndex={-1}>
-            Tasks
-          </h1>
-          <div className="date meta">
-            {filter.filtering
-              ? filter.ready
-                ? `${total} matching ${total === 1 ? "task" : "tasks"}`
-                : "Filtering…"
-              : `${total} ${total === 1 ? "task" : "tasks"}`}
-          </div>
-        </div>
-      </header>
+      <PageBar
+        title="Tasks"
+        headingRef={headingRef}
+        meta={
+          filter.filtering
+            ? filter.ready
+              ? `${total} matching ${total === 1 ? "task" : "tasks"}`
+              : "Filtering…"
+            : `${total} ${total === 1 ? "task" : "tasks"}`
+        }
+      />
 
       <div className="scroll ts-scroll">
         {workspace && total === 0 && (
