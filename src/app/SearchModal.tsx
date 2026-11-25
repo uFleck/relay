@@ -1,13 +1,14 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../components/Icon";
 import type { V2WorkspaceSnapshot } from "../ipc";
 import type { WorkspaceFilter } from "../workspace";
 
-/* Search opens a result list with a detail action per hit. The views behind it stay
-   unfiltered, so closing the modal leaves the Notebook and Tasks as they were. */
+/* Ctrl K opens Search at once with its own input. The views behind it stay unfiltered, so
+   closing the modal leaves the Notebook and Tasks as they were. */
 
 interface Props {
   query: string;
+  onQuery: (query: string) => void;
   filter: WorkspaceFilter;
   workspace: V2WorkspaceSnapshot;
   onOpenNote: (id: string) => void;
@@ -28,8 +29,10 @@ function shortDate(iso: string): string {
   return Number.isNaN(date.getTime()) ? iso : date.toLocaleDateString();
 }
 
-export function SearchModal({ query, filter, workspace, onOpenNote, onOpenTask, onClose }: Props) {
+export function SearchModal({ query, onQuery, filter, workspace, onOpenNote, onOpenTask, onClose }: Props) {
   const [active, setActive] = useState(0);
+  const input = useRef<HTMLInputElement>(null);
+  const searching = query.trim().length > 0;
 
   const hits = useMemo<Hit[]>(() => {
     const notes = workspace.notes
@@ -54,17 +57,23 @@ export function SearchModal({ query, filter, workspace, onOpenNote, onOpenTask, 
   }, [workspace, filter.noteIds, filter.taskIds]);
 
   useEffect(() => setActive(0), [query]);
+  useEffect(() => input.current?.focus(), []);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        event.stopPropagation();
+        input.current?.focus();
+        input.current?.select();
+      } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
         event.preventDefault();
         setActive((current) => {
           if (!hits.length) return 0;
           const step = event.key === "ArrowDown" ? 1 : -1;
           return (current + step + hits.length) % hits.length;
         });
-      } else if (event.key === "Enter" && hits[active]) {
+      } else if (event.key === "Enter" && searching && hits[active]) {
         event.preventDefault();
         open(hits[active]);
       } else if (event.key === "Escape") {
@@ -76,7 +85,7 @@ export function SearchModal({ query, filter, workspace, onOpenNote, onOpenTask, 
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [hits, active, onClose]);
+  }, [hits, active, onClose, searching]);
 
   function open(hit: Hit) {
     if (hit.kind === "note") onOpenNote(hit.id);
@@ -91,19 +100,28 @@ export function SearchModal({ query, filter, workspace, onOpenNote, onOpenTask, 
       <section className="search-modal" role="dialog" aria-modal="true" aria-label="Search results">
         <header className="sm-head">
           <Icon name="search" small />
-          <b>Search</b>
-          <span className="sm-query meta">{query}</span>
-          <span className="push" />
-          <span className="meta">
-            {filter.ready ? `${hits.length} result${hits.length === 1 ? "" : "s"}` : "Searching…"}
-          </span>
+          <input
+            ref={input}
+            className="sm-input"
+            value={query}
+            onChange={(event) => onQuery(event.target.value)}
+            placeholder="Search notes and tasks"
+            spellCheck={false}
+            aria-label="Search notes and tasks"
+          />
+          {searching && (
+            <span className="meta">
+              {filter.ready ? `${hits.length} result${hits.length === 1 ? "" : "s"}` : "Searching…"}
+            </span>
+          )}
           <button type="button" className="ib" title="Close (Esc)" onClick={onClose}>
             <Icon name="x" small />
           </button>
         </header>
         <div className="sm-list">
-          {filter.ready && hits.length === 0 && <p className="empty">No Notes or Tasks match “{query}”.</p>}
-          {hits.map((hit, index) => (
+          {!searching && <p className="empty">Type to search notes and tasks.</p>}
+          {searching && filter.ready && hits.length === 0 && <p className="empty">No notes or tasks match “{query}”.</p>}
+          {searching && hits.map((hit, index) => (
             <button
               type="button"
               key={hit.key}

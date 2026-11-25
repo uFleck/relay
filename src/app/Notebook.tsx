@@ -4,6 +4,7 @@ import { DeleteConfirmation } from "../components/DeleteConfirmation";
 import { EMPTY_DRAFT, lineDirective, type DraftSummary } from "../directives";
 import { errorText, v2NoteDelete, v2WorkspaceSnapshot, type V2Note, type V2Project, type V2Reference, type V2Task, type V2WorkspaceSnapshot } from "../ipc";
 import { useEntering } from "../ui/motion";
+import { PageBar } from "./PageBar";
 import {
   groupByDay,
   nearBottom,
@@ -147,17 +148,21 @@ export function Notebook({ workspace, filter, focusNoteId, onCloseNote, selected
 
   return (
     <section className="main notebook" aria-label="Notebook">
-      <div className="nb-toolbar">
-        <button
-          ref={newNoteButton}
-          type="button"
-          className="btn"
-          onClick={() => setMode({ kind: "capture" })}
-          disabled={mode.kind !== "closed"}
-        >
-          New note
-        </button>
-      </div>
+      <PageBar
+        title="Notebook"
+        meta={`${notes.length} ${notes.length === 1 ? "note" : "notes"}`}
+        actions={
+          <button
+            ref={newNoteButton}
+            type="button"
+            className="btn"
+            onClick={() => setMode({ kind: "capture" })}
+            disabled={mode.kind !== "closed"}
+          >
+            New note
+          </button>
+        }
+      />
       <div
         className="scroll nb-scroll"
         data-parity="timeline"

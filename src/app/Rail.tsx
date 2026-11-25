@@ -35,8 +35,8 @@ export function Rail({ view, onView, version, needsYou, notice, wordmarkMode }: 
 
   return (
     <nav className="rail" aria-label="Views" data-parity="rail">
-      <div className="mark" data-mode={wordmarkMode ?? undefined}>
-        <span className="wordmark">
+      <div className="mark" data-mode={wordmarkMode ?? undefined} data-tauri-drag-region>
+        <span className="wordmark" data-tauri-drag-region>
           relay<span className="dot" key={wordmarkMode ?? "none"}>.</span>
         </span>
         <span className="ver meta">{version}</span>

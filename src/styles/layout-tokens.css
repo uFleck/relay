@@ -4,8 +4,10 @@
 :root {
   --r-sm: 5px;
 
-  --title-h: 36px;
-  --rail-w: 184px;
+  --title-h: 52px;
+  --rail-w: 224px;
+  /* Left inset shared by the title bar and every page, so titles line up with content. */
+  --page-x: 34px;
   --sheet-w: 380px;
   --row-h: 34px;
   --strip-h: 40px;
