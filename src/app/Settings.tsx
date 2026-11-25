@@ -83,7 +83,7 @@ export function SettingsView({ provider, version }: Props) {
   const [projects, setProjects] = useState<V2Project[]>([]);
   const [settings, setSettings] = useState<V2Settings | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const { summon } = useKeybinds();
+  const { summon, vim } = useKeybinds();
   const [chordDraft, setChordDraft] = useState(summon);
   const sections = useRef<Partial<Record<ProviderKey, HTMLElement | null>>>({});
   const [open, setOpen] = useState<ReadonlySet<ProviderKey>>(() => new Set(provider ? [provider] : []));
@@ -147,6 +147,7 @@ export function SettingsView({ provider, version }: Props) {
     return (
       <section
         className={`prow${isOpen ? " open" : ""}`}
+        data-vim-item=""
         id={`provider-${key}`}
         tabIndex={-1}
         aria-label={LABELS[key]}
@@ -154,7 +155,7 @@ export function SettingsView({ provider, version }: Props) {
           sections.current[key] = el;
         }}
       >
-        <button type="button" className="prow-head" aria-expanded={isOpen} onClick={() => toggle(key)}>
+        <button type="button" className="prow-head" aria-expanded={isOpen} onClick={() => toggle(key)} data-vim-open="">
           <b>{LABELS[key]}</b>
           <span className="prow-sum meta">{isOpen ? "" : summary}</span>
           <StatusMark status={current} />
@@ -179,9 +180,17 @@ export function SettingsView({ provider, version }: Props) {
     }
   };
 
+  const setVim = async (next: boolean) => {
+    try {
+      await setKeybinds({ summon, vim: next });
+    } catch (error) {
+      setNotice(`Could not change Vim mode: ${errorText(error)}`);
+    }
+  };
+
   const saveChord = async () => {
     try {
-      await setKeybinds({ summon: chordDraft });
+      await setKeybinds({ summon: chordDraft, vim });
       setNotice("Summon shortcut saved.");
     } catch (error) {
       setNotice(`Could not save the shortcut: ${errorText(error)}`);
@@ -219,6 +228,18 @@ export function SettingsView({ provider, version }: Props) {
                   Save
                 </button>
               </div>
+            </div>
+            <div className="set-row">
+              <div className="set-label">
+                <b>Vim mode</b>
+                <span className="meta">
+                  Move with j and k, open with enter, jump between views with g. Press ? for
+                  every key.
+                </span>
+              </div>
+              <Switch checked={vim} onChange={(next) => void setVim(next)}>
+                <span className="sr-only">Vim mode</span>
+              </Switch>
             </div>
           </section>
 

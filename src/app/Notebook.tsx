@@ -36,11 +36,14 @@ interface Props {
   onNotice: (message: string) => void;
   onSaved: () => void;
   onDraftChange?: (draft: DraftSummary) => void;
+  /** Set by Vim mode's new-note key; the Notebook opens capture and reports it handled. */
+  captureRequested?: boolean;
+  onCaptureHandled?: () => void;
 }
 
 type ComposerMode = { kind: "closed" | "capture" } | { kind: "edit"; note: V2Note; returnToCapture: boolean };
 
-export function Notebook({ workspace, filter, focusNoteId, onCloseNote, selectedTaskId, onOpenTask, onNotice, onSaved, onDraftChange }: Props) {
+export function Notebook({ workspace, filter, focusNoteId, onCloseNote, selectedTaskId, onOpenTask, onNotice, onSaved, onDraftChange, captureRequested, onCaptureHandled }: Props) {
   const [mode, setMode] = useState<ComposerMode>({ kind: "closed" });
   const editing = mode.kind === "edit" ? mode.note.id : null;
   const newNoteButton = useRef<HTMLButtonElement>(null);
@@ -90,6 +93,12 @@ export function Notebook({ workspace, filter, focusNoteId, onCloseNote, selected
       });
     }
   }, [notes, workspace, editing]);
+
+  useEffect(() => {
+    if (!captureRequested) return;
+    onCaptureHandled?.();
+    setMode((current) => (current.kind === "closed" ? { kind: "capture" } : current));
+  }, [captureRequested, onCaptureHandled]);
 
   const openEditor = (note: V2Note) => {
     setMode((current) => current.kind === "edit" ? current : {
@@ -281,6 +290,7 @@ function NoteCard({
       data-note-id={note.id}
       data-revision={note.revision}
       data-mode={note.tasks[0]?.agentMode ?? undefined}
+      data-vim-item=""
     >
       <span className="nb-dot" aria-hidden="true" />
       <div className="nb-note-head">
@@ -292,7 +302,7 @@ function NoteCard({
         </span>
         <span className="push" />
         <div className="nb-note-actions">
-          <button type="button" className="btn ghost nb-edit" onClick={onEdit} disabled={editorOpen}>
+          <button type="button" className="btn ghost nb-edit" onClick={onEdit} disabled={editorOpen} data-vim-open="" data-vim-edit="">
             {editing ? "Editing" : "Edit"}
           </button>
           {!editing && (
