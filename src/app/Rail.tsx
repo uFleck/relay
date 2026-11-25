@@ -5,6 +5,7 @@ import { useKeybinds } from "../keybinds";
 import type { View } from "../route";
 import type { UpdateState } from "../updater";
 import { UpdateNotice, VersionCheck } from "./UpdateNotice";
+import type { VimMode } from "./useVim";
 
 /* The v2 rail: Notebook, Tasks and Settings. The single Needs-you count is owned by #27;
    this rail shows the count when one is supplied. The wordmark dot follows the draft's
@@ -16,10 +17,12 @@ interface Props {
   version: string;
   needsYou?: number;
   update: UpdateState;
+  /** Vim mode's state, or null when Vim mode is off. */
+  vimMode?: VimMode | null;
   wordmarkMode?: V2AgentMode | null;
 }
 
-export function Rail({ view, onView, version, needsYou, update, wordmarkMode }: Props) {
+export function Rail({ view, onView, version, needsYou, update, wordmarkMode, vimMode }: Props) {
   const { summon } = useKeybinds();
   const item = (v: View, icon: IconName, label: string, trail?: React.ReactNode) => (
     <button
@@ -74,7 +77,17 @@ export function Rail({ view, onView, version, needsYou, update, wordmarkMode }: 
         <div>
           <kbd>esc</kbd> dismiss
         </div>
+        {vimMode && (
+          <div>
+            <kbd>?</kbd> keys
+          </div>
+        )}
       </div>
+      {vimMode && (
+        <div className={`vim-mode ${vimMode}`} role="status" aria-label={`Vim ${vimMode} mode`}>
+          {vimMode === "insert" ? "INSERT" : "NORMAL"}
+        </div>
+      )}
       <VersionCheck version={version} update={update} />
     </nav>
   );

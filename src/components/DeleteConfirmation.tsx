@@ -31,7 +31,7 @@ export function DeleteConfirmation({ label, description, blocked, onDelete }: {
       setError(null);
       setOpen(next);
     }}>
-      <AlertDialog.Trigger className="btn ghost">{label}</AlertDialog.Trigger>
+      <AlertDialog.Trigger className="btn ghost" data-vim-delete="">{label}</AlertDialog.Trigger>
       <AlertDialog.Portal>
         <AlertDialog.Backdrop className="delete-backdrop" />
         <AlertDialog.Popup className="delete-confirmation">

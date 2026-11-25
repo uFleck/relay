@@ -8,13 +8,13 @@ import { MissingTask, Tasks } from "./app/Tasks";
 import { TaskSheet } from "./app/TaskSheet";
 import { SettingsView } from "./app/Settings";
 import { SearchModal } from "./app/SearchModal";
+import { useVim, typing } from "./app/useVim";
+import { VimHelp } from "./app/VimHelp";
+import { useKeybinds } from "./keybinds";
 import { appVersion, onEvent } from "./ipc";
 import { parseRoute, readLocation, writeLocation, type Route, type View } from "./route";
 import { startUpdateChecks, useUpdater } from "./updater";
 import { needsYouCount, useWorkspace, useWorkspaceFilter } from "./workspace";
-
-const typing = (el: EventTarget | null) =>
-  el instanceof HTMLElement && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
 
 export default function App() {
   const [version, setVersion] = useState("");
@@ -25,6 +25,9 @@ export default function App() {
   const [draft, setDraft] = useState<DraftSummary>(EMPTY_DRAFT);
   const update = useUpdater();
   const [searchOpen, setSearchOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [captureRequested, setCaptureRequested] = useState(false);
+  const { vim } = useKeybinds();
   const [titleSlot, setTitleSlot] = useState<HTMLDivElement | null>(null);
   const [actionsSlot, setActionsSlot] = useState<HTMLDivElement | null>(null);
   const slots = useMemo(() => ({ title: titleSlot, actions: actionsSlot }), [titleSlot, actionsSlot]);
@@ -71,6 +74,29 @@ export default function App() {
     (view: View) => navigate({ view, task: null, note: null, provider: null }),
     [navigate],
   );
+
+  const onVim = useCallback(
+    (command: "newNote" | "goNotebook" | "goTasks" | "goSettings" | "search" | "help") => {
+      if (command === "search") openSearch();
+      else if (command === "help") setHelpOpen(true);
+      else if (command === "goNotebook") setView("notebook");
+      else if (command === "goTasks") setView("tasks");
+      else if (command === "goSettings") setView("settings");
+      else {
+        setView("notebook");
+        setCaptureRequested(true);
+      }
+    },
+    [openSearch, setView],
+  );
+  const onCaptureHandled = useCallback(() => setCaptureRequested(false), []);
+  const closeHelp = useCallback(() => setHelpOpen(false), []);
+  const vimMode = useVim({
+    enabled: vim && !!workspace,
+    blocked: searchOpen || helpOpen,
+    scope: route.view,
+    onCommand: onVim,
+  });
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -128,6 +154,7 @@ export default function App() {
         needsYou={needsYou}
         update={update}
         wordmarkMode={draft.mode}
+        vimMode={vim ? vimMode : null}
       />
       <div className="column">
         <TitleBar onTitleSlot={setTitleSlot} onActionsSlot={setActionsSlot} onSearch={openSearch} />
@@ -144,6 +171,8 @@ export default function App() {
                 onNotice={setNotice}
                 onSaved={afterSave}
                 onDraftChange={setDraft}
+                captureRequested={captureRequested}
+                onCaptureHandled={onCaptureHandled}
               />
             )}
             {route.view === "tasks" && (
@@ -182,6 +211,7 @@ export default function App() {
           onClose={closeSearch}
         />
       )}
+      {helpOpen && <VimHelp onClose={closeHelp} />}
       {notice && (
         <div className="toast" role="alert">
           <span>{notice}</span>

@@ -7,15 +7,17 @@ import { call, inTauri, isVisualFixture, onEvent } from "./ipc";
 
 export interface Keybinds {
   summon: string;
+  /** Vim mode in the main window; on by default. */
+  vim: boolean;
 }
 
-export const DEFAULT_KEYBINDS: Keybinds = { summon: "ctrl+alt+r" };
+export const DEFAULT_KEYBINDS: Keybinds = { summon: "ctrl+alt+r", vim: true };
 
 let cached: Keybinds = DEFAULT_KEYBINDS;
 
 export const getKeybinds = () =>
   call<Keybinds>("v2_keybinds_get", undefined, () =>
-    isVisualFixture() ? { summon: "alt+space" } : DEFAULT_KEYBINDS,
+    isVisualFixture() ? { summon: "alt+space", vim: true } : DEFAULT_KEYBINDS,
   );
 
 export const setKeybinds = async (binds: Keybinds): Promise<Keybinds> => {
