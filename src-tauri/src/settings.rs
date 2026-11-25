@@ -367,22 +367,19 @@ fn opencode_status(store: &V2Store) -> ProviderStatus {
         Err(_) => return unavailable("OpenCode settings could not be read."),
     };
     let key = secrets::v2::read(OPENCODE_KEY);
+    if !installed {
+        return ProviderStatus {
+            source: ProviderSource::None,
+            status: ProviderState::MissingSetup,
+            reason: Some("OpenCode executable not found. Install OpenCode, then try again.".into()),
+            last_four: key.as_deref().and_then(last_four),
+        };
+    }
     match settings.opencode_model {
         None => ProviderStatus {
-            source: if installed {
-                ProviderSource::Cli
-            } else {
-                ProviderSource::None
-            },
+            source: ProviderSource::Cli,
             status: ProviderState::MissingSetup,
-            reason: Some(
-                if installed {
-                    "OpenCode found on this machine. Set a provider/model before briefing Tasks."
-                } else {
-                    "Set an OpenCode provider/model before briefing Tasks."
-                }
-                .into(),
-            ),
+            reason: Some("OpenCode found. Set a provider/model before briefing Tasks.".into()),
             last_four: key.as_deref().and_then(last_four),
         },
         Some(model) => ProviderStatus {
@@ -405,11 +402,11 @@ fn offline_t3(store: &V2Store) -> ProviderStatus {
     let mapped = store
         .list_projects()
         .is_ok_and(|projects| projects.iter().any(|p| p.t3_target.is_some()));
-    if t3::find_launcher().is_none() {
+    if crate::t3_cli::resolve_launcher().is_none() {
         ProviderStatus {
             source: ProviderSource::Cli,
             status: ProviderState::MissingSetup,
-            reason: Some("t3 was not found on PATH. Install T3 Code or restart Relay.".into()),
+            reason: Some("T3 launcher not found. Install or open T3 Code, then try again.".into()),
             last_four: None,
         }
     } else if mapped {

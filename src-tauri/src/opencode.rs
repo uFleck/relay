@@ -206,21 +206,30 @@ fn resolve_executable() -> Result<PathBuf, String> {
         }
         return Err("RELAY_OPENCODE_EXE must be an absolute path to an .exe".into());
     }
-    let path_var = std::env::var_os("PATH").unwrap_or_default();
-    for dir in std::env::split_paths(&path_var) {
-        let candidate = dir.join("opencode.exe");
-        if candidate.is_file() && is_trusted_location(&candidate) {
-            return Ok(candidate);
-        }
-    }
-    Err(
-        "opencode.exe was not found in a trusted install location. Set the model in Settings."
-            .into(),
-    )
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let npm_dir = std::env::var_os("APPDATA").map(|root| PathBuf::from(root).join("npm"));
+    std::env::split_paths(&path)
+        .chain(npm_dir)
+        .filter(|dir| dir.is_absolute())
+        .flat_map(|dir| {
+            [
+                dir.join("opencode.exe"),
+                dir.join("node_modules")
+                    .join("@opencode")
+                    .join("cli")
+                    .join("bin")
+                    .join("opencode.exe"),
+            ]
+        })
+        .filter(|candidate| candidate.is_file())
+        .filter_map(|candidate| candidate.canonicalize().ok())
+        .find(|candidate| is_trusted_location(candidate))
+        .ok_or_else(|| {
+            "OpenCode executable not found. Install OpenCode, then refresh Settings.".into()
+        })
 }
 
 fn is_trusted_location(path: &Path) -> bool {
-    let lower = path.to_string_lossy().to_lowercase();
     [
         "LOCALAPPDATA",
         "APPDATA",
@@ -230,8 +239,19 @@ fn is_trusted_location(path: &Path) -> bool {
     ]
     .iter()
     .filter_map(|key| std::env::var_os(key))
-    .map(PathBuf::from)
-    .any(|root| lower.starts_with(&root.to_string_lossy().to_lowercase()))
+    .filter_map(|root| PathBuf::from(root).canonicalize().ok())
+    .any(|root| {
+        // Windows installations can differ in case, but matching still requires full components.
+        path.components()
+            .zip(root.components())
+            .all(|(actual, expected)| {
+                actual
+                    .as_os_str()
+                    .to_string_lossy()
+                    .eq_ignore_ascii_case(&expected.as_os_str().to_string_lossy())
+            })
+            && path.components().count() > root.components().count()
+    })
 }
 
 /// Maps a `provider/model` string onto the single credential variable the child may see. The

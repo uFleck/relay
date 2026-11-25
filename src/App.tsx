@@ -128,6 +128,7 @@ export default function App() {
             workspace={workspace}
             filter={viewFilter}
             focusNoteId={route.note}
+            onCloseNote={() => setView("notebook")}
             selectedTaskId={route.task}
             onOpenTask={openTask}
             onNotice={setNotice}

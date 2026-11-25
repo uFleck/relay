@@ -1,9 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Composer } from "../components/Composer";
 import { DeleteConfirmation } from "../components/DeleteConfirmation";
-import { v2NoteDelete } from "../ipc";
-import type { DraftSummary } from "../directives";
-import type { V2Note, V2Project, V2Reference, V2Task, V2WorkspaceSnapshot } from "../ipc";
+import { EMPTY_DRAFT, lineDirective, type DraftSummary } from "../directives";
+import { errorText, v2NoteDelete, v2WorkspaceSnapshot, type V2Note, type V2Project, type V2Reference, type V2Task, type V2WorkspaceSnapshot } from "../ipc";
 import { useEntering } from "../ui/motion";
 import {
   groupByDay,
@@ -30,6 +29,7 @@ interface Props {
   filter: WorkspaceFilter;
   /** A Note opened from search: scroll to it and show its detail editor. */
   focusNoteId?: string | null;
+  onCloseNote: () => void;
   selectedTaskId: string | null;
   onOpenTask: (id: string) => void;
   onNotice: (message: string) => void;
@@ -37,12 +37,15 @@ interface Props {
   onDraftChange?: (draft: DraftSummary) => void;
 }
 
-export function Notebook({ workspace, filter, focusNoteId, selectedTaskId, onOpenTask, onNotice, onSaved, onDraftChange }: Props) {
-  const [editing, setEditing] = useState<string | null>(null);
+type ComposerMode = { kind: "closed" | "capture" } | { kind: "edit"; note: V2Note; returnToCapture: boolean };
+
+export function Notebook({ workspace, filter, focusNoteId, onCloseNote, selectedTaskId, onOpenTask, onNotice, onSaved, onDraftChange }: Props) {
+  const [mode, setMode] = useState<ComposerMode>({ kind: "closed" });
+  const editing = mode.kind === "edit" ? mode.note.id : null;
+  const newNoteButton = useRef<HTMLButtonElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const followNewest = useRef(true);
   const seen = useRef<ReadonlySet<string>>(new Set());
-  const editScroll = useRef<number | null>(null);
   const initialised = useRef(false);
 
   const notes = useMemo(
@@ -88,35 +91,73 @@ export function Notebook({ workspace, filter, focusNoteId, selectedTaskId, onOpe
   }, [notes, workspace, editing]);
 
   const openEditor = (note: V2Note) => {
-    editScroll.current = scrollRef.current?.scrollTop ?? null;
-    setEditing(note.id);
+    setMode((current) => current.kind === "edit" ? current : {
+      kind: "edit",
+      note,
+      returnToCapture: current.kind === "capture",
+    });
   };
 
-  // A search result addresses a Note by id. Bring it into view and open its editor once.
+  const openedFromSearch = useRef<string | null>(null);
   useEffect(() => {
-    if (!focusNoteId || !workspace) return;
-    const note = workspace.notes.find((candidate) => candidate.id === focusNoteId);
+    if (!focusNoteId) {
+      openedFromSearch.current = null;
+      return;
+    }
+    if (editing || openedFromSearch.current === focusNoteId) return;
+    const note = workspace?.notes.find((candidate) => candidate.id === focusNoteId);
     if (!note) return;
-    requestAnimationFrame(() => {
-      scrollRef.current
-        ?.querySelector<HTMLElement>(`[data-note-id="${focusNoteId}"]`)
-        ?.scrollIntoView({ block: "center" });
-      editScroll.current = scrollRef.current?.scrollTop ?? null;
-      setEditing(focusNoteId);
-    });
-  }, [focusNoteId, workspace]);
+    openedFromSearch.current = focusNoteId;
+    openEditor(note);
+    requestAnimationFrame(() => scrollRef.current
+      ?.querySelector<HTMLElement>(`[data-note-id="${focusNoteId}"]`)
+      ?.scrollIntoView({ block: "center" }));
+  }, [editing, focusNoteId, workspace]);
 
-  const closeEditor = () => {
-    setEditing(null);
-    const at = editScroll.current;
-    editScroll.current = null;
-    if (at !== null) requestAnimationFrame(() => {
-      if (scrollRef.current) scrollRef.current.scrollTop = at;
-    });
+  const closeComposer = () => {
+    const resumeDraft = mode.kind === "edit" && mode.returnToCapture;
+    setMode({ kind: resumeDraft ? "capture" : "closed" });
+    if (editing && focusNoteId === editing) onCloseNote();
+    if (!resumeDraft) {
+      onDraftChange?.(EMPTY_DRAFT);
+      requestAnimationFrame(() => {
+        const editButton = editing
+          ? scrollRef.current?.querySelector<HTMLButtonElement>(`[data-note-id="${editing}"] .nb-edit`)
+          : null;
+        (editButton ?? newNoteButton.current)?.focus({ preventScroll: true });
+      });
+    }
+  };
+
+  const reloadNote = async (id: string) => {
+    try {
+      const latest = (await v2WorkspaceSnapshot()).notes.find((note) => note.id === id);
+      if (!latest) {
+        onNotice("This note has been deleted.");
+        closeComposer();
+        return;
+      }
+      setMode((current) => current.kind === "edit" && current.note.id === id
+        ? { ...current, note: latest }
+        : current);
+    } catch (cause) {
+      onNotice(`Could not reload the note: ${errorText(cause)}`);
+    }
   };
 
   return (
     <section className="main notebook" aria-label="Notebook">
+      <div className="nb-toolbar">
+        <button
+          ref={newNoteButton}
+          type="button"
+          className="btn"
+          onClick={() => setMode({ kind: "capture" })}
+          disabled={mode.kind !== "closed"}
+        >
+          New note
+        </button>
+      </div>
       <div
         className="scroll nb-scroll"
         data-parity="timeline"
@@ -129,7 +170,7 @@ export function Notebook({ workspace, filter, focusNoteId, selectedTaskId, onOpe
           <p className="empty nb-empty">
             {filter.filtering && filter.ready
               ? "No note matches this filter."
-              : "No notes yet. Capture the first one below."}
+              : "No notes yet."}
           </p>
         )}
         {groups.map((group) => (
@@ -144,25 +185,43 @@ export function Notebook({ workspace, filter, focusNoteId, selectedTaskId, onOpe
                 note={note}
                 projects={projects}
                 editing={editing === note.id}
+                editorOpen={editing !== null}
                 selectedTaskId={selectedTaskId}
                 fresh={enteringNotes.has(note.id)}
                 freshTasks={enteringTasks}
                 onEdit={() => openEditor(note)}
-                onCloseEdit={closeEditor}
                 onOpenTask={onOpenTask}
-                onNotice={onNotice}
-                onDeleted={onSaved}
-                onSaved={() => {
-                  closeEditor();
-                  onSaved();
-                }}
+                onSaved={onSaved}
               />
             ))}
           </section>
         ))}
       </div>
-      <div className="nb-dock" data-parity="composer-dock">
-        <Composer onSaved={() => onSaved()} onNotice={onNotice} onDraftChange={onDraftChange} />
+      <div className="nb-dock" hidden={mode.kind === "closed"} data-parity="composer-dock">
+        <div hidden={mode.kind !== "capture"}>
+          <Composer
+            autoFocus={mode.kind === "capture"}
+            onSaved={onSaved}
+            onNotice={onNotice}
+            onDraftChange={mode.kind === "capture" ? onDraftChange : undefined}
+            onClose={closeComposer}
+          />
+        </div>
+        {mode.kind === "edit" && (
+          <Composer
+            key={`${mode.note.id}:${mode.note.revision}`}
+            note={mode.note}
+            autoFocus
+            onSaved={() => {
+              closeComposer();
+              onSaved();
+            }}
+            onNotice={onNotice}
+            onDraftChange={onDraftChange}
+            onClose={closeComposer}
+            onReload={() => void reloadNote(mode.note.id)}
+          />
+        )}
       </div>
     </section>
   );
@@ -172,35 +231,44 @@ interface CardProps {
   note: V2Note;
   projects: V2Project[];
   editing: boolean;
+  editorOpen: boolean;
   selectedTaskId: string | null;
   fresh: boolean;
   freshTasks: ReadonlySet<string>;
   onEdit: () => void;
-  onCloseEdit: () => void;
   onOpenTask: (id: string) => void;
-  onNotice: (message: string) => void;
   onSaved: () => void;
-  onDeleted: () => void;
 }
 
 function NoteCard({
   note,
   projects,
   editing,
+  editorOpen,
   selectedTaskId,
   fresh,
   freshTasks,
   onEdit,
-  onCloseEdit,
   onOpenTask,
-  onNotice,
   onSaved,
-  onDeleted,
 }: CardProps) {
   const active = new Set(note.lines.map((line) => line.id));
   // A removed source line has no active row; its Task still belongs to this Note and is
   // drawn from the frozen original line rather than disappearing with the edit.
   const detached = note.tasks.filter((task) => !active.has(task.sourceLineId));
+
+  const renderTask = (task: V2Task) => (
+    <div className="nb-task-line" key={task.id}>
+      <TaskBranch
+        task={task}
+        project={projects.find((candidate) => candidate.id === task.projectId)}
+        selected={task.id === selectedTaskId}
+        fresh={freshTasks.has(task.id)}
+        onOpen={() => onOpenTask(task.id)}
+        detached={!active.has(task.sourceLineId)}
+      />
+    </div>
+  );
 
   return (
     <article
@@ -219,15 +287,9 @@ function NoteCard({
         </span>
         <span className="push" />
         <div className="nb-note-actions">
-        {editing ? (
-          <button type="button" className="btn ghost" onClick={onCloseEdit}>
-            Close editor
+          <button type="button" className="btn ghost nb-edit" onClick={onEdit} disabled={editorOpen}>
+            {editing ? "Editing" : "Edit"}
           </button>
-        ) : (
-          <button type="button" className="btn ghost" onClick={onEdit}>
-            Edit
-          </button>
-        )}
           {!editing && (
             <DeleteConfirmation
               label="Delete note"
@@ -235,62 +297,29 @@ function NoteCard({
               blocked={note.tasks.length > 0}
               onDelete={async () => {
                 await v2NoteDelete(note.id);
-                onDeleted();
+                onSaved();
               }}
             />
           )}
         </div>
       </div>
 
-      {editing ? (
-        <Composer
-          key={`${note.id}:${note.revision}`}
-          note={note}
-          onSaved={onSaved}
-          onNotice={onNotice}
-          onReload={onSaved}
-        />
-      ) : (
-        <div className="nb-lines">
-          {note.lines.map((line) => {
-            const lineTasks = note.tasks.filter((task) => task.sourceLineId === line.id);
-            return (
-              <div className="nb-line" key={line.id}>
-                <div className="nb-line-text"><InlineLine text={line.text} references={line.references} /></div>
-                {lineTasks.length > 0 && (
-                  <div className="nb-branches">
-                    {lineTasks.map((task) => (
-                      <TaskBranch
-                        key={task.id}
-                        task={task}
-                        project={projects.find((candidate) => candidate.id === task.projectId)}
-                        selected={task.id === selectedTaskId}
-                        fresh={freshTasks.has(task.id)}
-                        onOpen={() => onOpenTask(task.id)}
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-          {detached.length > 0 && (
-            <div className="nb-branches">
-              {detached.map((task) => (
-                <TaskBranch
-                  key={task.id}
-                  task={task}
-                  project={projects.find((candidate) => candidate.id === task.projectId)}
-                  selected={task.id === selectedTaskId}
-                  fresh={freshTasks.has(task.id)}
-                  onOpen={() => onOpenTask(task.id)}
-                  detached
-                />
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+      <div className="nb-lines">
+        {note.lines.map((line) => {
+          const tasks = note.tasks.filter((task) => task.sourceLineId === line.id);
+          return (
+            <Fragment key={line.id}>
+              {!tasks.some((task) => task.originalLine === line.text) && (
+                <div className="nb-line">
+                  <div className="nb-line-text"><InlineLine text={line.text} references={line.references} /></div>
+                </div>
+              )}
+              {tasks.map(renderTask)}
+            </Fragment>
+          );
+        })}
+        {detached.map(renderTask)}
+      </div>
     </article>
   );
 }
@@ -332,26 +361,22 @@ function TaskBranch({
   onOpen: () => void;
   detached?: boolean;
 }) {
+  const { originalLine } = task;
+  const sourceMode = lineDirective(originalLine);
+  const content = sourceMode ? originalLine.slice(SIGIL[sourceMode].length).trimStart() : originalLine;
   return (
-    <div
-      role="button"
-      tabIndex={0}
+    <button
+      type="button"
       className={`nb-branch mode-${task.agentMode}${selected ? " on" : ""}${detached ? " detached" : ""}${fresh ? " fresh" : ""}`}
       data-task-id={task.id}
       data-tone={statusTone(task.status)}
       onClick={onOpen}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onOpen();
-        }
-      }}
       title={detached ? "Source line removed; showing the saved Task line" : "Open Task"}
     >
       <span className="nb-sigil">{SIGIL[task.agentMode]}</span>
-      {task.originalLine}
+      <span className="nb-branch-text"><InlineLine text={content} references={task.references} /></span>
       <span className="nb-status">{task.status.replace(/_/g, " ")}</span>
       {project && <span className="nb-project">+{project.name}</span>}
-    </div>
+    </button>
   );
 }

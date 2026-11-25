@@ -80,6 +80,7 @@ export function ReferenceEditor({
   const [highlight, setHighlight] = useState(0);
   const [errorToken, setErrorToken] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const decorationRef = useRef<HTMLDivElement>(null);
   const undo = useRef<EditorState[]>([]);
   const lastConversion = useRef<{ chip: Chip; delimiter: string; at: number } | null>(null);
   const lastPaste = useRef<{ at: number; previous: EditorState } | null>(null);
@@ -623,7 +624,7 @@ export function ReferenceEditor({
   return (
     <div className="ref-editor">
       <div className="ref-editor-surface" data-multiline={multiline ? "true" : "false"}>
-        <div className="ref-editor-decoration" aria-hidden="true">
+        <div className="ref-editor-decoration" aria-hidden="true" ref={decorationRef}>
           {decorate()}
         </div>
         <textarea
@@ -641,6 +642,9 @@ export function ReferenceEditor({
           autoFocus={autoFocus}
           onChange={(event) => changed(event.target.value, event.target.selectionStart)}
           onKeyDown={keyDown}
+          onScroll={(event) => {
+            if (decorationRef.current) decorationRef.current.scrollTop = event.currentTarget.scrollTop;
+          }}
           onPaste={(event) => void paste(event)}
           onCopy={copy}
           onFocus={() => onActiveChange?.(true)}
