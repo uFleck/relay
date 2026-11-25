@@ -25,8 +25,9 @@ export type UpdateState =
   | { kind: "idle" }
   | { kind: "checking" }
   | { kind: "available"; version: string; notes: ReleaseNote[] }
-  | { kind: "downloading"; version: string; progress: number | null }
-  | { kind: "ready"; version: string }
+  /** `progress` runs from 0 to 1. */
+  | { kind: "downloading"; version: string; notes: ReleaseNote[]; progress: number | null }
+  | { kind: "ready"; version: string; notes: ReleaseNote[] }
   | { kind: "error"; message: string };
 
 interface GithubRelease {
@@ -37,8 +38,19 @@ interface GithubRelease {
   body: string | null;
 }
 
-let state: UpdateState = { kind: "idle" };
+/** `?visual-fixture=J&visual-update=available` shows an offered update in the browser fixture. */
+function fixtureState(): UpdateState {
+  if (typeof location === "undefined") return { kind: "idle" };
+  const q = new URLSearchParams(location.search);
+  if (q.get("visual-fixture") !== "J" || q.get("visual-update") !== "available") return { kind: "idle" };
+  const body = "## What's Changed\n* feat: Search opens on Ctrl K\n* fix: the Dock no longer shows a scrollbar";
+  return { kind: "available", version: "0.13.0", notes: [{ version: "0.13.0", date: "2026-11-25T12:00:00Z", body }] };
+}
+
+let state: UpdateState = fixtureState();
 let pending: Update | null = null;
+/** The changelog of the update on offer, kept through download and restart. */
+let pendingNotes: ReleaseNote[] = [];
 const listeners = new Set<() => void>();
 /** True in the window that ran `startUpdateChecks`, which tells the others. */
 let owner = false;
@@ -110,7 +122,8 @@ export async function checkForUpdates(manual = true): Promise<"available" | "non
       return "none";
     }
     pending = update;
-    set({ kind: "available", version: update.version, notes: await changelog(update) });
+    pendingNotes = await changelog(update);
+    set({ kind: "available", version: update.version, notes: pendingNotes });
     return "available";
   } catch (e) {
     console.warn("update check failed", e);
@@ -125,16 +138,17 @@ export async function downloadUpdate() {
   if (!update) return;
   let total = 0;
   let got = 0;
-  set({ kind: "downloading", version: update.version, progress: null });
+  const notes = pendingNotes;
+  set({ kind: "downloading", version: update.version, notes, progress: null });
   try {
     await update.download((event) => {
       if (event.event === "Started") total = event.data.contentLength ?? 0;
       if (event.event === "Progress") {
         got += event.data.chunkLength;
-        set({ kind: "downloading", version: update.version, progress: total > 0 ? Math.min(got / total, 1) : null });
+        set({ kind: "downloading", version: update.version, notes, progress: total > 0 ? Math.min(got / total, 1) : null });
       }
     });
-    set({ kind: "ready", version: update.version });
+    set({ kind: "ready", version: update.version, notes });
   } catch (e) {
     set({ kind: "error", message: String(e) });
   }
