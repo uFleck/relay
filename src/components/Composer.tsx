@@ -56,6 +56,8 @@ export interface ComposerProps {
   /** Shown only after a stale-revision failure; the parent reloads the stored Note. */
   onReload?: () => void;
   compact?: boolean;
+  /** The Dock: a draft that starts with a note or task reference is appended to that note. */
+  capture?: boolean;
   autoFocus?: boolean;
   onClose?: () => void;
   /** Reports the draft's first mode and counts to the host's wordmark and footer. */
@@ -74,6 +76,7 @@ export function Composer({
   onActiveChange,
   onReload,
   compact,
+  capture,
   autoFocus,
   onClose,
   onDraftChange,
@@ -136,7 +139,7 @@ export function Composer({
           lines,
         }
       : {
-          kind: "create",
+          kind: capture ? "capture" : "create",
           // A failed create keeps its key so a retry cannot duplicate the Note.
           submissionKey: (submissionKey.current ??= newKey()),
           text,
@@ -173,7 +176,11 @@ export function Composer({
     >
       <ReferenceEditor
         value={draftText}
-        placeholder="Write a note. ! acts, ? waits, ?? grills."
+        placeholder={
+          capture
+            ? "Write a note, or start with @ a note to add to it."
+            : "Write a note. ! acts, ? waits, ?? grills."
+        }
         ariaLabel={note ? "Edit note" : "Composer"}
         onChange={changeText}
         onSubmit={() => void submit()}

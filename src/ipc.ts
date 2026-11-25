@@ -493,7 +493,9 @@ export interface V2LineInput {
 
 export type V2ComposerSaveRequest =
   | { kind: "create"; submissionKey: string; text: string }
-  | { kind: "edit"; noteId: string; expectedRevision: number; lines: V2LineInput[] };
+  | { kind: "edit"; noteId: string; expectedRevision: number; lines: V2LineInput[] }
+  /** The Dock's write: a leading `@N-…` or `@T-…` appends to that note, anything else creates one. */
+  | { kind: "capture"; submissionKey: string; text: string };
 
 export const isVisualFixture = () =>
   typeof location !== "undefined" &&

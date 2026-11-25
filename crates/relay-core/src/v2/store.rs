@@ -599,6 +599,16 @@ impl V2Store {
         Ok(saved)
     }
 
+    /// Reads one Note with its active lines and every Task.
+    pub fn note(&self, id: &str) -> Result<V2Note, V2Error> {
+        note_by_id(&self.conn(), id)
+    }
+
+    /// Reads one Task.
+    pub fn task(&self, id: &str) -> Result<V2Task, V2Error> {
+        task_by_id(&self.conn(), id)
+    }
+
     /// Deletes a Note once its Tasks have been handled. The Import ledger is independent.
     pub fn delete_note(&self, id: &str) -> Result<(), V2Error> {
         let mut conn = self.conn();

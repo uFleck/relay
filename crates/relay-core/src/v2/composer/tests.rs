@@ -487,3 +487,78 @@ fn ambiguous_short_repo_chip_resolves_to_no_reference() {
     let saved = save_submission(&store, create("ambiguous", "!ship @app#1")).unwrap();
     assert!(saved.lines[0].references.is_empty());
 }
+
+fn capture(key: &str, text: &str) -> ComposerSaveRequest {
+    ComposerSaveRequest::Capture {
+        submission_key: key.to_string(),
+        text: text.to_string(),
+    }
+}
+
+#[test]
+fn append_target_reads_a_leading_note_or_task_reference() {
+    assert_eq!(
+        append_target("@N-01AB ! do x"),
+        Some((AppendTarget::Note("01AB".into()), "! do x".into()))
+    );
+    assert_eq!(
+        append_target("  @T-9\r\n? ask\nplain  \n"),
+        Some((AppendTarget::Task("9".into()), "? ask\nplain".into()))
+    );
+    assert_eq!(append_target("see @N-1 later"), None);
+    assert_eq!(append_target("@CU-123 card"), None);
+    assert_eq!(append_target("plain note"), None);
+}
+
+#[test]
+fn capture_with_a_note_reference_appends_lines_and_tasks_to_that_note() {
+    let (_dir, store) = store_at("append-note");
+    let meeting = save_submission(&store, create("m", "Meeting notes\n! first follow-up")).unwrap();
+
+    let appended =
+        save_submission(&store, capture("c1", &format!("@N-{} ! do x", meeting.id))).unwrap();
+
+    assert_eq!(appended.id, meeting.id);
+    assert_eq!(appended.revision, meeting.revision + 1);
+    let texts: Vec<_> = appended.lines.iter().map(|line| line.text.as_str()).collect();
+    assert_eq!(texts, ["Meeting notes", "! first follow-up", "! do x"]);
+    assert_eq!(appended.lines[0].id, meeting.lines[0].id);
+    assert_eq!(appended.tasks.len(), 2);
+    assert_eq!(store.notebook_snapshot().unwrap().notes.len(), 1);
+}
+
+#[test]
+fn capture_with_a_task_reference_appends_to_the_task_note() {
+    let (_dir, store) = store_at("append-task");
+    let meeting = save_submission(&store, create("m", "! ship it")).unwrap();
+    let task = meeting.tasks[0].id.clone();
+
+    let appended = save_submission(&store, capture("c1", &format!("@T-{task}\nremember the docs"))).unwrap();
+
+    assert_eq!(appended.id, meeting.id);
+    assert_eq!(appended.lines.last().unwrap().text, "remember the docs");
+}
+
+#[test]
+fn capture_without_a_leading_reference_creates_a_note() {
+    let (_dir, store) = store_at("capture-create");
+    let first = save_submission(&store, create("m", "older")).unwrap();
+
+    let created = save_submission(&store, capture("c1", &format!("new thing about @N-{}", first.id))).unwrap();
+
+    assert_ne!(created.id, first.id);
+    assert_eq!(store.notebook_snapshot().unwrap().notes.len(), 2);
+}
+
+#[test]
+fn capture_refuses_an_empty_append_and_an_unknown_note() {
+    let (_dir, store) = store_at("capture-refuse");
+    let note = save_submission(&store, create("m", "text")).unwrap();
+
+    assert!(matches!(
+        save_submission(&store, capture("c1", &format!("@N-{}   ", note.id))),
+        Err(V2Error::InvalidInput(_))
+    ));
+    assert!(save_submission(&store, capture("c2", "@N-01MISSING add this")).is_err());
+    assert_eq!(store.note(&note.id).unwrap().revision, note.revision);
+}

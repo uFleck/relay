@@ -6,6 +6,7 @@ use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 
+use super::reference::{known_key, ReferenceKey};
 use super::model::{
     AgentMode, NoteWrite, PreparedLine, PreparedNoteWrite, PreparedReference, PreparedTaskIntent,
     V2Note, V2Project,
@@ -21,8 +22,9 @@ pub struct ComposerLineInput {
     pub text: String,
 }
 
-/// The two ways the Composer writes. `Create` is idempotent on its submission key and
-/// `Edit` is guarded by the revision the caller read.
+/// The ways the Composer writes. `Create` is idempotent on its submission key and `Edit` is
+/// guarded by the revision the caller read. `Capture` is the Dock's write: an entry that
+/// starts with a Note or Task reference is appended to that Note, anything else is a `Create`.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(
     tag = "kind",
@@ -39,6 +41,73 @@ pub enum ComposerSaveRequest {
         expected_revision: i64,
         lines: Vec<ComposerLineInput>,
     },
+    Capture {
+        submission_key: String,
+        text: String,
+    },
+}
+
+/// What a captured entry appends to: a Note, or the Note a Task came from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AppendTarget {
+    Note(String),
+    Task(String),
+}
+
+/// Splits a captured entry into its append target and the text to append, when its first
+/// token is a Note or Task reference (`@N-…`, `@T-…`). The text keeps its own sigils, so
+/// `@N-1 ! do x` appends the action line `! do x`.
+pub fn append_target(text: &str) -> Option<(AppendTarget, String)> {
+    let text = normalize_newlines(text);
+    let trimmed = text.trim_start();
+    let end = trimmed.find(char::is_whitespace).unwrap_or(trimmed.len());
+    let token = &trimmed[..end];
+    if !token.starts_with('@') {
+        return None;
+    }
+    let target = match known_key(token)? {
+        ReferenceKey::Note { id } => AppendTarget::Note(id),
+        ReferenceKey::Task { id } => AppendTarget::Task(id),
+        _ => return None,
+    };
+    let rest = trimmed[end..].trim_start_matches([' ', '\t']);
+    let rest = rest.strip_prefix('\n').unwrap_or(rest);
+    Some((target, rest.trim_end().to_string()))
+}
+
+/// Appends `text` as new lines after the Note's active lines, through the same guarded
+/// Edit path the Composer uses, so its directives create Tasks under that Note.
+fn append(store: &V2Store, target: AppendTarget, text: &str) -> Result<V2Note, V2Error> {
+    if text.trim().is_empty() {
+        return Err(V2Error::InvalidInput(
+            "write something after the reference to add it to that note".into(),
+        ));
+    }
+    let note_id = match target {
+        AppendTarget::Note(id) => id,
+        AppendTarget::Task(id) => store.task(&id)?.note_id,
+    };
+    let note = store.note(&note_id)?;
+    let mut lines: Vec<ComposerLineInput> = note
+        .lines
+        .iter()
+        .map(|line| ComposerLineInput {
+            line_id: Some(line.id.clone()),
+            text: line.text.clone(),
+        })
+        .collect();
+    lines.extend(text.split('\n').map(|line| ComposerLineInput {
+        line_id: None,
+        text: line.to_string(),
+    }));
+    save_submission(
+        store,
+        ComposerSaveRequest::Edit {
+            note_id,
+            expected_revision: note.revision,
+            lines,
+        },
+    )
 }
 
 /// The local parse of one line. `text` is the untouched line (with LF endings), including
@@ -222,6 +291,19 @@ fn normalize_newlines(text: &str) -> String {
 /// owns the revision check, idempotent replay and transaction; this function stays pure
 /// apart from the registry read it needs for project inference.
 pub fn save_submission(store: &V2Store, request: ComposerSaveRequest) -> Result<V2Note, V2Error> {
+    let request = match request {
+        ComposerSaveRequest::Capture {
+            submission_key,
+            text,
+        } => match append_target(&text) {
+            Some((target, rest)) => return append(store, target, &rest),
+            None => ComposerSaveRequest::Create {
+                submission_key,
+                text,
+            },
+        },
+        other => other,
+    };
     let projects = store.list_projects()?;
     let mut lines = Vec::new();
     let write = match request {
@@ -256,6 +338,7 @@ pub fn save_submission(store: &V2Store, request: ComposerSaveRequest) -> Result<
                 expected_revision,
             }
         }
+        ComposerSaveRequest::Capture { .. } => unreachable!("Capture resolves to Create or Edit above"),
     };
 
     let prepared = lines
