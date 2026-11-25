@@ -15,8 +15,7 @@
   min-height: 64px;
 }
 
-.composer-input,
-.composer-line-input {
+.composer-input {
   width: 100%;
   box-sizing: border-box;
   border: 1px solid var(--border-default);
@@ -28,8 +27,7 @@
   outline: none;
 }
 
-.composer-input:focus,
-.composer-line-input:focus {
+.composer-input:focus {
   border-color: var(--accent);
   box-shadow: var(--ring);
 }
@@ -47,28 +45,6 @@
   max-height: 104px;
   resize: none;
   overflow: auto;
-}
-
-.composer-lines {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  max-height: 180px;
-  overflow: auto;
-  min-width: 0;
-}
-
-.composer-line {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  min-width: 0;
-}
-
-.composer-line-input {
-  flex: 1;
-  min-width: 0;
-  height: 34px;
 }
 
 .composer-err {

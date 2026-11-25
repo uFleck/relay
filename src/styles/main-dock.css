@@ -86,16 +86,17 @@
   font-weight: 400;
   letter-spacing: normal;
 }
-.nb-note-head .btn {
-  position: absolute;
-  top: 0;
-  right: 0;
+.nb-note-actions {
+  display: flex;
+  gap: 4px;
   opacity: 0;
-  transition: opacity var(--fast) var(--ease);
 }
-.nb-note:hover .nb-note-head .btn,
-.nb-note:focus-within .nb-note-head .btn {
+.nb-note:hover .nb-note-actions,
+.nb-note:focus-within .nb-note-actions {
   opacity: 1;
+}
+@media (hover: none) {
+  .nb-note-actions { opacity: 1; }
 }
 .nb-lines {
   gap: 0;
@@ -195,7 +196,7 @@
   position: relative;
   display: block;
   height: 100%;
-  padding: 40px 40px 210px;
+  padding: 40px;
   overflow: hidden;
   background: var(--bg-page);
 }
@@ -287,29 +288,25 @@
 
 .main.notebook {
   position: static;
-  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr) auto;
   overflow: visible;
   background: transparent;
 }
+.nb-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
 .nb-scroll {
   position: relative;
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
   padding: 0 0 10px 34px;
 }
 .nb-dock {
-  position: absolute;
-  left: 50%;
-  bottom: 70px;
   z-index: 20;
-  width: 760px;
-  max-width: calc(100% - 80px);
-  transform: translateX(-50%);
+  width: min(100%, 760px);
+  justify-self: center;
 }
-
 .nb-dock .composer {
-  flex-direction: column-reverse;
   gap: 0;
   overflow: hidden;
   border: 1px solid var(--border-default);
@@ -328,7 +325,7 @@
   border-radius: 0;
   background: transparent;
   padding: 16px 20px 16px var(--dock-gut);
-  font: 400 20px/30px var(--font-prose);
+  font: 400 17px/25px var(--font-prose);
   letter-spacing: normal;
 }
 .nb-dock .ref-editor-input {
@@ -336,7 +333,8 @@
   height: 100%;
   max-height: none;
   resize: none;
-  overflow: hidden;
+  overflow: auto;
+  scrollbar-width: none;
   color: transparent;
   caret-color: var(--text-primary);
 }
@@ -349,16 +347,18 @@
 }
 .nb-dock .ref-editor-decoration {
   min-height: 30px;
-  overflow: visible;
+  max-height: 30vh;
+  overflow: hidden;
   color: var(--text-primary);
 }
 .nb-dock .composer-actions {
   flex: none;
-  align-items: normal;
-  gap: 14px;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
   padding: 8px 20px 8px var(--dock-gut);
-  border-top: 0;
-  border-bottom: 1px solid var(--border-default);
+  border-top: 1px solid var(--border-default);
+  border-bottom: 0;
   font: 400 11px var(--font-mono);
   letter-spacing: normal;
   color: var(--text-tertiary);
@@ -377,9 +377,6 @@
   font: inherit;
   letter-spacing: normal;
   white-space: normal;
-}
-.nb-dock .composer-submit {
-  display: none;
 }
 .nb-dock .ref-picker {
   position: static;
