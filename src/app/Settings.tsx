@@ -89,6 +89,13 @@ export function SettingsView({ provider, version, update }: Props) {
   const { summon } = useKeybinds();
   const [chordDraft, setChordDraft] = useState(summon);
   const sections = useRef<Partial<Record<ProviderKey, HTMLElement | null>>>({});
+  const [open, setOpen] = useState<ReadonlySet<ProviderKey>>(() => new Set(provider ? [provider] : []));
+  const toggle = (key: ProviderKey) =>
+    setOpen((current) => {
+      const next = new Set(current);
+      if (!next.delete(key)) next.add(key);
+      return next;
+    });
 
   const load = useCallback(async () => {
     const [workspace, providerStatus] = await Promise.allSettled([
@@ -128,33 +135,44 @@ export function SettingsView({ provider, version, update }: Props) {
   // A recovery route from a Task or Reference both scrolls to and focuses the section.
   useEffect(() => {
     if (!provider) return;
+    setOpen((current) => (current.has(provider) ? current : new Set([...current, provider])));
     const section = sections.current[provider];
     section?.scrollIntoView({ block: "start" });
     section?.focus({ preventScroll: true });
   }, [provider, statuses]);
 
   const status = (key: ProviderKey): ProviderStatus | undefined => statuses[key];
-  const section = (key: ProviderKey, children: React.ReactNode) => (
-    <section
-      className="psec"
-      id={`provider-${key}`}
-      tabIndex={-1}
-      aria-label={LABELS[key]}
-      ref={(el) => {
-        sections.current[key] = el;
-      }}
-    >
-      <header className="psec-head">
-        <h3>{LABELS[key]}</h3>
-        <StatusMark status={status(key)} />
-      </header>
-      {status(key)?.reason && <p className="meta psec-reason">{status(key)?.reason}</p>}
-      {status(key)?.lastFour && (
-        <p className="meta mask">Stored credential {status(key)?.lastFour}</p>
-      )}
-      {children}
-    </section>
-  );
+  /* One row per provider: name, a short reason and the status pill. The form opens inline. */
+  const providerRow = (key: ProviderKey, children: React.ReactNode) => {
+    const current = status(key);
+    const isOpen = open.has(key);
+    const summary = current?.reason ?? (current?.lastFour ? `Stored credential ${current.lastFour}` : "");
+    return (
+      <section
+        className={`prow${isOpen ? " open" : ""}`}
+        id={`provider-${key}`}
+        tabIndex={-1}
+        aria-label={LABELS[key]}
+        ref={(el) => {
+          sections.current[key] = el;
+        }}
+      >
+        <button type="button" className="prow-head" aria-expanded={isOpen} onClick={() => toggle(key)}>
+          <b>{LABELS[key]}</b>
+          <span className="prow-sum meta">{isOpen ? "" : summary}</span>
+          <StatusMark status={current} />
+          <span className="prow-chev" aria-hidden="true">›</span>
+        </button>
+        {isOpen && (
+          <div className="prow-body">
+            {current?.reason && <p className="meta psec-reason">{current.reason}</p>}
+            {current?.lastFour && <p className="meta mask">Stored credential {current.lastFour}</p>}
+            {children}
+          </div>
+        )}
+      </section>
+    );
+  };
 
   const refresh = async () => {
     try {
@@ -177,68 +195,87 @@ export function SettingsView({ provider, version, update }: Props) {
     <section className="main settings" aria-label="Settings">
       <PageBar title="Settings" meta={`Relay ${version}`} />
       <div className="scroll settings-scroll">
-        <h2 className="sub" id="settings-updates">
-          Updates
-        </h2>
-        <div className="setrow">
-          <span>
-            {update.kind === "error"
-              ? `Update failed: ${update.message}`
-              : `Relay ${version}${update.kind === "idle" ? " is up to date" : ""}`}
-          </span>
-          <span className="push" />
-          <UpdateActions update={update} />
-        </div>
+        <div className="set-col">
+          <section className="set-sec" aria-labelledby="settings-updates">
+            <h2 className="set-h" id="settings-updates">Updates</h2>
+            <div className="set-row">
+              <div className="set-label">
+                <b>Relay {version}</b>
+                <span className="meta">
+                  {update.kind === "error"
+                    ? `Update failed: ${update.message}`
+                    : update.kind === "idle"
+                      ? "Up to date"
+                      : "An update is in progress"}
+                </span>
+              </div>
+              <UpdateActions update={update} />
+            </div>
+          </section>
 
-        <h2 className="sub">Keybinds</h2>
-        <div className="setrow">
-          <label htmlFor="summon-chord">Summon</label>
-          <input
-            id="summon-chord"
-            value={chordDraft}
-            onChange={(event) => setChordDraft(event.target.value)}
-            spellCheck={false}
-            aria-label="Summon shortcut"
-          />
-          <button type="button" className="btn" onClick={() => void saveChord()}>
-            Save
-          </button>
-        </div>
-        <p className="meta psec-intro">
-          Stored in keybinds.json and applied without a restart. Use a shortcut that is not
-          taken by Windows or another app, for example alt+space or ctrl+alt+r.
-        </p>
+          <section className="set-sec" aria-labelledby="settings-keybinds">
+            <h2 className="set-h" id="settings-keybinds">Keybinds</h2>
+            <div className="set-row">
+              <label className="set-label" htmlFor="summon-chord">
+                <b>Summon</b>
+                <span className="meta">
+                  Opens the Dock from any app. Pick a shortcut Windows and other apps do not
+                  use, such as alt+space or ctrl+alt+r.
+                </span>
+              </label>
+              <div className="set-ctl">
+                <input
+                  id="summon-chord"
+                  className="set-input mono"
+                  value={chordDraft}
+                  onChange={(event) => setChordDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") void saveChord();
+                  }}
+                  spellCheck={false}
+                  aria-label="Summon shortcut"
+                />
+                <button type="button" className="btn" disabled={chordDraft === summon} onClick={() => void saveChord()}>
+                  Save
+                </button>
+              </div>
+            </div>
+          </section>
 
-        <h2 className="sub">Providers</h2>
-        <p className="meta psec-intro">
-          Status and recovery destinations for the providers Relay uses. Credentials stay in
-          Windows Credential Manager; only a masked last-four value is ever shown here.
-        </p>
-        <div className="psec-grid">
-          {section("github", <GithubSection status={status("github")} onSaved={load} />)}
-          {section("clickup", <ClickupSection status={status("clickup")} onSaved={load} />)}
-          {section(
-            "slack",
-            <SlackSection status={status("slack")} onRefresh={() => void refresh()} />,
+          <section className="set-sec" aria-labelledby="settings-providers">
+            <h2 className="set-h" id="settings-providers">Providers</h2>
+            <p className="set-intro meta">
+              Credentials stay in Windows Credential Manager. Relay only shows their last four
+              characters.
+            </p>
+            <div className="set-list">
+              {providerRow("github", <GithubSection status={status("github")} onSaved={load} />)}
+              {providerRow("clickup", <ClickupSection status={status("clickup")} onSaved={load} />)}
+              {providerRow("slack", <SlackSection status={status("slack")} onRefresh={() => void refresh()} />)}
+              {providerRow("opencode", <OpencodeSection status={status("opencode")} onSaved={load} />)}
+              {providerRow("t3", <T3Section projects={projects} status={status("t3")} />)}
+            </div>
+          </section>
+
+          <section className="set-sec" aria-labelledby="settings-import">
+            <h2 className="set-h" id="settings-import">Import</h2>
+            <ImportSection projects={projects} settings={settings} onSaved={load} />
+          </section>
+
+          <section className="set-sec" aria-labelledby="settings-repos">
+            <h2 className="set-h" id="settings-repos">Repositories</h2>
+            <RepoSection onSaved={load} />
+          </section>
+
+          {notice && (
+            <div className="set-msg" role="status">
+              <span>{notice}</span>
+              <button type="button" className="ib" title="Dismiss" onClick={() => setNotice(null)}>
+                ×
+              </button>
+            </div>
           )}
-          {section("opencode", <OpencodeSection status={status("opencode")} onSaved={load} />)}
-          {section("t3", <T3Section projects={projects} status={status("t3")} />)}
         </div>
-
-        <h2 className="sub">Import</h2>
-        <ImportSection projects={projects} settings={settings} onSaved={load} />
-
-        <h2 className="sub">Repositories</h2>
-        <RepoSection onSaved={load} />
-
-        {notice && (
-          <div className="set-msg" role="status">
-            <span>{notice}</span>
-            <button type="button" className="ib" title="Dismiss" onClick={() => setNotice(null)}>
-              ×
-            </button>
-          </div>
-        )}
       </div>
     </section>
   );
@@ -247,7 +284,7 @@ export function SettingsView({ provider, version, update }: Props) {
 function StatusMark({ status }: { status?: ProviderStatus }) {
   const state = status?.status ?? "missingSetup";
   return (
-    <span className={`pst pst-${state}`} role="status">
+    <span className={`pst pst-${state}`}>
       {STATE_LABEL[state]}
     </span>
   );
@@ -821,7 +858,7 @@ function RepoSection({ onSaved }: { onSaved: () => Promise<void> }) {
         </ul>
       )}
       {candidates.map((candidate) => (
-        <div className="setrow" key={candidate.path}>
+        <div className="set-row" key={candidate.path}>
           <span>
             <b>{candidate.repo.owner}/{candidate.repo.name}</b>{" "}
             <span className="meta path">{candidate.path}</span>
