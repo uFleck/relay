@@ -242,12 +242,46 @@ try {
   await hoverInput.fill(draft);
   const draftLines = await hoverPage.locator(".dock-content .de-line").count();
   await hoverInput.fill("@billing");
-  await hoverPage.waitForSelector('.dock-content .ref-picker[data-open="true"]');
+  const hoverPicker = hoverPage.locator('.dock-content .ref-picker[data-open="true"]');
+  await hoverPicker.waitFor({ state: "visible" });
   const lensVisible = await hoverPage.locator(".dock-content .ref-lens").isVisible();
+  const pickerBefore = await hoverPicker.boundingBox();
+  await hoverInput.fill("@zz-no-local-match");
+  await hoverPicker.getByRole("option", { name: /Search Slack messages for “zz-no-local-match”/ }).waitFor();
+  const pickerAfter = await hoverPicker.boundingBox();
+  const pickerStable = pickerBefore.height === pickerAfter.height && pickerBefore.y === pickerAfter.y;
+  const pickerReachable = await hoverPicker.evaluate((picker) => {
+    const { left, top } = picker.getBoundingClientRect();
+    return picker.contains(document.elementFromPoint(left + 12, top + 12));
+  });
+  await hoverInput.fill("");
+  await settle(hoverPage);
+  const compactEditor = await hoverInput.evaluate((input) => {
+    const dock = input.closest(".dock-content").getBoundingClientRect();
+    const field = input.getBoundingClientRect();
+    const style = getComputedStyle(input);
+    const start = field.left - dock.left + parseFloat(style.paddingLeft);
+    const end = dock.right - field.right + parseFloat(style.paddingRight);
+    return field.height <= 36 && start <= 32 && end <= 16 && input.scrollHeight === input.clientHeight;
+  });
+  // Reproduce a native viewport that still has the old height while the Dock grows.
+  await hoverPage.setViewportSize({ width: 640, height: 52 });
+  const footerBelowInput = await hoverPage.evaluate(() => {
+    const input = document.querySelector(".dock-content textarea").getBoundingClientRect();
+    const footer = document.querySelector(".hfoot").getBoundingClientRect();
+    return input.bottom <= footer.top;
+  });
+  const keyboardOnlyCapture = await hoverPage.locator(".dock-content .composer-submit").count() === 0;
   const hoverSmoke = {
-    pass: hoverErrors.length === 0 && draftLines === 4 && lensVisible,
+    pass: hoverErrors.length === 0 && draftLines === 4 && lensVisible &&
+      pickerStable && pickerReachable && compactEditor && footerBelowInput && keyboardOnlyCapture,
     draftLines,
     lensVisible,
+    pickerStable,
+    pickerReachable,
+    compactEditor,
+    footerBelowInput,
+    keyboardOnlyCapture,
     errors: hoverErrors,
   };
   await hoverPage.close();
@@ -283,7 +317,7 @@ try {
   console.log(`Baseline: ${report.baselineCreated ? "created" : "reused (immutable)"}`);
   console.log(`Surface: ${production ? "production build" : "Vite dev"}`);
   console.log(`Self-test: PASS (${selfTest.changedPixels} changed pixel detected)`);
-  console.log(`Hover smoke: ${hoverSmoke.pass ? "PASS" : "FAIL"} (${hoverSmoke.draftLines} draft lines, lens ${hoverSmoke.lensVisible ? "visible" : "hidden"})`);
+  console.log(`Hover smoke: ${hoverSmoke.pass ? "PASS" : "FAIL"} (${hoverSmoke.draftLines} draft lines, lens ${hoverSmoke.lensVisible ? "visible" : "hidden"}, picker ${hoverSmoke.pickerStable ? "stable" : "moved"} and ${hoverSmoke.pickerReachable ? "reachable" : "clipped"}, ${hoverSmoke.keyboardOnlyCapture ? "keyboard-only capture" : "submit button present"}, footer ${hoverSmoke.footerBelowInput ? "below input" : "overlapping input"})`);
   for (const result of results) {
     const size = `${result.currentSize[0]}x${result.currentSize[1]}`;
     const pct = (result.changedRatio * 100).toFixed(2);

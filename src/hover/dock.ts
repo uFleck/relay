@@ -46,8 +46,6 @@ export interface DockBridge {
   escConsumed: RefObject<boolean>;
   reportEsc: () => void;
   takeEsc: () => boolean;
-  /** Fires when the picker's open/close transition finishes, after layout.state settles. */
-  onPickerTransitionEnd: () => void;
   /** Fires on a successful create or edit save. */
   onSaved: (note: V2Note) => void;
   /** The current draft's first mode and per-mode counts. */
