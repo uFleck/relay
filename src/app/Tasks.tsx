@@ -23,7 +23,7 @@ const GROUPS: { id: TaskGroupId; label: string; hint: string }[] = [
 export function Tasks({ workspace, filter, selectedTaskId, onSelect }: Props) {
   const headingRef = useRef<HTMLHeadingElement>(null);
   const rows = useRef(new Map<string, HTMLButtonElement>());
-  const hadSelection = useRef(false);
+  const lastSelectedId = useRef<string | null>(null);
 
   const groups = useMemo(
     () => groupTasks(workspace?.tasks ?? [], filter),
@@ -37,16 +37,14 @@ export function Tasks({ workspace, filter, selectedTaskId, onSelect }: Props) {
   // heading when that row is no longer available.
   useEffect(() => {
     if (selectedTaskId) {
-      hadSelection.current = true;
+      lastSelectedId.current = selectedTaskId;
       return;
     }
-    if (!hadSelection.current) return;
-    hadSelection.current = false;
-    requestAnimationFrame(() => {
-      const row = selectedTaskId ? rows.current.get(selectedTaskId) : undefined;
-      const first = rows.current.values().next().value as HTMLButtonElement | undefined;
-      (row ?? first ?? headingRef.current)?.focus();
-    });
+    const previous = lastSelectedId.current;
+    if (!previous) return;
+    lastSelectedId.current = null;
+    const row = rows.current.get(previous);
+    (row?.checkVisibility() ? row : headingRef.current)?.focus();
   }, [selectedTaskId]);
 
   const row = (task: V2Task) => {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { EMPTY_DRAFT, type DraftSummary } from "../directives";
 import { Composer } from "../components/Composer";
 import { Icon } from "../components/Icon";
@@ -33,6 +33,7 @@ const REFRESH_MS = 20_000;
 
 export function HoverApp() {
   const { workspace: v2, error: workspaceError, refresh: refreshV2 } = useWorkspace();
+  const contentReady = v2 !== null;
   const failed = workspaceError !== null;
   const [flags, setFlags] = useState<HoverFlags>({ pinned: false, paused: false, ready: false, visible: false });
   const [dockLayout, setDockLayout] = useState<DockLayoutState>("compact");
@@ -68,7 +69,7 @@ export function HoverApp() {
     if (!content) return 0;
     const picker = content.querySelector<HTMLElement>(".ref-picker");
     const pickerHeight = picker && layoutRef.current !== "compact" ? picker.scrollHeight : 0;
-    const measured = Math.max(content.getBoundingClientRect().height, content.scrollHeight);
+    const measured = Math.max(content.offsetHeight, content.scrollHeight);
     return dockCssHeight(measured, pickerHeight, layoutRef.current);
   }, []);
 
@@ -177,21 +178,20 @@ export function HoverApp() {
         inputRef.current?.blur();
         return;
       }
-      // Focus the composer on every summon. Native activation can be Pending or Refused, and
-      // in both cases the user still expects the caret to be in the input as soon as it appears.
-      requestAnimationFrame(() => inputRef.current?.focus());
       // Re-measure for this session: the draft may have grown while the Dock was hidden.
       void applyHeight(true);
     });
   }, [applyHeight]);
 
-  // The textarea only exists while composing. Focus again if the Dock becomes visible after
-  // that mount, so a summon that races the first v2 read still leaves a usable caret.
-  useEffect(() => {
-    if (!dockVisible) return;
-    const frame = requestAnimationFrame(() => inputRef.current?.focus());
-    return () => cancelAnimationFrame(frame);
-  }, [dockVisible]);
+  useLayoutEffect(() => {
+    if (!dockVisible || !contentReady) return;
+    const focusInput = () => {
+      if (document.activeElement === document.body) inputRef.current?.focus({ preventScroll: true });
+    };
+    focusInput();
+    window.addEventListener("focus", focusInput);
+    return () => window.removeEventListener("focus", focusInput);
+  }, [dockVisible, contentReady]);
 
   useEffect(() => {
     if (!inTauri) return;
@@ -204,8 +204,6 @@ export function HoverApp() {
 
   // The measurable content root only exists once the v2 read resolves, so the observer must attach
   // when that happens and not only on the first mount (which renders the loading tab instead).
-  const contentReady = v2 !== null;
-
   useEffect(() => {
     const content = contentRef.current;
     if (!content || !inTauri) return;
