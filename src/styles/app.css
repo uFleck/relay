@@ -98,6 +98,15 @@
   grid-template-columns: minmax(0, 1fr) var(--sheet-w);
 }
 
+@media (max-width: 900px) {
+  .body.with-sheet {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .body.with-sheet > .tasks {
+    display: none;
+  }
+}
+
 /* ─────────── rail ─────────── */
 .rail {
   display: flex;
@@ -434,6 +443,7 @@
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   min-height: 0;
+  min-width: 0;
   border-left: 1px solid var(--border-default);
   background: var(--bg-page);
   box-shadow: -12px 0 28px rgba(0, 0, 0, 0.18);

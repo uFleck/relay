@@ -590,13 +590,14 @@ function T3Section({ projects, status }: { projects: V2Project[]; status?: Provi
         <p className="meta">Register a repository below before mapping a project.</p>
       ) : (
         <>
-          <label className="pfield">
-            <span>Relay project</span>
-            <Select value={projectId} options={options} onChange={setProjectId} />
-          </label>
           <div className="pfield">
-            <span>Target kind</span>
+            <label htmlFor="t3-mapping-project">Relay project</label>
+            <Select id="t3-mapping-project" value={projectId} options={options} onChange={setProjectId} />
+          </div>
+          <div className="pfield">
+            <label htmlFor="t3-mapping-kind">Target kind</label>
             <Select
+              id="t3-mapping-kind"
               value={kind}
               options={[
                 { value: "id", label: "T3 project ID" },
@@ -724,20 +725,17 @@ function ImportSection({
 
   return (
     <div className="pform import-form">
-      <label className="ui-check">
-        <Switch checked={clickup} onChange={setClickup}>
-          Cards assigned to you
-        </Switch>
-      </label>
-      <label className="ui-check">
-        <Switch checked={github} onChange={setGithub}>
-          Open PRs in registered repos
-        </Switch>
-      </label>
+      <Switch checked={clickup} onChange={setClickup}>
+        Cards assigned to you
+      </Switch>
+      <Switch checked={github} onChange={setGithub}>
+        Open PRs in registered repos
+      </Switch>
       <div className="pfield">
-        <span>ClickUp workspace</span>
+        <label htmlFor="import-workspace">ClickUp workspace</label>
         <div className="pactions">
           <Select
+            id="import-workspace"
             value={scope?.workspaceId ?? ""}
             options={[
               { value: "", label: "Choose a workspace" },
@@ -751,8 +749,9 @@ function ImportSection({
         </div>
       </div>
       <div className="pfield">
-        <span>Space (optional)</span>
+        <label htmlFor="import-space">Space (optional)</label>
         <Select
+          id="import-space"
           value={scope?.spaceId ?? ""}
           options={[
             { value: "", label: "Whole workspace" },
@@ -762,8 +761,9 @@ function ImportSection({
         />
       </div>
       <div className="pfield">
-        <span>Relay project</span>
+        <label htmlFor="import-project">Relay project</label>
         <Select
+          id="import-project"
           value={scope?.projectId ?? ""}
           options={[
             { value: "", label: "Choose a project" },

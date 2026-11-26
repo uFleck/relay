@@ -1,7 +1,7 @@
 import { Checkbox as BaseCheckbox } from "@base-ui/react/checkbox";
 import { Select as BaseSelect } from "@base-ui/react/select";
 import { Switch as BaseSwitch } from "@base-ui/react/switch";
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 
 /* Relay's form controls: Base UI parts for behaviour and a11y, styled by `styles/controls.css` through the
    data attributes Base UI sets (data-checked, data-disabled, data-highlighted, data-popup-open). */
@@ -26,10 +26,11 @@ export function Checkbox({ checked, onChange, disabled, children, className }: T
 }
 
 export function Switch({ checked, onChange, disabled, children, className }: ToggleProps) {
+  const labelId = useId();
   return (
     <label className={`ui-check${className ? ` ${className}` : ""}`} data-disabled={disabled || undefined}>
-      {children}
-      <BaseSwitch.Root className="ui-switch" checked={checked} disabled={disabled} onCheckedChange={(next) => onChange(next)}>
+      <span id={labelId}>{children}</span>
+      <BaseSwitch.Root className="ui-switch" aria-labelledby={labelId} checked={checked} disabled={disabled} onCheckedChange={(next) => onChange(next)}>
         <BaseSwitch.Thumb className="ui-thumb" />
       </BaseSwitch.Root>
     </label>
