@@ -244,10 +244,20 @@ try {
   await hoverInput.fill("@billing");
   await hoverPage.waitForSelector('.dock-content .ref-picker[data-open="true"]');
   const lensVisible = await hoverPage.locator(".dock-content .ref-lens").isVisible();
+  await hoverInput.fill("");
+  await settle(hoverPage);
+  // Reproduce a native viewport that still has the old height while the Dock grows.
+  await hoverPage.setViewportSize({ width: 640, height: 119 });
+  const controlsSeparated = await hoverPage.evaluate(() => {
+    const capture = document.querySelector(".composer-submit").getBoundingClientRect();
+    const footer = document.querySelector(".hfoot").getBoundingClientRect();
+    return capture.bottom <= footer.top;
+  });
   const hoverSmoke = {
-    pass: hoverErrors.length === 0 && draftLines === 4 && lensVisible,
+    pass: hoverErrors.length === 0 && draftLines === 4 && lensVisible && controlsSeparated,
     draftLines,
     lensVisible,
+    controlsSeparated,
     errors: hoverErrors,
   };
   await hoverPage.close();
@@ -283,7 +293,7 @@ try {
   console.log(`Baseline: ${report.baselineCreated ? "created" : "reused (immutable)"}`);
   console.log(`Surface: ${production ? "production build" : "Vite dev"}`);
   console.log(`Self-test: PASS (${selfTest.changedPixels} changed pixel detected)`);
-  console.log(`Hover smoke: ${hoverSmoke.pass ? "PASS" : "FAIL"} (${hoverSmoke.draftLines} draft lines, lens ${hoverSmoke.lensVisible ? "visible" : "hidden"})`);
+  console.log(`Hover smoke: ${hoverSmoke.pass ? "PASS" : "FAIL"} (${hoverSmoke.draftLines} draft lines, lens ${hoverSmoke.lensVisible ? "visible" : "hidden"}, controls ${hoverSmoke.controlsSeparated ? "separated" : "overlapping"})`);
   for (const result of results) {
     const size = `${result.currentSize[0]}x${result.currentSize[1]}`;
     const pct = (result.changedRatio * 100).toFixed(2);

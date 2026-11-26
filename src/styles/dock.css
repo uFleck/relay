@@ -262,6 +262,8 @@
 .dock-scroll {
   display: flex;
   justify-content: center;
+  /* Clip to the native viewport without stretching the content to its current height. */
+  align-items: flex-start;
   width: 100%;
   min-width: 0;
   max-height: 100%;
