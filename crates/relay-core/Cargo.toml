@@ -1,6 +1,6 @@
 [package]
 name = "relay-core"
-version = "0.13.2"
+version = "0.13.3"
 edition = "2024"
 description = "Relay's local task graph: model, SQLite store, connectors and jobs"
 authors = ["Bruno Koster"]
