@@ -173,12 +173,13 @@ export function Composer({
       data-parity="composer"
       data-first-mode={draft.mode ?? undefined}
       data-counts={`${draft.counts.act}-${draft.counts.wait}-${draft.counts.grill}`}
+      aria-busy={busy}
     >
       <ReferenceEditor
         value={draftText}
         placeholder={
           capture
-            ? "Write a note, or start with @ a note to add to it."
+            ? "Write a note. @ to append."
             : "Write a note. ! acts, ? waits, ?? grills."
         }
         ariaLabel={note ? "Edit note" : "Composer"}
@@ -187,7 +188,6 @@ export function Composer({
         onActiveChange={setFocused}
         inputRef={inputRef}
         onPickerChange={reportPicker}
-        onPickerTransitionEnd={dock?.onPickerTransitionEnd}
         onEscConsumed={dock?.reportEsc}
       />
       {error && (
@@ -200,22 +200,24 @@ export function Composer({
           Reload saved version
         </button>
       )}
-      <div className="composer-actions">
-        <span className="meta composer-hint">@ reference</span>
-        <span className="meta composer-hint">+ project</span>
-        <span className="meta composer-hint">ctrl ↵ send</span>
-        <span className="meta composer-count" aria-live="polite">
-          {draftLabel(draft)}
-        </span>
-        {onClose && (
-          <button type="button" className="btn ghost" disabled={busy} onClick={onClose}>
-            {note ? "Cancel" : "Close composer"}
+      {!capture && (
+        <div className="composer-actions">
+          <span className="meta composer-hint">@ reference</span>
+          <span className="meta composer-hint">+ project</span>
+          <span className="meta composer-hint">ctrl ↵ send</span>
+          <span className="meta composer-count" aria-live="polite">
+            {draftLabel(draft)}
+          </span>
+          {onClose && (
+            <button type="button" className="btn ghost" disabled={busy} onClick={onClose}>
+              {note ? "Cancel" : "Close composer"}
+            </button>
+          )}
+          <button type="button" className="btn pri composer-submit" disabled={busy} onClick={() => void submit()}>
+            {busy ? "Saving…" : note ? "Save changes" : "Capture"}
           </button>
-        )}
-        <button type="button" className="btn pri composer-submit" disabled={busy} onClick={() => void submit()}>
-          {busy ? "Saving…" : note ? "Save changes" : "Capture"}
-        </button>
-      </div>
+        </div>
+      )}
     </div>
   );
 }

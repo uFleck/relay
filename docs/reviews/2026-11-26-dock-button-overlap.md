@@ -13,4 +13,14 @@ Files reviewed are `src/styles/dock.css` and `scripts/visual-parity.mjs`.
 
 Native testing used one display at 100% scaling.
 
+## Compact Dock follow-up
+
+The final Dock sends with Ctrl+Enter and uses less padding around the input. The reference picker uses a fixed height, keeps its results visible until the next lookup returns, and shows a thin scrollbar when results overflow.
+
+The follow-up touched the shared Composer and reference picker, the Dock's native resize bridge and styles, and the visual smoke check.
+
+- [x] Headless Chromium at 320, 400, and 640 px verified the compact input and multiline growth with both motion settings. The picker kept its position and editor focus as results changed. A clicked result inserted a reference and returned to the draft.
+- [x] The isolated Windows WebView verified Ctrl+Enter capture and stable picker geometry with both motion settings before the final padding adjustment.
+- [x] The Dock smoke check passed. The six pre-existing main-window prototype comparisons still differ.
+
 ## Opus verdict

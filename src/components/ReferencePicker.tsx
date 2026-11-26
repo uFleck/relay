@@ -18,7 +18,6 @@ export interface ReferencePickerProps {
   slow?: boolean;
   /** Kept mounted so open and close both animate; CSS collapses the closed box. */
   open: boolean;
-  onTransitionEnd?: () => void;
 }
 
 /* Keyboard focus stays in the editor; the highlighted row drives the Lens on the right. */
@@ -31,7 +30,6 @@ export function ReferencePicker({
   progress = [],
   slow = false,
   open,
-  onTransitionEnd,
 }: ReferencePickerProps) {
   const flat = rows;
   const lens = flat[Math.min(highlight, Math.max(0, flat.length - 1))];
@@ -46,11 +44,6 @@ export function ReferencePicker({
       aria-label="References"
       aria-hidden={!open}
       inert={open ? undefined : true}
-      onTransitionEnd={(event) => {
-        if (event.target === event.currentTarget && event.propertyName === "max-height") {
-          onTransitionEnd?.();
-        }
-      }}
     >
       <div className="ref-picker-results">
         {progress
@@ -86,6 +79,7 @@ export function ReferencePicker({
                   }`}
                   key={row.key}
                   onMouseEnter={() => onHighlight(mine)}
+                  onMouseDown={(event) => event.preventDefault()}
                   onClick={() => onPick(row)}
                 >
                   <span className="ref-picker-id">{row.displayId}</span>

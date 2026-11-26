@@ -21,7 +21,6 @@ import {
   type DockBridge,
   type DockLayoutState,
 } from "./dock";
-import { prefersReducedMotion } from "../ui/motion";
 import { useKeybinds } from "../keybinds";
 import { useWorkspace } from "../workspace";
 
@@ -63,29 +62,14 @@ export function HoverApp() {
     await dockDismiss(id, reason).catch(() => undefined);
   }, []);
 
-  /** The picker is absolutely positioned above the input, so its settled box is added here. */
+  /** The picker sits above the input, outside the measured content box. */
   const measureHeight = useCallback(() => {
     const content = contentRef.current;
     if (!content) return 0;
     const picker = content.querySelector<HTMLElement>(".ref-picker");
-    const pickerHeight = picker && layoutRef.current !== "compact" ? picker.scrollHeight : 0;
+    const pickerHeight = picker?.offsetHeight ?? 0;
     const measured = Math.max(content.offsetHeight, content.scrollHeight);
     return dockCssHeight(measured, pickerHeight, layoutRef.current);
-  }, []);
-
-  /** A close transition must finish before the window shrinks. Reduced motion skips the wait. */
-  const waitForDockTransition = useCallback(() => {
-    if (prefersReducedMotion()) return Promise.resolve();
-    return new Promise<void>((resolve) => {
-      let timer = 0;
-      const done = () => {
-        window.removeEventListener("relay://dock-transition-end", done);
-        window.clearTimeout(timer);
-        resolve();
-      };
-      window.addEventListener("relay://dock-transition-end", done);
-      timer = window.setTimeout(done, 450);
-    });
   }, []);
 
   const applyHeight = useCallback(
@@ -108,21 +92,19 @@ export function HoverApp() {
         return;
       }
       const growing = previous === null || height > previous;
+      // Record the request before awaiting it, so a quick close can supersede an open.
+      sentHeight.current = height;
       if (growing) setGrowing(true);
-      else await waitForDockTransition();
-      if (sessionRef.current !== id) {
-        setGrowing(false);
-        return;
-      }
       const ok = await dockResize(height, id).catch(() => false);
-      if (ok) sentHeight.current = height;
+      if (sessionRef.current !== id || sentHeight.current !== height) return;
+      if (!ok) sentHeight.current = null;
       setGrowing(false);
     },
-    [measureHeight, waitForDockTransition],
+    [measureHeight],
   );
 
   /* Everything #39 needs to size and focus the native box: the measured content root, the
-     three layout states, the picker's settled event, the live input and the save/escape signals. */
+     three layout states, the live input and the save/escape signals. */
   const dock = useMemo<DockBridge>(
     () => ({
       viewportRef,
@@ -142,9 +124,6 @@ export function HoverApp() {
         const taken = escConsumed.current;
         escConsumed.current = false;
         return taken;
-      },
-      onPickerTransitionEnd: () => {
-        window.dispatchEvent(new CustomEvent("relay://dock-transition-end", { detail: { layout: dockLayout } }));
       },
       onSaved: () => {
         void dismissDock("saved");

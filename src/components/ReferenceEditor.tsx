@@ -50,7 +50,6 @@ export interface ReferenceEditorProps {
   inputRef?: RefObject<HTMLTextAreaElement | null>;
   /** Reports compact / picker / picker-with-Lens changes to the Dock. */
   onPickerChange?: (open: boolean, lensVisible: boolean) => void;
-  onPickerTransitionEnd?: () => void;
   onEscConsumed?: () => void;
 }
 
@@ -69,7 +68,6 @@ export function ReferenceEditor({
   onActiveChange,
   inputRef: forwardedRef,
   onPickerChange,
-  onPickerTransitionEnd,
   onEscConsumed,
 }: ReferenceEditorProps) {
   const [state, setState] = useState<EditorState>({ text: value, chips: [] });
@@ -88,6 +86,7 @@ export function ReferenceEditor({
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
   const slowTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const queryRef = useRef("");
+  const displayedQuery = useRef("");
   const localRef = useRef<V2PickerRow[]>([]);
   const liveRef = useRef<V2PickerRow[]>([]);
   const rowsRef = useRef<V2PickerRow[]>([]);
@@ -136,6 +135,7 @@ export function ReferenceEditor({
     const actions = inputRef.current?.closest(".nb-dock") ? [] : slackActionRows(queryRef.current);
     const next = [...actions, ...merged];
     const key = rowsRef.current[highlightRef.current]?.key;
+    displayedQuery.current = queryRef.current;
     rowsRef.current = next;
     setRows(next);
     const nextHighlight = rowIndexByKey(next, key);
@@ -261,8 +261,7 @@ export function ReferenceEditor({
     queryRef.current = bare;
     liveRef.current = [];
     localRef.current = [];
-    applyRows();
-    // Local rows are usable from the first keystroke.
+    // Swap results when the local lookup finishes so the list and Lens stay in place.
     void runLocal(bare);
     if (bare.length >= 2) {
       debounce.current = setTimeout(() => void runLive(bare), LIVE_DEBOUNCE_MS);
@@ -282,7 +281,7 @@ export function ReferenceEditor({
 
   const insertChip = async (row: V2PickerRow) => {
     const range = tokenRange.current;
-    if (!range) return;
+    if (!range || displayedQuery.current !== queryRef.current) return;
     let accepted = row;
     let pending: V2PickerRow | undefined;
     if (row.kind === "slackchannel") {
@@ -500,18 +499,25 @@ export function ReferenceEditor({
         closePicker();
         return;
       }
-      if (event.key === "ArrowDown") {
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
         event.preventDefault();
-        moveHighlight(rows.length ? (highlightRef.current + 1) % rows.length : 0);
-        return;
-      }
-      if (event.key === "ArrowUp") {
-        event.preventDefault();
-        moveHighlight(rows.length ? (highlightRef.current - 1 + rows.length) % rows.length : 0);
+        if (!rows.length) return;
+        const step = event.key === "ArrowDown" ? 1 : -1;
+        const next = (highlightRef.current + step + rows.length) % rows.length;
+        moveHighlight(next);
+        const results = event.currentTarget.closest(".ref-editor")?.querySelector<HTMLElement>(".ref-picker-results");
+        const option = results?.querySelectorAll('[role="option"]')[next];
+        if (results && option) {
+          const viewport = results.getBoundingClientRect();
+          const row = option.getBoundingClientRect();
+          if (row.top < viewport.top) results.scrollTop += row.top - viewport.top;
+          else if (row.bottom > viewport.bottom) results.scrollTop += row.bottom - viewport.bottom;
+        }
         return;
       }
       if (event.key === "Enter" || event.key === "Tab") {
         event.preventDefault();
+        if (displayedQuery.current !== queryRef.current) return;
         const row = rows[highlightRef.current];
         if (!row) return;
         if (isSlackAction(row)) {
@@ -660,7 +666,6 @@ export function ReferenceEditor({
         progress={progress}
         slow={slow}
         open={pickerOpen}
-        onTransitionEnd={onPickerTransitionEnd}
       />
     </div>
   );
